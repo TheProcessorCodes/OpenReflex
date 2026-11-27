@@ -13,12 +13,19 @@ Windows. The game's logic is hand-written C (`core/`, the "OPEN REFLEX core") th
 This is the **single-player** build. It has:
 
 - **Career**, **Race** (National, Supercross, Waypoint, Freestyle and the other event types), **Free Ride** with its challenges,
-  **Practice** (unlimited laps on your own with lap times) and **MotoSkills**
-- the **Garage** (vehicles, gear, tuning, graphics kits) and the championship weekend
-- **Physics Studio** (edit and share vehicle physics configs) and the OPEN REFLEX riding options (air helpers, Free Ride borders)
-- enhanced lighting, weather, replays and photo mode, ultrawide support
-- mods: `.rxmod` bikes, skins and kit packs (`tools/rxmod`), custom `.rxtrack` tracks (`tools/rxtrack`), and the MX vs ATV Alive
-  content importer (for players who own Alive)
+  **Practice** (unlimited laps on your own with lap times, VEHICLE TUNING on the pause page) and **MotoSkills**
+- **Split screen**: two local riders on one screen (the race setup's PLAYERS tab)
+- the **Garage** (vehicles with SOURCE / CLASS / SORT filters, gear, tuning, graphics kits) and the championship weekend
+- **B.R.A.A.P.**: your own race AI rosters (names, numbers, gear, per-rider skill), with 2025 / 2026 season rosters (`core/plan/BRAAP.md`)
+- **Physics Studio** (edit and share vehicle physics configs) and the OPEN REFLEX riding options (air helpers, LIP PULL, RIDER MOTION,
+  Free Ride borders, spawn markers, noclip, ANY VEHICLE ON ANY TRACK: `core/plan/ANY_VEHICLE.md`), stick response and lean inversion
+- enhanced lighting, weather (rain, snow, puddles, tyre trenches), dynamic resolution, terrain tessellation, high-detail bikes and
+  riders in races, replays and photo mode, ultrawide support
+- mods: `.rxmod` bikes, skins, kit packs, parts and gear (`tools/rxmod`), custom `.rxtrack` tracks (`tools/rxtrack`), and importers
+  for the player's own copies of other MX vs ATV games: **MX vs ATV Alive** (tracks, bikes with their liveries and parts, rider gear,
+  engine sounds and the soundtrack), **MX vs ATV Unleashed** (its tracks: `core/plan/UNLEASHED_IMPORT.md`) and **MX vs ATV Untamed**
+  (the disc's stadiums and arenas as tracks, and its soundtrack: `core/plan/UNTAMED_TRACKS.md`); OPTIONS > AUDIO > MUSIC > SOUNDTRACK plays
+  all songs or one game's alone
 
 Online play, accounts and online leaderboards are not part of this repository.
 

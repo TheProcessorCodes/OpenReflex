@@ -92,7 +92,7 @@ chunk counts and sums, sorted unique paths. A whole-file read checks the CRC-32;
 {"format": "reflex-track-archive", "version": 1,
  "level": "NAT_Concord",            the level name: the files are Database/<level>.dx9.*
  "name": "...",                     display name (a mod's folder name, or --name)
- "source": "base" | "alive" | "mod",
+ "source": "base" | "alive" | "unleashed" | "mod",
  "layout": "packed" | "extracted" | "packed+extracted",
  "created": "<UTC>",
  "files": [{"name": "NAT_Concord.dx9.level", "bytes": 296, "sha256": "..."}, ...],   every Database/*.dx9.* file of the track
