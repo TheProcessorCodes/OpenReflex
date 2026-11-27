@@ -23,7 +23,7 @@ mkdir -p "$S/bin"
 "$D/dotnet" "$CSC" -nologo -noconfig -nostdlib+ -target:exe -langversion:9 -unsafe+ -nowarn:1701,1702,0618,0649,0169,0414 $(for f in "$REF"/*.dll; do printf -- '-r:%s ' "$f"; done) \
   -r:"$U/Managed/UnityEngine/UnityEngine.CoreModule.dll" -r:"$U/Managed/UnityEngine/UnityEngine.ScriptingModule.dll" -out:"$S/bin/ArchiveTests.dll" \
   "$C/ReflexAssetImport.cs" "$C/ReflexAssetImport.Space.cs" "$C/ImportModScan.cs" "$C/ReflexStockDatabase.cs" "$C/RfxData.cs" "$C/Bxml.cs" "$C/LzxDecoder.cs" \
-  "$C/FresnoBRepair.cs" "$C"/AliveImport/*.cs "$C/RxFiles.cs" "$C/ReflexDataPack.cs" "$O/RxNativeLoader.cs" "$O/RxArchiveNative.cs" \
+  "$C/FresnoBRepair.cs" "$C"/AliveImport/Alive[!M]*.cs "$C/RxFiles.cs" "$C/ReflexDataPack.cs" "$O/RxNativeLoader.cs" "$O/RxArchiveNative.cs" \
   "$C/ReflexPaths.cs" "$C/ReflexDrives.cs" "$C/ReflexMods.cs" "$HERE/Stubs.cs" "$HERE/ArchiveTests.cs"
 cp "$U/Managed/UnityEngine/UnityEngine.CoreModule.dll" "$S/bin/"
 printf '{"runtimeOptions":{"tfm":"net8.0","framework":{"name":"Microsoft.NETCore.App","version":"%s"}}}\n' "$FW" > "$S/bin/ArchiveTests.runtimeconfig.json"

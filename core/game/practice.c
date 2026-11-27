@@ -107,17 +107,21 @@ void rx_lap_log_marker(rx_addr d) {
 /* the driver's place on the track is the vehicle's, as RaceDriver::vf3 0050f090 places a Free Ride driver (the nearest node of the whole
  * track by 00538440, the vehicle's direction +0x130); the segment is the one the vehicle is in (the node before the nearest when the
  * vehicle is behind it); the last position is the vehicle's; the track-advance rule's section follows (as RuleTrackAdvance::vf5 0051d400
- * does at a section change); the off-track rule's excursion ends (RuleOfftrackTimePenalty: on track, no excursion, the clock now) */
-static void marker_place(rx_addr d, rx_addr v) {
-    const rx_addr sp0 = rx_sp(), S = (sp0 - 0x40u) & ~0xfu;
+ * does at a section change); the off-track rule's excursion ends (RuleOfftrackTimePenalty: on track, no excursion, the clock now).
+ * pos / dir: the spot and the heading as vec4s (the vehicle's V+0xc0 / V+0x130 after a frame; the marker's own when placed at the respawn). */
+static void marker_place(rx_addr d, const float pos[4], const float dir[4]) {
+    const rx_addr sp0 = rx_sp(), S = (sp0 - 0x80u) & ~0xfu;
     rx_set_sp(S);
+    const rx_addr P = S + 0x40, D = S + 0x50;   /* the spot and the heading as the game's vec4s, below the query's result at S */
+    SF32(P, 0, pos[0]); SF32(P, 4, pos[1]); SF32(P, 8, pos[2]); SF32(P, 0xc, pos[3]);
+    SF32(D, 0, dir[0]); SF32(D, 4, dir[1]); SF32(D, 8, dir[2]); SF32(D, 0xc, dir[3]);
     const rx_addr track = U32(d, 0x10);
-    rx_track_nearest_node_all(track, v + 0x130, 0, v + 0xc0, S);
-    if (U32(S, 4) == 0) rx_track_nearest_node_all(track, 0, 0, v + 0xc0, S);
+    rx_track_nearest_node_all(track, D, 0, P, S);
+    if (U32(S, 4) == 0) rx_track_nearest_node_all(track, 0, 0, P, S);
     rx_addr sec = U32(S, 0), node = U32(S, 4);
     rx_set_sp(sp0);
     if (!sec || !node) return;
-    const float t = (F32(v, 0xc0) - F32(node, 0)) * F32(node, 0x50) + (F32(v, 0xc4) - F32(node, 4)) * F32(node, 0x54) + (F32(v, 0xc8) - F32(node, 8)) * F32(node, 0x58);
+    const float t = (pos[0] - F32(node, 0)) * F32(node, 0x50) + (pos[1] - F32(node, 4)) * F32(node, 0x54) + (pos[2] - F32(node, 8)) * F32(node, 0x58);
     if (t < 0.0f && U32(node, 0x60) != 0) node = U32(node, 0x60);
     SU32(d, 0x14, sec); SU32(d, 0x18, node); SU32(d, 0x1c, U32(node, 0x64));
     if (U32(node, 0x64) == 0) {   /* the section's last node: the next section's start (as 0050f090) */
@@ -125,7 +129,7 @@ static void marker_place(rx_addr d, rx_addr v) {
         if (first) { SU32(d, 0x14, first); SU32(d, 0x18, U32(first, 0)); SU32(d, 0x1c, U32(U32(first, 0), 0x64)); }
     }
     SU32(d, 0x90, U32(d, 0x1c));
-    SF32(d, 0x80, F32(v, 0xc0)); SF32(d, 0x84, F32(v, 0xc4)); SF32(d, 0x88, F32(v, 0xc8));
+    SF32(d, 0x80, pos[0]); SF32(d, 0x84, pos[1]); SF32(d, 0x88, pos[2]);
     const rx_addr adv = rx_driver_track_advance_rule(d);
     if (adv) {
         const rx_addr s2 = U32(d, 0x14);
@@ -144,7 +148,14 @@ int rx_practice_marker_settle(rx_addr d) {
     if (!g_marker_pending || !d || d != rx_lap_log_driver) return 0;
     const rx_addr p = U32(d, 0x74), v = p ? U32(p, 0x1ac) : 0;
     if (!v || F32(p, 0x116c) > 0.0f) return 1;   /* the respawn's reset still runs (the vehicle is placed when it runs out) */
-    marker_place(d, v);
+    const float pos[4] = {F32(v, 0xc0), F32(v, 0xc4), F32(v, 0xc8), F32(v, 0xcc)}, dir[4] = {F32(v, 0x130), F32(v, 0x134), F32(v, 0x138), F32(v, 0x13c)};
+    marker_place(d, pos, dir);
     if (++g_marker_settled >= 2) g_marker_pending = 0;   /* that frame and the next (the vehicle's position follows its placement) */
     return g_marker_pending;
+}
+
+void rx_practice_marker_place_now(rx_addr d, const float pos[3], const float dir[3]) {
+    if (!g_marker_pending || !d || d != rx_lap_log_driver || !pos || !dir) return;
+    const float p4[4] = {pos[0], pos[1], pos[2], 1.0f}, d4[4] = {dir[0], dir[1], dir[2], 0.0f};
+    marker_place(d, p4, d4);
 }

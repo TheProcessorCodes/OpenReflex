@@ -116,6 +116,7 @@ namespace Reflex.Port.OriginalWorld
         void Begin()
         {
             content = level.Content; propById.Clear(); scrollById.Clear(); movedSet.Clear(); hiddenSet.Clear(); matchedIds.Clear(); matched = 0; lock (gate) { lastCoreProps.Clear(); pending.Clear(); textureCount = 0; }
+            raceLayout = false; heldPoses.Clear(); heldLate.Clear();   // (a new level: the old one's held bales went with it)
             foreach (var inst in content.instances)
                 if (inst.transform && Array.IndexOf(PropTypes, inst.entityType) >= 0) propById[inst.entityId] = inst.transform;
             scrollList = content.ScrollingInstances();
@@ -208,7 +209,11 @@ namespace Reflex.Port.OriginalWorld
             if (level.Content != content) Begin();
             if (!runtime) runtime = level.runtime ? level.runtime : FindAnyObjectByType<OriginalWorldRuntime>();
             var sim = runtime && runtime.Running ? runtime.SimDriver : null;
-            if (sim != boundSim) { boundSim = sim; wantAll = true; lock (gate) lastCoreProps.Clear(); Interlocked.Exchange(ref queued, 0); }
+            if (sim != boundSim)
+            {
+                if (raceLayout && boundSim != null) HoldRaceLayout(false);   // (the held world went: its successor draws the game's own bales)
+                boundSim = sim; wantAll = true; lock (gate) lastCoreProps.Clear(); Interlocked.Exchange(ref queued, 0);
+            }
             collectCore ??= w => Collect(w, true);
             collectLegacy ??= w => Collect(w, false);
             if (sim != null && (propsExport || textureExport) && Interlocked.Exchange(ref queued, 1) == 0)
@@ -227,13 +232,9 @@ namespace Reflex.Port.OriginalWorld
             foreach (var kv in drain)
             {
                 if (!propById.TryGetValue(kv.Key, out var t) || !t) continue;
-                var u = kv.Value;
                 if (matchedIds.Add(kv.Key)) matched = matchedIds.Count;
-                ReflexLevelContent.ApplyMatrix(t, u.matrix);
-                if ((u.flags & ReflexPropsNative.FlagMoved) != 0) movedSet.Add(kv.Key); else movedSet.Remove(kv.Key);
-                moved = movedSet.Count;
-                bool hide = (u.flags & ReflexPropsNative.FlagVisible) == 0;
-                SetHidden(t, hide);
+                if (raceLayout && heldPoses.ContainsKey(t)) { heldLate[kv.Key] = kv.Value; continue; }   // (held: the game's state kept for the release)
+                ApplyUpdate(kv.Key, t, kv.Value);
             }
 
             if (!animateTextures) return;
@@ -268,6 +269,67 @@ namespace Reflex.Port.OriginalWorld
                 double t = Time.time - startTime;
                 foreach (var s in scrollList) SetScroll(s.renderer, new Vector4(ReflexLevelContent.ScrollOffset(s.periodU, t), ReflexLevelContent.ScrollOffset(s.periodV, t), 1, 0));
             }
+        }
+
+        void ApplyUpdate(int id, Transform t, PropUpdate u)
+        {
+            ReflexLevelContent.ApplyMatrix(t, u.matrix);
+            if ((u.flags & ReflexPropsNative.FlagMoved) != 0) movedSet.Add(id); else movedSet.Remove(id);
+            moved = movedSet.Count;
+            SetHidden(t, (u.flags & ReflexPropsNative.FlagVisible) == 0);
+        }
+
+        // ---- WATCH GHOST's racing layout (Leaderboards/RxGhostWatch): the tuff blocks drawn as they stand once a lap race is under way.
+        // The start layout (bale_start, core/game/build_activity_records.c, a mode 1 race such as PRACTICE): every PopDownBale standing at
+        // its place, every PopUpBale hidden 5 below it. They change only when a vehicle leaves their LinkedTriggerID ("PopUpBaleTrigger")
+        // with the race InProgress (core/game/world_scene_handlers.c: PopDown lowered and hidden, PopUp raised to its place and drawn,
+        // fx_world.c bale_tick), and never back until the activity restarts; a held watch world never gets there, and no export moves an
+        // entity, so the layout of every flying lap is drawn here: PopDown hidden, PopUp at its scene placement and drawn. Drawing only (the
+        // watched ghost is posed from data, nothing collides); while held the game's reports for these props are kept, and the release puts
+        // back what was drawn before and then the game's reports that came meanwhile.
+        bool raceLayout;
+        struct HeldPose { public Vector3 position; public Quaternion rotation; public Vector3 scale; public bool hidden; }
+        readonly Dictionary<Transform, HeldPose> heldPoses = new Dictionary<Transform, HeldPose>();
+        readonly Dictionary<int, PropUpdate> heldLate = new Dictionary<int, PropUpdate>();
+
+        /// The racing layout held (on) or released (off: the game's own state drawn again). Main thread. On: the number of bales held.
+        public int HoldRaceLayout(bool on)
+        {
+            if (!on)
+            {
+                if (!raceLayout) return 0;
+                raceLayout = false;
+                foreach (var kv in heldPoses)
+                {
+                    var t = kv.Key; if (!t) continue; var h = kv.Value;
+                    t.SetPositionAndRotation(h.position, h.rotation); t.localScale = h.scale;
+                    SetHidden(t, h.hidden);
+                }
+                foreach (var kv in heldLate) if (propById.TryGetValue(kv.Key, out var t) && t) ApplyUpdate(kv.Key, t, kv.Value);
+                heldPoses.Clear(); heldLate.Clear();
+                return 0;
+            }
+            if (!level || level.Content == null) return 0;
+            if (level.Content != content) Begin();
+            raceLayout = true;
+            float ms = level.MapScale;   // MAP SCALE: the level matrix's translation in the scaled world (ApplyMatrix sets world values under the scaled root)
+            foreach (var inst in content.instances)
+            {
+                bool up = inst.entityType == "PopUpBaleRSData", down = inst.entityType == "PopDownBaleRSData";
+                if (!up && !down) continue;
+                var t = inst.transform;
+                if (!t || heldPoses.ContainsKey(t)) continue;
+                heldPoses[t] = new HeldPose { position = t.position, rotation = t.rotation, scale = t.localScale, hidden = IsHidden(t) };
+                if (up && inst.matrix != null && inst.matrix.Length >= 16)
+                {   // (raised: the scene placement, bale_positions' +0x1d0; its translation moved by MAP SCALE as OriginalSceneryModels.ScaledLevel does,
+                    // the axes left alone: the scenery root supplies the scale)
+                    var m = inst.matrix;
+                    if (ms != 1f) { m = (float[])m.Clone(); m[12] *= ms; m[13] *= ms; m[14] *= ms; }
+                    ReflexLevelContent.ApplyMatrix(t, m);
+                }
+                SetHidden(t, down);
+            }
+            return heldPoses.Count;
         }
 
         void SetScroll(Renderer r, Vector4 v)

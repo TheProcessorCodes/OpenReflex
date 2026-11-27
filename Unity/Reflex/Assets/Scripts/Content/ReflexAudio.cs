@@ -22,6 +22,8 @@
 //     fall back to ENG voice).
 // Every event also carries the game's volume channel (ReflexChannel: Engine / Crowd / DriveOn / Skid / Scenario / VoiceOver / UI /
 // Music / Effects, MXRegistry.xml VolumeChannels) and its max-playbacks limit and behaviour (FEV event header).
+// An imported MX vs ATV Alive engine set (AliveEngineSets) is a library of its own (BuildAliveSet): its folder's FEV and PCM16 FSB, not the
+// install's packages, with the recordings' sync points (syncs) that drive Alive's engine state machine (OriginalWorld/AliveEngineAudio).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -244,7 +246,7 @@ namespace Reflex.Port.Content
         }
 
         sealed class Proj { public Fev fev; public string db, package; public Dictionary<string, Rfx.Asset> banks = new Dictionary<string, Rfx.Asset>(StringComparer.Ordinal); }
-        sealed class BankInfo { public Rfx.Asset asset; public ReflexFmod.Fsb fsb; public string id, dir; public Dictionary<int, (string stem, string file, ReflexFmod.Sample s)> samples; public string label; }
+        sealed class BankInfo { public Rfx.Asset asset; public ReflexFmod.Fsb fsb; public string id, dir; public Dictionary<int, (string stem, string file, ReflexFmod.Sample s)> samples; public string label; public string codec; /* null: probed per sample */ }
 
         /// Builds the library of a level ("NAT_Concord", "FR_Alpine"). Reads the level's database, the global audio databases and
         /// their wave banks (headers only are kept; sample data stays in the bank images). Thread-safe w.r.t. the Unity API.
@@ -400,6 +402,66 @@ namespace Reflex.Port.Content
 
         readonly Dictionary<string, ReflexWave> waveByKey = new Dictionary<string, ReflexWave>(StringComparer.Ordinal);
 
+        // ------------------------------------------------------------------------------------------------ an MX vs ATV Alive engine set
+        /// The sync points of the library's waves that have any (wave key -> (sample position, name) in file order): the markers of Alive's
+        /// engine recordings (Run_<list>, Goto_<State>, Halt_<list>) that drive its engine state machine. Empty for Reflex's libraries.
+        public readonly Dictionary<string, List<(int sample, string name)>> syncs = new Dictionary<string, List<(int sample, string name)>>(StringComparer.Ordinal);
+
+        /// The library of one imported Alive engine set (AliveEngineSets; core/plan/ALIVE_ENGINE_SOUNDS.md section 4), from its folder only
+        /// (not the Reflex install): its FEV v0x40 project renamed ALIVE_<PROJECT> (so it never meets a Reflex project; event paths
+        /// "alive_<project>/states/<event>"), every wave bank of the project read from the set's one FSB (PCM16), wave keys
+        /// "alive/<PROJECT>/<sample name>.wav" (codec pcm; "<name>~<index>" for names the FSB cut to the same text), every event on the Engine channel, and the waves' sync points.
+        public static ReflexAudioSet BuildAliveSet(AliveEngineSet s)
+        {
+            if (s == null) throw new ArgumentNullException(nameof(s));
+            var fev = ReflexFmod.ParseFev(File.ReadAllBytes(s.FevPath));
+            if (fev == null) throw new InvalidDataException(s.project + ".fev is not an FMOD FEV1 v0x3a / v0x40 project");
+            var fsb = ReflexFmod.ParseFsb(File.ReadAllBytes(s.FsbPath));
+            fev.name = "ALIVE_" + s.project;
+            var set = new ReflexAudioSet { level = s.id };
+            var p = new Proj { fev = fev, db = AliveEngineSets.FolderName, package = s.project };
+            string dir = "alive/" + s.project;
+            var bi = new BankInfo { fsb = fsb, id = Hex(SHA1.Create().ComputeHash(fsb.blob)), dir = dir, label = s.project, codec = "pcm", samples = new Dictionary<int, (string, string, ReflexFmod.Sample)>() };
+            // FSB names are cut to 29 characters, so two recordings can share a stem (MX_50cc 7 and 8: 50_Accel_Half_Low_Off-Track_2...):
+            // those keys get the sample index ("<stem>~<index>.wav"), so every sample keeps its own wave.
+            var stems = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var x in fsb.samples) stems[x.Stem] = stems.TryGetValue(x.Stem, out int c) ? c + 1 : 1;
+            foreach (var x in fsb.samples)
+                bi.samples[x.index] = (x.Stem, dir + "/" + x.Stem + (stems[x.Stem] > 1 ? "~" + x.index.ToString(System.Globalization.CultureInfo.InvariantCulture) : "") + ".wav", x);
+            var banks = new Dictionary<(Proj, string), BankInfo>();
+            foreach (var wb in fev.waveBanks) banks[(p, wb.name)] = bi;          // one bank per Alive engine project, whatever its FEV name
+
+            var files = new HashSet<string>(StringComparer.Ordinal);
+            var order = new List<string>(); var byKey = new Dictionary<string, OriginalAudio.EventDef>(StringComparer.Ordinal);
+            foreach (var (gpath, ev) in fev.Events())
+            {
+                string key = fev.name + "/" + gpath + "/" + ev.name;
+                var def = BuildEvent(set, p, ev, banks);
+                def.channel = (int)ReflexChannel.Engine; def.maxPlaybacks = (int)ev.maxPlaybacks; def.maxPlaybacksBehavior = (int)ev.maxPlaybacksBehavior; def.priority = (int)ev.priority;
+                if (!byKey.ContainsKey(key)) order.Add(key);
+                byKey[key] = def;
+            }
+            var events = new List<OriginalAudio.EventDef>();
+            foreach (var key in order)
+            {
+                if (key.Substring(key.LastIndexOf('/') + 1).Contains("__")) continue;
+                var def = byKey[key];
+                def.path = key.ToLowerInvariant();
+                events.Add(def);
+                foreach (var d in def.defs) foreach (var f in d.files) if (f.Length > 0) files.Add(f);
+            }
+            var sorted = files.ToList(); sorted.Sort(string.CompareOrdinal);
+            set.library = new OriginalAudio.Library { level = s.id, events = events.ToArray(), files = sorted.ToArray() };
+            set.projects.Add(fev.name);
+            foreach (var f in sorted)
+                if (set.waveByKey.TryGetValue(f, out var w))
+                {
+                    set.waves[f] = w;
+                    if (w.sample.syncs.Count > 0) set.syncs[f] = w.sample.syncs;
+                }
+            return set;
+        }
+
         static string Hex(byte[] b) { var s = new StringBuilder(); foreach (var x in b) s.Append(x.ToString("x2")); return s.ToString(); }
         static Fev TryFev(Rfx.Install inst, Rfx.Asset a)
         {
@@ -526,7 +588,7 @@ namespace Reflex.Port.Content
             }
             if (s.file == null) return null;
             if (!waveByKey.ContainsKey(s.file))
-                waveByKey[s.file] = new ReflexWave { key = s.file, bank = bi.fsb, sample = s.s, bankId = bi.id, codec = ReflexFmod.CodecOf(s.s, bi.fsb.Head(s.s)) };
+                waveByKey[s.file] = new ReflexWave { key = s.file, bank = bi.fsb, sample = s.s, bankId = bi.id, codec = bi.codec ?? ReflexFmod.CodecOf(s.s, bi.fsb.Head(s.s)) };
             return s.file;
         }
     }

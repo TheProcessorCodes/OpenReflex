@@ -564,6 +564,8 @@ void rx_collision_entity_load(rx_addr e, const struct fmt_entity* rs) {
     rx_collision_entity_set_drive_on(e);
 }
 
+static rx_addr funnel_ref[2],funnel_world; static int funnel_layout=-1;
+void rx_funnel_layout(int raced);
 /* RXPK scenery: register the imported, tiled static triangle meshes in the normal Reflex world. */
 void rx_modtrack_add_collision(rx_addr world) {
     if (!fmt_modtrack_collision_claim(world)) return;
@@ -608,4 +610,55 @@ void rx_modtrack_add_collision(rx_addr world) {
         RX_FRAME_LEAVE(F,0x70);free(scaled);total+=nv/3;
     }
     fprintf(stderr,"rxcore: MTX scenery collision: %u chunks, %u triangles\n",chunks,total);
+    /* The funnel blockers (fmt_modtrack.h): each set one static shape of its own, at its start pose (down standing, up `distance`
+     * under the ground) and at its raced pose; rx_funnel_layout switches which of them collide. */
+    funnel_world=0;
+    for(int set=0;set<2&&fmt_modtrack_funnel();set++) {
+        uint32_t nv=0;float move[4];const float* points=fmt_modtrack_funnel_set(set,&nv,move);
+        funnel_ref[set]=0;
+        if(!points||!nv)continue;
+        /* the pose a rider can meet: the down set as placed, the up set raised */
+        float* v=malloc(nv*3*sizeof(float));if(!v)continue;
+        for(uint32_t i=0;i<nv;i++)for(int k=0;k<3;k++)v[3*i+k]=(points[3*i+k]+(set?move[k]*move[3]:0))*scale;
+        float mn[3]={v[0],v[1],v[2]},mx[3]={v[0],v[1],v[2]},center[3];
+        for(uint32_t i=0;i<nv;i++)for(int k=0;k<3;k++){float f=v[i*3+k];if(f<mn[k])mn[k]=f;if(f>mx[k])mx[k]=f;}
+        for(int k=0;k<3;k++)center[k]=(mn[k]+mx[k])*.5f;
+        rx_addr tri=rx_crt_aligned_malloc(nv*16,16);float radius2=0;
+        for(uint32_t i=0;i<nv;i++) {
+            float d2=0;
+            for(int k=0;k<3;k++){float f=(v[i*3+k]-center[k]);SF32(tri+i*16,k*4,f);d2+=f*f;}
+            SF32(tri+i*16,12,0);if(d2>radius2)radius2=d2;
+        }
+        RX_FRAME_ENTER(F,0x70);
+        rx_addr geometry=F,matrix=F+0x20,handle=F+0x60;
+        for(uint32_t i=0;i<0x70;i+=4)SU32(F,i,0);
+        SU32(geometry,0xc,tri);SU32(geometry,0x10,nv/3);SF32(geometry,0x14,sqrtf(radius2));
+        for(int k=0;k<4;k++)SF32(matrix,k*20,1);
+        for(int k=0;k<3;k++)SF32(matrix,0x30+k*4,center[k]);
+        rx_addr shape=rx_shape_triangles_construct(rx_crt_aligned_malloc(0x40,16),geometry);
+        SU32(shape,4,U32(shape,4)+1);SU32(handle,0,0x009765a8);SU32(handle,4,shape);
+        rx_addr entity=rx_collision_entity_create();
+        copy_words(entity+0x30,matrix,0x40);copy_words(entity+0xc0,matrix,0x40);
+        SU32(entity,0x198,rx_phys_props_find(rx_phys_props_get(),"Terrain"));SU8(entity,0x19c,1);
+        rx_static_add_shape(world,entity+0x15c,matrix,handle,1,U32(entity,0x198));
+        rx_addr ref=U32(entity,0x160),vector=world+0x19b4;
+        SU32(U32(vector,0xc)+(U32(ref,8)<<6),0x30,entity);
+        funnel_ref[set]=ref;funnel_world=world;
+        rx_collision_shape_release(shape);rx_crt_aligned_free(tri);
+        RX_FRAME_LEAVE(F,0x70);free(v);
+    }
+    if(funnel_world){funnel_layout=-1;rx_funnel_layout(0);fprintf(stderr,"rxcore: funnel blockers: %u + %u collision sets\n",funnel_ref[0]?1u:0u,funnel_ref[1]?1u:0u);}
+}
+
+/* The funnel blockers' collision: layout 0 (the start: the down set solid), 1 (raced: the up set solid), 2 (moving: neither). */
+int rx_funnel_layout_now(void) { return funnel_world&&fmt_modtrack_funnel()?funnel_layout:-1; }
+void rx_funnel_layout(int raced) {
+    if(!funnel_world||!fmt_modtrack_funnel()||funnel_layout==raced)return;
+    for(int set=0;set<2;set++) {
+        const rx_addr ref=funnel_ref[set];if(!ref)continue;
+        const rx_addr world=U32(ref,4);const uint32_t idx=U32(ref,8);
+        if(idx>=(uint32_t)((int32_t)(U32(world,0x19c4)-U32(world,0x19c0))>>6))continue;
+        SU8(U32(world,0x19c0),0x40u*idx+0x38,raced==set?1:0);
+    }
+    funnel_layout=raced;
 }

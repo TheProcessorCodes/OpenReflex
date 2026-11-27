@@ -3,6 +3,20 @@
 #ifndef REFLEX_OBJECT_PROGRAMS_INCLUDED
 #define REFLEX_OBJECT_PROGRAMS_INCLUDED
 
+// MATERIALS: ENHANCED exports (ReflexVehiclePBR.hlsl; added by hand-run script, not by gen.py: a regeneration must keep them, as the w-perf2 wrapper):
+//   rfxExpN / rfxExpNOn  the program's own shading normal in world space (normal-mapped where the program is): the register its four-light rig
+//                        is lit with, written before the first light. Programs without the rig leave rfxExpNOn 0 (the vertex normal is used).
+//   rfxSunSpecKeep       multiplies the argument of the program's own sun highlight (sun . reflection, before its pow): 1 = the original's;
+//                        0 where the ENHANCED clear coat gives the highlight instead (one highlight, not two).
+//   rfxExpAlb / rfxExpAlbOn  the program's own albedo (before its mud) where a material constant colours the surface (usr_wheel_color,
+//                        usr_mx_hub_color, usr_metal_color, usr_frame_color, usr_color: the part's colour option): a metal's reflectance.
+static float3 rfxExpN = float3(0, 1, 0);
+static float rfxExpNOn = 0;
+static float rfxSunSpecKeep = 1;
+static float3 rfxExpAlb = float3(0, 0, 0);
+static float rfxExpAlbOn = 0;
+
+
 // static vertex program of Boots_FNL, Boots_UI__FNL, Chestprt_cloth_FNL, Chestprt_frnt_FNL, Chestprt_frnt_Opaque_FNL, Chestprt_plst_FNL, Goggle_UI_FNL, Helmet_UI_FNL, Helmet_matte_UI_FNL, NckBrace_plstc_FNL, Template_ATV_MX_Engine, Template_ATV_Shock_Metal, Template_Body_Boots_NM@928d4a62, Template_Body_Jersey@5437977f, Template_Body_JerseyDyn_Cool@2408a532, Template_Body_JerseyDyn_Warm@f02af1d2, Template_Body_Pants@5c709abf, Template_Body_Skin@c593d6e0, Template_Body_Skin_Nylon@b17e27a8, Template_Chestprt_frnt, Template_Chestprt_plst, Template_Helmet_GStrap, Template_Machines_Body, Template_Machines_Body_DMG, Template_Machines_Engine, Template_Machines_Frame, Template_Vehicle_Seat, Template_Vehicle_Wheel_FNL, Template_Vehicle_Wheel_UI_FNL, Template_tire_ATV_FNL, Template_tire_FNL
 void RfxVs0(RfxVsIn v, inout RfxV2F o)
 {
@@ -1029,6 +1043,7 @@ float4 RfxPs0(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 06f0 nrm_pp
     r0.xyz = r0.yyy * r2.xyz + r0.xzw;   // 06fc mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 0710 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 071c dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 072c mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 073c dp3_sat_pp
@@ -1143,6 +1158,7 @@ float4 RfxPs1(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 078c nrm_pp
     r0.xyz = r0.yyy * r2.xyz + r0.xzw;   // 0798 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 07ac nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 07b8 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 07c8 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 07d8 dp3_sat_pp
@@ -1340,6 +1356,7 @@ float4 RfxPs3(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 06f8 nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 0704 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 0718 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0724 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 0734 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 0744 dp3_sat_pp
@@ -1432,6 +1449,7 @@ float4 RfxPs4(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 07a4 nrm_pp
     r0.xyz = r0.yyy * r2.xyz + r0.xzw;   // 07b0 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 07c4 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 07d0 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 07e0 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 07f0 dp3_sat_pp
@@ -1504,7 +1522,7 @@ float4 RfxPs4(RfxV2F i, bool face)
     r5 = (SAMPLE_TEXTURECUBE_BIAS(_Cube4, sampler_Cube4, r4.xyzw.xyz, r4.xyzw.w)).xyzw;   // 0c40 texldb_pp
     r3.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0c50 nrm_pp
     r1.x = saturate(dot(r3.xyz, r1.xyz));   // 0c5c dp3_sat_pp
-    r1.y = saturate(dot(r3.xyz, r4.xyz));   // 0c6c dp3_sat_pp
+    r1.y = saturate(dot(r3.xyz, r4.xyz)); r1.y *= rfxSunSpecKeep;   // 0c6c dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.w = RfxPow(r1.y, k3.x);   // 0c7c pow_pp
     r1.yzw = r2.www * r2.xyz;   // 0c8c mul
     r1.yzw = r1.yzw * _RfxSunColor.xyz;   // 0c9c mul
@@ -1558,6 +1576,7 @@ float4 RfxPs5(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 076c nrm_pp
     r0.xyz = r0.yyy * r2.xyz + r0.xzw;   // 0778 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 078c nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0798 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 07a8 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 07b8 dp3_sat_pp
@@ -1625,7 +1644,7 @@ float4 RfxPs5(RfxV2F i, bool face)
     r4 = (SAMPLE_TEXTURECUBE_BIAS(_Cube4, sampler_Cube4, r3.xyzw.xyz, r3.xyzw.w)).xyzw;   // 0bb0 texldb_pp
     r5.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0bc0 nrm_pp
     r1.x = saturate(dot(r5.xyz, r1.xyz));   // 0bcc dp3_sat_pp
-    r1.y = saturate(dot(r5.xyz, r3.xyz));   // 0bdc dp3_sat_pp
+    r1.y = saturate(dot(r5.xyz, r3.xyz)); r1.y *= rfxSunSpecKeep;   // 0bdc dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.w = RfxPow(r1.y, k2.x);   // 0bec pow_pp
     r2.xyz = r2.www * r2.xyz;   // 0bfc mul
     r2.xyz = r2.xyz * _RfxSunColor.xyz;   // 0c0c mul
@@ -1683,6 +1702,7 @@ float4 RfxPs6(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 0774 nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 0780 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 0794 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 07a0 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 07b0 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 07c0 dp3_sat_pp
@@ -1746,7 +1766,7 @@ float4 RfxPs6(RfxV2F i, bool face)
     r2.w = r2.w + r2.w;   // 0b7c add
     r3.xyz = r1.xyz * (-r2.www) + r3.xyz;   // 0b8c mad_pp
     r4.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0ba0 nrm_pp
-    r2.w = saturate(dot(r4.xyz, (-r3.xyz)));   // 0bac dp3_sat_pp
+    r2.w = saturate(dot(r4.xyz, (-r3.xyz))); r2.w *= rfxSunSpecKeep;   // 0bac dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = saturate(dot(r4.xyz, r1.xyz));   // 0bbc dp3_sat_pp
     r3.x = min(r0.w, r1.x);   // 0bcc min
     r0.w = RfxPow(r2.w, k1.w);   // 0bdc pow_pp
@@ -1851,7 +1871,7 @@ float4 RfxPs9(RfxV2F i, bool face)
     r2.w = r2.w + r2.w;   // 062c add_pp
     r0.yzw = r2.xyz * (-r2.www) + r0.yzw;   // 063c mad_pp
     r2.x = saturate(dot(_RfxSunDir.xyz, r2.xyz));   // 0650 dp3_sat_pp
-    r0.y = saturate(dot(r1.xyz, (-r0.yzw)));   // 0660 dp3_sat_pp
+    r0.y = saturate(dot(r1.xyz, (-r0.yzw))); r0.y *= rfxSunSpecKeep;   // 0660 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = RfxPow(r0.y, k1.z);   // 0670 pow_pp
     r3.x = dot(i.t0.xyzw, RfxWorldProj0().xyzw);   // 0680 dp4_pp
     r3.y = dot(i.t0.xyzw, RfxWorldProj1().xyzw);   // 0690 dp4_pp
@@ -1914,6 +1934,7 @@ float4 RfxPs10(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 070c nrm_pp
     r0.xyz = r0.yyy * r2.xyz + r0.xzw;   // 0718 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 072c nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0738 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 0748 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 0758 dp3_sat_pp
@@ -1976,7 +1997,7 @@ float4 RfxPs10(RfxV2F i, bool face)
     r1.w = r1.w + r1.w;   // 0b08 add
     r2.xyz = r1.xyz * (-r1.www) + r2.xyz;   // 0b18 mad_pp
     r4.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0b2c nrm_pp
-    r1.w = saturate(dot(r4.xyz, (-r2.xyz)));   // 0b38 dp3_sat_pp
+    r1.w = saturate(dot(r4.xyz, (-r2.xyz))); r1.w *= rfxSunSpecKeep;   // 0b38 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = saturate(dot(r4.xyz, r1.xyz));   // 0b48 dp3_sat_pp
     r2.x = min(r0.w, r1.x);   // 0b58 min
     r0.w = RfxPow(r1.w, k1.z);   // 0b68 pow_pp
@@ -2003,6 +2024,7 @@ float4 RfxPs11(RfxV2F i, bool face)
     r0.x = r0.y + r0.x;   // 0628 add_pp
     r1.xyz = RfxNrm(i.t1.xyz).xyz;   // 0638 nrm_pp
     r0.xyz = r0.xxx * r1.xyz;   // 0644 mul_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 0654 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 0664 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 0674 dp3_sat_pp
@@ -2128,6 +2150,7 @@ float4 RfxPs12(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 0820 nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 082c mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 0840 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 084c dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 085c mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 086c dp3_sat_pp
@@ -2318,6 +2341,7 @@ float4 RfxPs14(RfxV2F i, bool face)
     r2.xyz = r2.xyz * r4.xyz;   // 082c mul_pp
     r5.xyz = r1.www * _RfxBounceColor.xyz;   // 083c mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r5.xyz;   // 084c mad_pp
+    rfxExpN = r3.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r3.xyz));   // 0860 dp3_sat_pp
     r5.xyz = r1.www * _RfxLightColor1.xyz;   // 0870 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r3.xyz));   // 0880 dp3_sat_pp
@@ -2337,7 +2361,7 @@ float4 RfxPs14(RfxV2F i, bool face)
     r1.w = r1.w + r1.w;   // 096c add_pp
     r2.xyz = r3.xyz * (-r1.www) + r2.xyz;   // 097c mad_pp
     r4.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0990 nrm_pp
-    r1.w = saturate(dot(r4.xyz, (-r2.xyz)));   // 099c dp3_sat_pp
+    r1.w = saturate(dot(r4.xyz, (-r2.xyz))); r1.w *= rfxSunSpecKeep;   // 099c dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.x = saturate(dot(r4.xyz, r3.xyz));   // 09ac dp3_sat_pp
     r3.x = min(r0.x, r2.x);   // 09bc min
     r0.x = RfxPow(r1.w, k0.y);   // 09cc pow_pp
@@ -2389,6 +2413,7 @@ float4 RfxPs15(RfxV2F i, bool face)
     r0.xyw = r0.yyy * r3.xyz + r1.xyz;   // 0778 mad_pp
     r0.xyz = r0.xyw * r0.zzz;   // 078c mul_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 079c nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 07a8 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 07b8 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 07c8 dp3_sat_pp
@@ -2455,7 +2480,7 @@ float4 RfxPs15(RfxV2F i, bool face)
     r2.w = r2.w + r2.w;   // 0bbc add
     r3.xyz = r1.xyz * (-r2.www) + r3.xyz;   // 0bcc mad_pp
     r4.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0be0 nrm_pp
-    r2.w = saturate(dot(r4.xyz, (-r3.xyz)));   // 0bec dp3_sat_pp
+    r2.w = saturate(dot(r4.xyz, (-r3.xyz))); r2.w *= rfxSunSpecKeep;   // 0bec dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = saturate(dot(r4.xyz, r1.xyz));   // 0bfc dp3_sat_pp
     r3.x = min(r0.w, r1.x);   // 0c0c min
     r0.w = RfxPow(r2.w, k0.w);   // 0c1c pow_pp
@@ -2502,6 +2527,7 @@ float4 RfxPs16(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 07a4 nrm_pp
     r0.xyz = r0.yyy * r2.xyz + r0.xzw;   // 07b0 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 07c4 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 07d0 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 07e0 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 07f0 dp3_sat_pp
@@ -2801,6 +2827,7 @@ float4 RfxPs20(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 0718 nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 0724 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 0738 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0744 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 0754 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 0764 dp3_sat_pp
@@ -2920,6 +2947,7 @@ float4 RfxPs23(RfxV2F i, bool face)
     const float4 k1 = float4(0.25, 1.0, 0.150000006, 0.300000012);
     float4 r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0, r5 = 0;
     r0.xyz = RfxNrm(i.t1.xyz).xyz;   // 042c nrm_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 0438 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 0448 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 0458 dp3_sat_pp
@@ -3004,7 +3032,7 @@ float4 RfxPs24(RfxV2F i, bool face)
     r0.w = r0.w + r0.w;   // 0464 add_pp
     r1.xyz = r2.xyz * (-r0.www) + r1.xyz;   // 0474 mad_pp
     r3.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0488 nrm_pp
-    r0.w = saturate(dot(r3.xyz, (-r1.xyz)));   // 0494 dp3_sat_pp
+    r0.w = saturate(dot(r3.xyz, (-r1.xyz))); r0.w *= rfxSunSpecKeep;   // 0494 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = saturate(dot(r3.xyz, r2.xyz));   // 04a4 dp3_sat_pp
     r1.y = saturate(dot(_RfxSunDir.xyz, r2.xyz));   // 04b4 dp3_sat_pp
     r1.z = RfxPow(r0.w, k0.y);   // 04c4 pow_pp
@@ -3039,6 +3067,7 @@ float4 RfxPs24(RfxV2F i, bool face)
     r2.xy = k1.zz * i.t2.xy;   // 069c mul
     r2 = (SAMPLE_TEXTURE2D(_Tex0, sampler_Tex0, RfxUV(r2.xyzw.xy))).xyzw;   // 06ac texld_pp
     r3 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t2.xyzw.xy))).xyzw;   // 06bc texld_pp
+    rfxExpAlb = r3.yyy; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r2.xyz = usr_mud_color.xyz * r2.xyz + (-r3.yyy);   // 06cc mad_pp
     r0.w = r3.z + usr_mud_amount.w;   // 06e0 add_pp
     r0.w = saturate(r0.w + (-k0.z));   // 06f0 add_sat_pp
@@ -3095,7 +3124,7 @@ float4 RfxPs25(RfxV2F i, bool face)
     r3.y = RfxPow(abs(r2.w), usr_falloff_tightness.w);   // 0670 pow_pp
     r0.yzw = r2.xyz * (-r3.xxx) + r0.yzw;   // 0680 mad_pp
     r2.x = saturate(dot(_RfxSunDir.xyz, r2.xyz));   // 0694 dp3_sat_pp
-    r0.y = saturate(dot(r1.xyz, (-r0.yzw)));   // 06a4 dp3_sat_pp
+    r0.y = saturate(dot(r1.xyz, (-r0.yzw))); r0.y *= rfxSunSpecKeep;   // 06a4 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = RfxPow(r0.y, k0.y);   // 06b4 pow_pp
     r4.x = dot(i.t0.xyzw, RfxWorldProj0().xyzw);   // 06c4 dp4_pp
     r4.y = dot(i.t0.xyzw, RfxWorldProj1().xyzw);   // 06d4 dp4_pp
@@ -3111,6 +3140,7 @@ float4 RfxPs25(RfxV2F i, bool face)
     r1.xyz = r1.xyz * _RfxSunColor.xyz;   // 0774 mul
     r1.xyz = r1.www * r1.xyz;   // 0784 mul_pp
     r2 = (SAMPLE_TEXTURE2D(_Tex2, sampler_Tex2, RfxUV(i.t2.xyzw.xy))).xyzw;   // 0794 texld_pp
+    rfxExpAlb = r2.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r3.xzw = r2.xyz * k1.zzz;   // 07a4 mul_pp
     r4.xyz = r2.xyz * usr_falloff_amount.www + (-r3.xzw);   // 07b4 mad_pp
     r3.xyz = r3.yyy * r4.xyz + r3.xzw;   // 07c8 mad_pp
@@ -3155,7 +3185,7 @@ float4 RfxPs26(RfxV2F i, bool face)
     r0.w = r0.w + r0.w;   // 0464 add_pp
     r1.xyz = r2.xyz * (-r0.www) + r1.xyz;   // 0474 mad_pp
     r3.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0488 nrm_pp
-    r0.w = saturate(dot(r3.xyz, (-r1.xyz)));   // 0494 dp3_sat_pp
+    r0.w = saturate(dot(r3.xyz, (-r1.xyz))); r0.w *= rfxSunSpecKeep;   // 0494 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = saturate(dot(r3.xyz, r2.xyz));   // 04a4 dp3_sat_pp
     r1.y = saturate(dot(_RfxSunDir.xyz, r2.xyz));   // 04b4 dp3_sat_pp
     r1.z = RfxPow(r0.w, k0.y);   // 04c4 pow_pp
@@ -3190,6 +3220,7 @@ float4 RfxPs26(RfxV2F i, bool face)
     r2.xy = k1.zz * i.t2.xy;   // 069c mul
     r2 = (SAMPLE_TEXTURE2D(_Tex0, sampler_Tex0, RfxUV(r2.xyzw.xy))).xyzw;   // 06ac texld_pp
     r3 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t2.xyzw.xy))).xyzw;   // 06bc texld_pp
+    rfxExpAlb = r3.yyy; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r2.xyz = usr_mud_color.xyz * r2.xyz + (-r3.yyy);   // 06cc mad_pp
     r0.w = r3.z + usr_mud_amount.w;   // 06e0 add_pp
     r0.w = saturate(r0.w + (-k0.z));   // 06f0 add_sat_pp
@@ -3264,6 +3295,7 @@ float4 RfxPs27(RfxV2F i, bool face)
     r4.xyz = usr_frame_color.xyz * r0.www + r4.xyz;   // 0824 mad_pp
     r5 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t2.xyzw.xy))).xyzw;   // 0838 texld_pp
     r4.xyz = r4.xyz * r5.yyy;   // 0848 mul_pp
+    rfxExpAlb = usr_frame_color.xyz * r5.yyy; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r0.w = r5.x + usr_mud_amount.w;   // 0858 add_pp
     r0.w = saturate(r0.w + (-k0.z));   // 0868 add_sat_pp
     r3.xyz = usr_mud_color.xyz * r3.xyz + (-r4.xyz);   // 0878 mad_pp
@@ -3271,6 +3303,7 @@ float4 RfxPs27(RfxV2F i, bool face)
     r0.xyz = r0.xyz * r3.xyz;   // 08a0 mul_pp
     r4.xyz = r1.www * _RfxBounceColor.xyz;   // 08b0 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r4.xyz;   // 08c0 mad_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 08d4 dp3_sat_pp
     r4.xyz = r0.www * _RfxLightColor1.xyz;   // 08e4 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 08f4 dp3_sat_pp
@@ -3342,6 +3375,7 @@ float4 RfxPs28(RfxV2F i, bool face)
     r0.yzw = r0.yzw * r3.xyz;   // 082c mul_pp
     r4.xyz = r1.www * _RfxBounceColor.xyz;   // 083c mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r4.xyz;   // 084c mad_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 0860 dp3_sat_pp
     r4.xyz = r1.www * _RfxLightColor1.xyz;   // 0870 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 0880 dp3_sat_pp
@@ -3431,6 +3465,7 @@ float4 RfxPs29(RfxV2F i, bool face)
     r2.xyz = r2.xyz * r4.xyz;   // 081c mul_pp
     r5.xyz = r1.www * _RfxBounceColor.xyz;   // 082c mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r5.xyz;   // 083c mad_pp
+    rfxExpN = r3.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r3.xyz));   // 0850 dp3_sat_pp
     r5.xyz = r1.www * _RfxLightColor1.xyz;   // 0860 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r3.xyz));   // 0870 dp3_sat_pp
@@ -3458,7 +3493,7 @@ float4 RfxPs29(RfxV2F i, bool face)
     r6.xyz = (-r3.xyz);   // 09e0 mov_pp
     r6.w = k1.z;   // 09ec mov_pp
     r7 = (RfxReflection(r6.xyzw.xyz, r6.xyzw.w)).xyzw;   // 09f8 texldb_pp
-    r1.w = saturate(dot(r2.xyz, r6.xyz));   // 0a08 dp3_sat_pp
+    r1.w = saturate(dot(r2.xyz, r6.xyz)); r1.w *= rfxSunSpecKeep;   // 0a08 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.x = RfxPow(r1.w, k2.x);   // 0a18 pow_pp
     r0.yzw = r0.yzw * r2.xxx;   // 0a28 mul
     r0.yzw = r2.www * r0.yzw;   // 0a38 mul_pp
@@ -3519,7 +3554,7 @@ float4 RfxPs30(RfxV2F i, bool face)
     r3.y = RfxPow(abs(r1.w), usr_falloff_tightness.w);   // 0674 pow_pp
     r2.yzw = r0.yzw * (-r3.xxx) + r2.yzw;   // 0684 mad_pp
     r0.y = saturate(dot(_RfxSunDir.xyz, r0.yzw));   // 0698 dp3_sat_pp
-    r0.z = saturate(dot(r1.xyz, (-r2.yzw)));   // 06a8 dp3_sat_pp
+    r0.z = saturate(dot(r1.xyz, (-r2.yzw))); r0.z *= rfxSunSpecKeep;   // 06a8 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = RfxPow(r0.z, usr_specular_tightness.w);   // 06b8 pow_pp
     r4.x = dot(i.t0.xyzw, RfxWorldProj0().xyzw);   // 06c8 dp4_pp
     r4.y = dot(i.t0.xyzw, RfxWorldProj1().xyzw);   // 06d8 dp4_pp
@@ -3534,6 +3569,7 @@ float4 RfxPs30(RfxV2F i, bool face)
     r0.xyz = r0.yyy * r0.xzw;   // 0768 mul_pp
     r1.xyz = r2.xxx * r2.yzw;   // 0778 mul_pp
     r2 = (SAMPLE_TEXTURE2D(_Tex0, sampler_Tex0, RfxUV(i.t2.xyzw.xy))).xyzw;   // 0788 texld_pp
+    rfxExpAlb = r2.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r3.xzw = r2.xyz * k1.zzz;   // 0798 mul_pp
     r4.xyz = r2.xyz * usr_falloff_amount.www + (-r3.xzw);   // 07a8 mad_pp
     r3.xyz = r3.yyy * r4.xyz + r3.xzw;   // 07bc mad_pp
@@ -3604,6 +3640,7 @@ float4 RfxPs31(RfxV2F i, bool face)
     r2.xyz = r1.www * (-r0.xyw) + r2.xyz;   // 08e4 mad_pp
     r2.xyz = r0.zzz * r3.xyz + r2.xyz;   // 08f8 mad_pp
     r4.xyz = RfxNrm(r2.xyz).xyz;   // 090c nrm_pp
+    rfxExpN = r4.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r4.xyz));   // 0918 dp3_sat_pp
     r2.xyz = r1.www * _RfxLightColor1.xyz;   // 0928 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r4.xyz));   // 0938 dp3_sat_pp
@@ -3681,7 +3718,7 @@ float4 RfxPs31(RfxV2F i, bool face)
     r5 = (RfxReflection(r0.xyzw.xyz, r0.xyzw.w)).xyzw;   // 0de0 texldb_pp
     r6.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0df0 nrm_pp
     r0.w = saturate(dot(r6.xyz, r3.xyz));   // 0dfc dp3_sat_pp
-    r0.x = saturate(dot(r6.xyz, r0.xyz));   // 0e0c dp3_sat_pp
+    r0.x = saturate(dot(r6.xyz, r0.xyz)); r0.x *= rfxSunSpecKeep;   // 0e0c dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r0.x = RfxLog(r0.x);   // 0e1c log_pp
     r0.xy = r0.xx * k3.xy;   // 0e28 mul_pp
     r2.w = min(r1.w, r0.w);   // 0e38 min
@@ -3768,6 +3805,7 @@ float4 RfxPs32(RfxV2F i, bool face)
     r0.xyz = r0.xyz * r3.xyz;   // 0880 mul_pp
     r4.xyz = r1.www * _RfxBounceColor.xyz;   // 0890 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r4.xyz;   // 08a0 mad_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 08b4 dp3_sat_pp
     r4.xyz = r0.www * _RfxLightColor1.xyz;   // 08c4 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 08d4 dp3_sat_pp
@@ -3847,6 +3885,7 @@ float4 RfxPs33(RfxV2F i, bool face)
     r0.xyz = r0.xyz * r3.xyz;   // 13bc mul_pp
     r4.xyz = r1.www * _RfxBounceColor.xyz;   // 13cc mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r4.xyz;   // 13dc mad_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 13f0 dp3_sat_pp
     r4.xyz = r0.www * _RfxLightColor1.xyz;   // 1400 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 1410 dp3_sat_pp
@@ -3911,6 +3950,7 @@ float4 RfxPs34(RfxV2F i, bool face)
     r0.w = saturate(dot(_RfxSunDir.xyz, r1.xyz));   // 056c dp3_sat_pp
     r0.xyz = r0.www * r0.xyz;   // 057c mul_pp
     r1 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t2.xyzw.xy))).xyzw;   // 058c texld_pp
+    rfxExpAlb = r1.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r0.xyz = r0.xyz * r1.xyz;   // 059c mul_pp
     r0.xyz = r1.xyz * i.t6.xyz + r0.xyz;   // 05ac mad_pp
     oC0.xyz = r0.xyz * i.t5.www + i.t5.xyz;   // 05c0 mad_pp
@@ -4015,6 +4055,7 @@ float4 RfxPs36(RfxV2F i, bool face)
     r0.w = saturate(dot(_RfxSunDir.xyz, r1.xyz));   // 0568 dp3_sat_pp
     r0.xyz = r0.www * r0.xyz;   // 0578 mul_pp
     r1 = (SAMPLE_TEXTURE2D(_Tex0, sampler_Tex0, RfxUV(i.t2.xyzw.xy))).xyzw;   // 0588 texld_pp
+    rfxExpAlb = r1.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r0.xyz = r0.xyz * r1.xyz;   // 0598 mul_pp
     r0.xyz = r1.xyz * i.t6.xyz + r0.xyz;   // 05a8 mad_pp
     oC0.xyz = r0.xyz * i.t5.www + i.t5.xyz;   // 05bc mad_pp
@@ -4080,6 +4121,7 @@ float4 RfxPs37(RfxV2F i, bool face)
     r0.xyz = r1.www * (-r0.xyz) + r1.xyz;   // 0950 mad_pp
     r0.xyz = r0.www * r4.xyz + r0.xyz;   // 0964 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 0978 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0984 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 0994 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 09a4 dp3_sat_pp
@@ -4146,7 +4188,7 @@ float4 RfxPs37(RfxV2F i, bool face)
     r6 = (RfxReflection(r5.xyzw.xyz, r5.xyzw.w)).xyzw;   // 0d94 texldb
     r7.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0da4 nrm_pp
     r1.x = saturate(dot(r7.xyz, r1.xyz));   // 0db0 dp3_sat_pp
-    r1.y = saturate(dot(r7.xyz, r5.xyz));   // 0dc0 dp3_sat_pp
+    r1.y = saturate(dot(r7.xyz, r5.xyz)); r1.y *= rfxSunSpecKeep;   // 0dc0 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.z = dot(_RfxSunDir.xyz, r5.xyz);   // 0dd0 dp3_pp
     r1.y = RfxLog(r1.y);   // 0de0 log_pp
     r1.yw = r1.yy * k3.yz;   // 0dec mul_pp
@@ -4198,7 +4240,7 @@ float4 RfxPs38(RfxV2F i, bool face)
     r0.w = r0.w + r0.w;   // 04d8 add_pp
     r0.xyz = r1.xyz * (-r0.www) + r0.xyz;   // 04e8 mad_pp
     r2.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 04fc nrm_pp
-    r0.x = saturate(dot(r2.xyz, (-r0.xyz)));   // 0508 dp3_sat_pp
+    r0.x = saturate(dot(r2.xyz, (-r0.xyz))); r0.x *= rfxSunSpecKeep;   // 0508 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r0.y = saturate(dot(r2.xyz, r1.xyz));   // 0518 dp3_sat_pp
     r0.z = saturate(dot(_RfxSunDir.xyz, r1.xyz));   // 0528 dp3_sat_pp
     r1.x = RfxPow(r0.x, k1.z);   // 0538 pow_pp
@@ -4277,7 +4319,7 @@ float4 RfxPs39(RfxV2F i, bool face)
     r0.w = r0.w + r0.w;   // 04d8 add_pp
     r0.xyz = r1.xyz * (-r0.www) + r0.xyz;   // 04e8 mad_pp
     r2.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 04fc nrm_pp
-    r0.x = saturate(dot(r2.xyz, (-r0.xyz)));   // 0508 dp3_sat_pp
+    r0.x = saturate(dot(r2.xyz, (-r0.xyz))); r0.x *= rfxSunSpecKeep;   // 0508 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r0.y = saturate(dot(r2.xyz, r1.xyz));   // 0518 dp3_sat_pp
     r0.z = saturate(dot(_RfxSunDir.xyz, r1.xyz));   // 0528 dp3_sat_pp
     r1.x = RfxPow(r0.x, k1.z);   // 0538 pow_pp
@@ -4495,6 +4537,7 @@ float4 RfxPs42(RfxV2F i, bool face)
     r2 = r0.xyzw + (-k0.zzzz);   // 065c add_pp
     r0.xyz = (-r2.www) * r0.xyz + r1.xyz;   // 066c mad_pp
     r1.xyz = RfxNrm(i.t1.xyz).xyz;   // 0680 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 068c dp3_sat_pp
     r3.xyz = r1.www * _RfxLightColor1.xyz;   // 069c mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 06ac dp3_sat_pp
@@ -4564,7 +4607,7 @@ float4 RfxPs42(RfxV2F i, bool face)
     r6.xyz = (-r1.xyz);   // 0ad4 mov_pp
     r6.w = k1.z;   // 0ae0 mov_pp
     r7 = (RfxReflection(r6.xyzw.xyz, r6.xyzw.w)).xyzw;   // 0aec texldb_pp
-    r1.x = saturate(dot(r3.xyz, r6.xyz));   // 0afc dp3_sat_pp
+    r1.x = saturate(dot(r3.xyz, r6.xyz)); r1.x *= rfxSunSpecKeep;   // 0afc dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.w = RfxPow(r1.x, k2.x);   // 0b0c pow_pp
     r1.xyz = r2.www * r2.xyz;   // 0b1c mul
     r1.xyz = r3.www * r1.xyz;   // 0b2c mul_pp
@@ -4671,6 +4714,7 @@ float4 RfxPs43(RfxV2F i, bool face)
     r1.w = saturate(dot(_RfxSunDir.zxy, r0.xyz));   // 0a04 dp3_sat_pp
     r4.xyz = r1.www * r4.xyz;   // 0a14 mul_pp
     r5 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t4.xyzw.xy))).xyzw;   // 0a24 texld_pp
+    rfxExpAlb = r5.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r4.xyz = r4.xyz * r5.xyz;   // 0a34 mul_pp
     r2.xyz = r5.xyz * r2.xyz + r4.xyz;   // 0a44 mad_pp
     r4 = float4(_WorldSpaceCameraPos, 1).xyzw + (-i.t0.xyzw);   // 0a58 add
@@ -4685,7 +4729,7 @@ float4 RfxPs43(RfxV2F i, bool face)
     r7 = (RfxReflection(r6.xyzw.xyz, r6.xyzw.w)).xyzw;   // 0ae0 texldb_pp
     r8.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0af0 nrm_pp
     r1.w = saturate(dot(r8.zxy, r0.xyz));   // 0afc dp3_sat_pp
-    r2.w = saturate(dot(r8.xyz, r6.xyz));   // 0b0c dp3_sat_pp
+    r2.w = saturate(dot(r8.xyz, r6.xyz)); r2.w *= rfxSunSpecKeep;   // 0b0c dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r3.w = RfxPow(r2.w, k3.y);   // 0b1c pow_pp
     r3.xyz = r3.www * r3.xyz;   // 0b2c mul
     r3.xyz = r3.xyz * _RfxSunColor.xyz;   // 0b3c mul
@@ -4788,6 +4832,7 @@ float4 RfxPs44(RfxV2F i, bool face)
     r2.xyz = lerp(usr_color.xyz, r1.www, r0.www);   // 0698 lrp_pp
     r1 = (SAMPLE_TEXTURE2D(_Tex0, sampler_Tex0, RfxUV(i.t2.xyzw.xy))).xyzw;   // 06ac texld_pp
     r1.yzw = r2.xyz * r1.xxx;   // 06bc mul_pp
+    rfxExpAlb = usr_color.xyz * r1.xxx; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     oC0.w = saturate(r1.x);   // 06cc mov_sat_pp
     r0.xyz = r0.xyz * r1.yzw;   // 06d8 mul_pp
     r0.xyz = r1.yzw * i.t6.xyz + r0.xyz;   // 06e8 mad_pp
@@ -4837,6 +4882,7 @@ float4 RfxPs45(RfxV2F i, bool face)
     r1.xyz = r1.www * r1.xyz;   // 0590 mul_pp
     r3 = (SAMPLE_TEXTURE2D(_Tex0, sampler_Tex0, RfxUV(i.t2.xyzw.xy))).xyzw;   // 05a0 texld_pp
     r3.xyz = r3.yyy * usr_color.xyz;   // 05b0 mul_pp
+    rfxExpAlb = r3.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r1.xyz = r1.xyz * r3.xyz;   // 05c0 mul_pp
     r1.xyz = r3.xyz * i.t6.xyz + r1.xyz;   // 05d0 mad_pp
     r3 = float4(_WorldSpaceCameraPos, 1).xyzw + (-i.t0.xyzw);   // 05e4 add
@@ -4847,7 +4893,7 @@ float4 RfxPs45(RfxV2F i, bool face)
     r1.w = r1.w + r1.w;   // 0630 add_pp
     r3.xyz = r2.xyz * (-r1.www) + r3.xyz;   // 0640 mad_pp
     r4.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0654 nrm_pp
-    r1.w = saturate(dot(r4.xyz, (-r3.xyz)));   // 0660 dp3_sat_pp
+    r1.w = saturate(dot(r4.xyz, (-r3.xyz))); r1.w *= rfxSunSpecKeep;   // 0660 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.x = saturate(dot(r4.xyz, r2.xyz));   // 0670 dp3_sat_pp
     r3.x = min(r0.x, r2.x);   // 0680 min
     r0.x = RfxPow(r1.w, usr_specular_tightness.w);   // 0690 pow_pp
@@ -4882,7 +4928,7 @@ float4 RfxPs46(RfxV2F i, bool face)
     r0.w = r0.w + r0.w;   // 0444 add_pp
     r1.xyz = r2.xyz * (-r0.www) + r1.xyz;   // 0454 mad_pp
     r3.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0468 nrm_pp
-    r0.w = saturate(dot(r3.xyz, (-r1.xyz)));   // 0474 dp3_sat_pp
+    r0.w = saturate(dot(r3.xyz, (-r1.xyz))); r0.w *= rfxSunSpecKeep;   // 0474 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = saturate(dot(r3.xyz, r2.xyz));   // 0484 dp3_sat_pp
     r1.y = saturate(dot(_RfxSunDir.xyz, r2.xyz));   // 0494 dp3_sat_pp
     r1.z = RfxPow(r0.w, k1.z);   // 04a4 pow_pp
@@ -4915,6 +4961,7 @@ float4 RfxPs46(RfxV2F i, bool face)
     r0.xyz = r1.yyy * r0.xyz;   // 065c mul_pp
     r1.xyz = r2.www * r2.xyz;   // 066c mul_pp
     r2 = (SAMPLE_TEXTURE2D(_Tex0, sampler_Tex0, RfxUV(i.t2.xyzw.xy))).xyzw;   // 067c texld_pp
+    rfxExpAlb = r2.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r0.xyz = r0.xyz * r2.xyz;   // 068c mul_pp
     r0.xyz = r2.xyz * i.t6.xyz + r0.xyz;   // 069c mad_pp
     r2 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t2.xyzw.xy))).xyzw;   // 06b0 texld_pp
@@ -4966,7 +5013,7 @@ float4 RfxPs47(RfxV2F i, bool face)
     r2.w = r2.w + r2.w;   // 0610 add_pp
     r0.yzw = r2.xyz * (-r2.www) + r0.yzw;   // 0620 mad_pp
     r2.x = saturate(dot(_RfxSunDir.xyz, r2.xyz));   // 0634 dp3_sat_pp
-    r0.y = saturate(dot(r1.xyz, (-r0.yzw)));   // 0644 dp3_sat_pp
+    r0.y = saturate(dot(r1.xyz, (-r0.yzw))); r0.y *= rfxSunSpecKeep;   // 0644 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = RfxPow(r0.y, k1.z);   // 0654 pow_pp
     r3.x = dot(i.t0.xyzw, RfxWorldProj0().xyzw);   // 0664 dp4_pp
     r3.y = dot(i.t0.xyzw, RfxWorldProj1().xyzw);   // 0674 dp4_pp
@@ -4987,6 +5034,7 @@ float4 RfxPs47(RfxV2F i, bool face)
     r3.xyz = usr_metal_color.xyz * (-r4.yyy) + r3.yyy;   // 0764 mad_pp
     r5.xyz = r4.yyy * usr_metal_color.xyz;   // 0778 mul_pp
     r3.xyz = r4.xxx * r3.xyz + r5.xyz;   // 0788 mad_pp
+    rfxExpAlb = r3.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r0.w = r4.z + usr_mud_amount.w;   // 079c add_pp
     r0.w = saturate(r0.w + (-k0.z));   // 07ac add_sat_pp
     r2.xyz = usr_mud_color.xyz * r2.xyz + (-r3.xyz);   // 07bc mad_pp
@@ -5038,6 +5086,7 @@ float4 RfxPs48(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 13c8 nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 13d4 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 13e8 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 13f4 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 1404 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 1414 dp3_sat_pp
@@ -5146,6 +5195,7 @@ float4 RfxPs49(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 067c nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 0688 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 069c nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 06a8 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 06b8 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 06c8 dp3_sat_pp
@@ -5376,6 +5426,7 @@ float4 RfxPs52(RfxV2F i, bool face)
     r0.x = r0.y + r0.x;   // 106c add_pp
     r1.xyz = RfxNrm(i.t1.xyz).xyz;   // 107c nrm_pp
     r0.xyz = r0.xxx * r1.xyz;   // 1088 mul_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 1098 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 10a8 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 10b8 dp3_sat_pp
@@ -5457,6 +5508,7 @@ float4 RfxPs53(RfxV2F i, bool face)
     r0.x = r0.y + r0.x;   // 04b0 add_pp
     r1.xyz = RfxNrm(i.t1.xyz).xyz;   // 04c0 nrm_pp
     r0.xyz = r0.xxx * r1.xyz;   // 04cc mul_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 04dc dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 04ec mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 04fc dp3_sat_pp
@@ -5538,6 +5590,7 @@ float4 RfxPs54(RfxV2F i, bool face)
     r0.x = r0.y + r0.x;   // 0f28 add_pp
     r1.xyz = RfxNrm(i.t1.xyz).xyz;   // 0f38 nrm_pp
     r0.xyz = r0.xxx * r1.xyz;   // 0f44 mul_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 0f54 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 0f64 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 0f74 dp3_sat_pp
@@ -5612,6 +5665,7 @@ float4 RfxPs55(RfxV2F i, bool face)
     r0.x = r0.y + r0.x;   // 0478 add_pp
     r1.xyz = RfxNrm(i.t1.xyz).xyz;   // 0488 nrm_pp
     r0.xyz = r0.xxx * r1.xyz;   // 0494 mul_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 04a4 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 04b4 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 04c4 dp3_sat_pp
@@ -5710,6 +5764,7 @@ float4 RfxPs56(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 13b8 nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 13c4 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 13d8 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 13e4 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 13f4 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 1404 dp3_sat_pp
@@ -5817,6 +5872,7 @@ float4 RfxPs57(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 0674 nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 0680 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 0694 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 06a0 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 06b0 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 06c0 dp3_sat_pp
@@ -5924,6 +5980,7 @@ float4 RfxPs58(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 14b8 nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 14c4 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 14d8 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 14e4 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 14f4 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 1504 dp3_sat_pp
@@ -6034,6 +6091,7 @@ float4 RfxPs59(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 06dc nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 06e8 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 06fc nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0708 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 0718 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 0728 dp3_sat_pp
@@ -6144,6 +6202,7 @@ float4 RfxPs60(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 14b8 nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 14c4 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 14d8 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 14e4 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 14f4 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 1504 dp3_sat_pp
@@ -6254,6 +6313,7 @@ float4 RfxPs61(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 06dc nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 06e8 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 06fc nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0708 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 0718 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 0728 dp3_sat_pp
@@ -6364,6 +6424,7 @@ float4 RfxPs62(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 13c8 nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 13d4 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 13e8 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 13f4 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 1404 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 1414 dp3_sat_pp
@@ -6472,6 +6533,7 @@ float4 RfxPs63(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 067c nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 0688 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 069c nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 06a8 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 06b8 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 06c8 dp3_sat_pp
@@ -6575,6 +6637,7 @@ float4 RfxPs64(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 1168 nrm_pp
     r0.xyz = r0.yyy * r2.xyz + r0.xzw;   // 1174 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 1188 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 1194 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 11a4 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 11b4 dp3_sat_pp
@@ -6668,6 +6731,7 @@ float4 RfxPs65(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 05d0 nrm_pp
     r0.xyz = r0.yyy * r2.xyz + r0.xzw;   // 05dc mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 05f0 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 05fc dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 060c mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 061c dp3_sat_pp
@@ -6761,6 +6825,7 @@ float4 RfxPs66(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 1280 nrm_pp
     r0.xyz = r0.yyy * r2.xyz + r0.xzw;   // 128c mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 12a0 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 12ac dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 12bc mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 12cc dp3_sat_pp
@@ -6858,6 +6923,7 @@ float4 RfxPs67(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 0670 nrm_pp
     r0.xyz = r0.yyy * r2.xyz + r0.xzw;   // 067c mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 0690 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 069c dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 06ac mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 06bc dp3_sat_pp
@@ -6936,6 +7002,7 @@ float4 RfxPs68(RfxV2F i, bool face)
     r0.x = r0.y + r0.x;   // 1078 add_pp
     r1.xyz = RfxNrm(i.t1.xyz).xyz;   // 1088 nrm_pp
     r0.xyz = r0.xxx * r1.xyz;   // 1094 mul_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 10a4 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 10b4 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 10c4 dp3_sat_pp
@@ -7018,6 +7085,7 @@ float4 RfxPs69(RfxV2F i, bool face)
     r0.x = r0.y + r0.x;   // 04b0 add_pp
     r1.xyz = RfxNrm(i.t1.xyz).xyz;   // 04c0 nrm_pp
     r0.xyz = r0.xxx * r1.xyz;   // 04cc mul_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 04dc dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 04ec mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 04fc dp3_sat_pp
@@ -7139,6 +7207,7 @@ float4 RfxPs70(RfxV2F i, bool face)
     r0.xyw = r1.www * (-r0.xyw) + r1.xyz;   // 079c mad_pp
     r0.xyz = r0.zzz * r2.xyz + r0.xyw;   // 07b0 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 07c4 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 07d0 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 07e0 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 07f0 dp3_sat_pp
@@ -7195,7 +7264,7 @@ float4 RfxPs70(RfxV2F i, bool face)
     r1.w = r1.w + r1.w;   // 0b3c add
     r3.xyz = r1.xyz * (-r1.www) + r3.xyz;   // 0b4c mad
     r4.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0b60 nrm_pp
-    r1.w = saturate(dot(r4.xyz, (-r3.xyz)));   // 0b6c dp3_sat_pp
+    r1.w = saturate(dot(r4.xyz, (-r3.xyz))); r1.w *= rfxSunSpecKeep;   // 0b6c dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = saturate(dot(r4.xyz, r1.xyz));   // 0b7c dp3_sat_pp
     r2.w = min(r0.w, r1.x);   // 0b8c min
     r0.w = RfxPow(r1.w, k3.z);   // 0b9c pow_pp
@@ -7331,6 +7400,7 @@ float4 RfxPs73(RfxV2F i, bool face)
     const float4 k1 = float4(0.25, 1.0, 0.0, 0.0);
     float4 r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0;
     r0.xyz = RfxNrm(i.t1.xyz).xyz;   // 040c nrm_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 0418 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 0428 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 0438 dp3_sat_pp
@@ -7393,6 +7463,7 @@ float4 RfxPs74(RfxV2F i, bool face)
     const float4 k1 = float4(0.25, 1.0, 0.0, 0.0);
     float4 r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0;
     r0.xyz = RfxNrm(i.t1.xyz).xyz;   // 0cb0 nrm_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 0cbc dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 0ccc mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 0cdc dp3_sat_pp
@@ -7503,6 +7574,7 @@ float4 RfxPs76(RfxV2F i, bool face)
     const float4 k1 = float4(0.25, 1.0, 20.0, 0.0);
     float4 r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0;
     r0.xyz = RfxNrm(i.t1.xyz).xyz;   // 047c nrm_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 0488 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 0498 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 04a8 dp3_sat_pp
@@ -7576,6 +7648,7 @@ float4 RfxPs77(RfxV2F i, bool face)
     const float4 k1 = float4(0.25, 1.0, 20.0, 0.0);
     float4 r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0;
     r0.xyz = RfxNrm(i.t1.xyz).xyz;   // 0f6c nrm_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 0f78 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 0f88 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 0f98 dp3_sat_pp
@@ -7649,6 +7722,7 @@ float4 RfxPs78(RfxV2F i, bool face)
     const float4 k1 = float4(0.25, 1.0, 0.0, 0.0);
     float4 r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0;
     r0.xyz = RfxNrm(i.t1.xyz).xyz;   // 0464 nrm_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 0470 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 0480 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 0490 dp3_sat_pp
@@ -7724,6 +7798,7 @@ float4 RfxPs79(RfxV2F i, bool face)
     const float4 k1 = float4(0.25, 1.0, 0.0, 0.0);
     float4 r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0;
     r0.xyz = RfxNrm(i.t1.xyz).xyz;   // 0f64 nrm_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 0f70 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 0f80 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 0f90 dp3_sat_pp
@@ -7894,6 +7969,7 @@ float4 RfxPs81(RfxV2F i, bool face)
     r0.xyz = r0.xxx * (-r4.xyz) + r2.xyz;   // 06d0 mad_pp
     r0.xyz = r1.xyz * r0.www + r0.xyz;   // 06e4 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 06f8 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0704 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 0714 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 0724 dp3_sat_pp
@@ -7994,6 +8070,7 @@ float4 RfxPs82(RfxV2F i, bool face)
     r0.w = dot(r2.xyz, r1.xyz);   // 0604 dp3_pp
     r1.x = RfxPow(abs(r0.w), usr_shine_tightness.w);   // 0614 pow_pp
     r2 = (SAMPLE_TEXTURE2D(_Tex0, sampler_Tex0, RfxUV(i.t2.xyzw.xy))).xyzw;   // 0624 texld_pp
+    rfxExpAlb = r2.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r1.yzw = r2.xyz * k1.zzz;   // 0634 mul_pp
     r3.xyz = r2.xyz * usr_shine_amount.www + (-r1.yzw);   // 0644 mad_pp
     r1.xyz = r1.xxx * r3.xyz + r1.yzw;   // 0658 mad_pp
@@ -8046,7 +8123,7 @@ float4 RfxPs83(RfxV2F i, bool face)
     r2.w = r2.w + r2.w;   // 0550 add_pp
     r0.yzw = r2.xyz * (-r2.www) + r0.yzw;   // 0560 mad_pp
     r2.x = saturate(dot(_RfxSunDir.xyz, r2.xyz));   // 0574 dp3_sat_pp
-    r0.y = saturate(dot(r1.xyz, (-r0.yzw)));   // 0584 dp3_sat_pp
+    r0.y = saturate(dot(r1.xyz, (-r0.yzw))); r0.y *= rfxSunSpecKeep;   // 0584 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = RfxPow(r0.y, k1.z);   // 0594 pow_pp
     r3.x = dot(i.t0.xyzw, RfxWorldProj0().xyzw);   // 05a4 dp4_pp
     r3.y = dot(i.t0.xyzw, RfxWorldProj1().xyzw);   // 05b4 dp4_pp
@@ -8061,6 +8138,7 @@ float4 RfxPs83(RfxV2F i, bool face)
     r0.xyz = r2.xxx * r0.xyz;   // 0644 mul_pp
     r1.xyz = r1.www * r1.xyz;   // 0654 mul_pp
     r2 = (SAMPLE_TEXTURE2D(_Tex0, sampler_Tex0, RfxUV(i.t2.xyzw.xy))).xyzw;   // 0664 texld_pp
+    rfxExpAlb = r2.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r0.xyz = r0.xyz * r2.xyz;   // 0674 mul_pp
     r0.xyz = r2.xyz * i.t6.xyz + r0.xyz;   // 0684 mad_pp
     r2 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t2.xyzw.xy))).xyzw;   // 0698 texld_pp
@@ -8115,6 +8193,7 @@ float4 RfxPs84(RfxV2F i, bool face)
     r3.xy = k2.xx * i.t2.xy;   // 078c mul
     r3 = (SAMPLE_TEXTURE2D(_Tex0, sampler_Tex0, RfxUV(r3.xyzw.xy))).xyzw;   // 079c texld_pp
     r4 = (SAMPLE_TEXTURE2D(_Tex2, sampler_Tex2, RfxUV(i.t2.xyzw.xy))).xyzw;   // 07ac texld_pp
+    rfxExpAlb = r4.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r3.xyz = usr_mud_color.xyz * r3.xyz + (-r4.xyz);   // 07bc mad_pp
     r5 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t2.xyzw.xy))).xyzw;   // 07d0 texld_pp
     r3.w = r5.y + usr_mud_amount.w;   // 07e0 add_pp
@@ -8126,6 +8205,7 @@ float4 RfxPs84(RfxV2F i, bool face)
     r0.yzw = r0.yzw * r3.xyz;   // 0844 mul_pp
     r4.xyz = r1.www * _RfxBounceColor.xyz;   // 0854 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r4.xyz;   // 0864 mad_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 0878 dp3_sat_pp
     r4.xyz = r1.www * _RfxLightColor1.xyz;   // 0888 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 0898 dp3_sat_pp
@@ -8205,6 +8285,7 @@ float4 RfxPs85(RfxV2F i, bool face)
     r0.w = dot(r2.xyz, r1.xyz);   // 06ac dp3_pp
     r1.x = RfxPow(abs(r0.w), usr_falloff_tightness.w);   // 06bc pow_pp
     r2 = (SAMPLE_TEXTURE2D(_Tex2, sampler_Tex2, RfxUV(i.t2.xyzw.xy))).xyzw;   // 06cc texld_pp
+    rfxExpAlb = r2.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r0.w = r2.w * k1.z;   // 06dc mul_pp
     r1.yzw = r2.xyz * usr_falloff_amount.www + (-r0.www);   // 06ec mad_pp
     r1.xyz = r1.xxx * r1.yzw + r0.www;   // 0700 mad_pp
@@ -8267,6 +8348,7 @@ float4 RfxPs86(RfxV2F i, bool face)
     r3.xy = k2.xx * i.t2.xy;   // 07c8 mul
     r3 = (SAMPLE_TEXTURE2D(_Tex0, sampler_Tex0, RfxUV(r3.xyzw.xy))).xyzw;   // 07d8 texld_pp
     r4 = (SAMPLE_TEXTURE2D(_Tex2, sampler_Tex2, RfxUV(i.t2.xyzw.xy))).xyzw;   // 07e8 texld_pp
+    rfxExpAlb = r4.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r3.xyz = usr_mud_color.xyz * r3.xyz + (-r4.xyz);   // 07f8 mad_pp
     r5 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t2.xyzw.xy))).xyzw;   // 080c texld_pp
     r3.w = r5.y + usr_mud_amount.w;   // 081c add_pp
@@ -8278,6 +8360,7 @@ float4 RfxPs86(RfxV2F i, bool face)
     r0.yzw = r0.yzw * r3.xyz;   // 0880 mul_pp
     r4.xyz = r1.www * _RfxBounceColor.xyz;   // 0890 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r4.xyz;   // 08a0 mad_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 08b4 dp3_sat_pp
     r4.xyz = r1.www * _RfxLightColor1.xyz;   // 08c4 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 08d4 dp3_sat_pp
@@ -8375,6 +8458,7 @@ float4 RfxPs87(RfxV2F i, bool face)
     r0.xyz = r0.xyz * r3.xyz;   // 0910 mul_pp
     r4.xyz = r1.www * _RfxBounceColor.xyz;   // 0920 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r4.xyz;   // 0930 mad_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 0944 dp3_sat_pp
     r4.xyz = r0.www * _RfxLightColor1.xyz;   // 0954 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 0964 dp3_sat_pp
@@ -8454,6 +8538,7 @@ float4 RfxPs88(RfxV2F i, bool face)
     r0.xyz = r0.xyz * r3.xyz;   // 0964 mul_pp
     r4.xyz = r1.www * _RfxBounceColor.xyz;   // 0974 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r4.xyz;   // 0984 mad_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 0998 dp3_sat_pp
     r4.xyz = r0.www * _RfxLightColor1.xyz;   // 09a8 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 09b8 dp3_sat_pp
@@ -8479,6 +8564,7 @@ float4 RfxPs89(RfxV2F i, bool face)
     const float4 k2 = float4(-0.75, 0.75, 0.0, 0.0);
     float4 r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0, r5 = 0, r6 = 0;
     r0.xyz = RfxNrm(i.t1.xyz).xyz;   // 04c4 nrm_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 04d0 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 04e0 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 04f0 dp3_sat_pp
@@ -8505,6 +8591,7 @@ float4 RfxPs89(RfxV2F i, bool face)
     r2.xyz = r2.xyz + r3.xyz;   // 0654 add_pp
     r3 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t2.xyzw.xy))).xyzw;   // 0664 texld_pp
     r5.xyz = r3.xyz * usr_mx_hub_color.xyz;   // 0674 mul_pp
+    rfxExpAlb = r5.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r6.xyz = usr_mx_hub_color.xyz;   // 0684 mov_pp
     r3.xyz = r6.xyz * (-r3.xyz) + usr_mud_color.xyz;   // 0690 mad_pp
     r3.xyz = r2.xyz * r3.xyz + r5.xyz;   // 06a4 mad_pp
@@ -8532,7 +8619,7 @@ float4 RfxPs89(RfxV2F i, bool face)
     r3.xyz = r2.xyz * k2.xxx + k2.yyy;   // 080c mad_pp
     r2.xyz = r2.xyz * usr_mud_wetness.www;   // 0820 mul_pp
     r5.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0830 nrm_pp
-    r0.x = saturate(dot(r5.xyz, r0.xyz));   // 083c dp3_sat_pp
+    r0.x = saturate(dot(r5.xyz, r0.xyz)); r0.x *= rfxSunSpecKeep;   // 083c dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r0.y = r0.x * r0.x;   // 084c mul_pp
     r0.y = r0.y * r0.x;   // 085c mul_pp
     r1.w = RfxPow(r0.x, k0.w);   // 086c pow_pp
@@ -8600,6 +8687,7 @@ float4 RfxPs90(RfxV2F i, bool face)
     r2.xyz = r2.xyz * r4.xyz;   // 07d0 mul_pp
     r5.xyz = r1.www * _RfxBounceColor.xyz;   // 07e0 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r5.xyz;   // 07f0 mad_pp
+    rfxExpN = r3.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r3.xyz));   // 0804 dp3_sat_pp
     r5.xyz = r1.www * _RfxLightColor1.xyz;   // 0814 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r3.xyz));   // 0824 dp3_sat_pp
@@ -8619,7 +8707,7 @@ float4 RfxPs90(RfxV2F i, bool face)
     r1.w = r1.w + r1.w;   // 0910 add_pp
     r2.xyz = r3.xyz * (-r1.www) + r2.xyz;   // 0920 mad_pp
     r4.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0934 nrm_pp
-    r1.w = saturate(dot(r4.xyz, (-r2.xyz)));   // 0940 dp3_sat_pp
+    r1.w = saturate(dot(r4.xyz, (-r2.xyz))); r1.w *= rfxSunSpecKeep;   // 0940 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.x = saturate(dot(r4.xyz, r3.xyz));   // 0950 dp3_sat_pp
     r3.x = min(r0.x, r2.x);   // 0960 min
     r0.x = RfxPow(r1.w, k0.y);   // 0970 pow_pp
@@ -8706,6 +8794,7 @@ float4 RfxPs91(RfxV2F i, bool face)
     r2.xyz = r2.xyz * r4.xyz;   // 19a0 mul_pp
     r5.xyz = r1.www * _RfxBounceColor.xyz;   // 19b0 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r5.xyz;   // 19c0 mad_pp
+    rfxExpN = r3.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r3.xyz));   // 19d4 dp3_sat_pp
     r5.xyz = r1.www * _RfxLightColor1.xyz;   // 19e4 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r3.xyz));   // 19f4 dp3_sat_pp
@@ -8729,7 +8818,7 @@ float4 RfxPs91(RfxV2F i, bool face)
     r5.xyz = (-r3.xyz);   // 1b2c mov_pp
     r5.w = k1.z;   // 1b38 mov_pp
     r6 = (RfxReflection(r5.xyzw.xyz, r5.xyzw.w)).xyzw;   // 1b44 texldb_pp
-    r1.w = saturate(dot(r2.xyz, r5.xyz));   // 1b54 dp3_sat_pp
+    r1.w = saturate(dot(r2.xyz, r5.xyz)); r1.w *= rfxSunSpecKeep;   // 1b54 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.x = RfxPow(r1.w, usr_specular_tightness.w);   // 1b64 pow_pp
     r0.yzw = r0.yzw * r2.xxx;   // 1b74 mul
     r0.yzw = r2.www * r0.yzw;   // 1b84 mul_pp
@@ -8818,6 +8907,7 @@ float4 RfxPs92(RfxV2F i, bool face)
     r2.xyz = r2.xyz * r4.xyz;   // 1988 mul_pp
     r6.xyz = r1.www * _RfxBounceColor.xyz;   // 1998 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r6.xyz;   // 19a8 mad_pp
+    rfxExpN = r3.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r3.xyz));   // 19bc dp3_sat_pp
     r6.xyz = r1.www * _RfxLightColor1.xyz;   // 19cc mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r3.xyz));   // 19dc dp3_sat_pp
@@ -8841,7 +8931,7 @@ float4 RfxPs92(RfxV2F i, bool face)
     r5.xyz = (-r3.xyz);   // 1b14 mov_pp
     r5.w = k1.z;   // 1b20 mov_pp
     r6 = (RfxReflection(r5.xyzw.xyz, r5.xyzw.w)).xyzw;   // 1b2c texldb_pp
-    r1.w = saturate(dot(r2.xyz, r5.xyz));   // 1b3c dp3_sat_pp
+    r1.w = saturate(dot(r2.xyz, r5.xyz)); r1.w *= rfxSunSpecKeep;   // 1b3c dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.x = RfxPow(r1.w, usr_specular_tightness.w);   // 1b4c pow_pp
     r0.yzw = r0.yzw * r2.xxx;   // 1b5c mul
     r0.yzw = r2.www * r0.yzw;   // 1b6c mul_pp
@@ -8930,6 +9020,7 @@ float4 RfxPs93(RfxV2F i, bool face)
     r2.xyz = r2.xyz * r4.xyz;   // 0a84 mul_pp
     r6.xyz = r1.www * _RfxBounceColor.xyz;   // 0a94 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r6.xyz;   // 0aa4 mad_pp
+    rfxExpN = r3.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r3.xyz));   // 0ab8 dp3_sat_pp
     r6.xyz = r1.www * _RfxLightColor1.xyz;   // 0ac8 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r3.xyz));   // 0ad8 dp3_sat_pp
@@ -8953,7 +9044,7 @@ float4 RfxPs93(RfxV2F i, bool face)
     r5.xyz = (-r3.xyz);   // 0c10 mov_pp
     r5.w = k1.z;   // 0c1c mov_pp
     r6 = (RfxReflection(r5.xyzw.xyz, r5.xyzw.w)).xyzw;   // 0c28 texldb_pp
-    r1.w = saturate(dot(r2.xyz, r5.xyz));   // 0c38 dp3_sat_pp
+    r1.w = saturate(dot(r2.xyz, r5.xyz)); r1.w *= rfxSunSpecKeep;   // 0c38 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.x = RfxPow(r1.w, usr_specular_tightness.w);   // 0c48 pow_pp
     r0.yzw = r0.yzw * r2.xxx;   // 0c58 mul
     r0.yzw = r2.www * r0.yzw;   // 0c68 mul_pp
@@ -9044,6 +9135,7 @@ float4 RfxPs94(RfxV2F i, bool face)
     r2.xyz = r2.xyz * r4.xyz;   // 0a08 mul_pp
     r5.xyz = r1.www * _RfxBounceColor.xyz;   // 0a18 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r5.xyz;   // 0a28 mad_pp
+    rfxExpN = r3.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r3.xyz));   // 0a3c dp3_sat_pp
     r5.xyz = r1.www * _RfxLightColor1.xyz;   // 0a4c mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r3.xyz));   // 0a5c dp3_sat_pp
@@ -9067,7 +9159,7 @@ float4 RfxPs94(RfxV2F i, bool face)
     r5.xyz = (-r3.xyz);   // 0b94 mov_pp
     r5.w = k1.z;   // 0ba0 mov_pp
     r6 = (RfxReflection(r5.xyzw.xyz, r5.xyzw.w)).xyzw;   // 0bac texldb_pp
-    r1.w = saturate(dot(r2.xyz, r5.xyz));   // 0bbc dp3_sat_pp
+    r1.w = saturate(dot(r2.xyz, r5.xyz)); r1.w *= rfxSunSpecKeep;   // 0bbc dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.x = RfxPow(r1.w, k2.x);   // 0bcc pow_pp
     r0.yzw = r0.yzw * r2.xxx;   // 0bdc mul
     r0.yzw = r2.www * r0.yzw;   // 0bec mul_pp
@@ -9156,6 +9248,7 @@ float4 RfxPs95(RfxV2F i, bool face)
     r0.yzw = r0.yzw * r3.xyz;   // 09ac mul_pp
     r4.xyz = r1.www * _RfxBounceColor.xyz;   // 09bc mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r4.xyz;   // 09cc mad_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 09e0 dp3_sat_pp
     r4.xyz = r1.www * _RfxLightColor1.xyz;   // 09f0 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 0a00 dp3_sat_pp
@@ -9251,6 +9344,7 @@ float4 RfxPs96(RfxV2F i, bool face)
     r2.xyz = r2.xyz * r4.xyz;   // 0934 mul_pp
     r6.xyz = r1.www * _RfxBounceColor.xyz;   // 0944 mul_pp
     r1.xyz = (-r2.www) * r1.xyz + r6.xyz;   // 0954 mad_pp
+    rfxExpN = r3.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r3.xyz));   // 0968 dp3_sat_pp
     r6.xyz = r1.www * _RfxLightColor1.xyz;   // 0978 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r3.xyz));   // 0988 dp3_sat_pp
@@ -9275,7 +9369,7 @@ float4 RfxPs96(RfxV2F i, bool face)
     r4.xyz = (-r3.xyz);   // 0ad0 mov_pp
     r4.w = k1.z;   // 0adc mov_pp
     r6 = (RfxReflection(r4.xyzw.xyz, r4.xyzw.w)).xyzw;   // 0ae8 texldb_pp
-    r1.w = saturate(dot(r2.xyz, r4.xyz));   // 0af8 dp3_sat_pp
+    r1.w = saturate(dot(r2.xyz, r4.xyz)); r1.w *= rfxSunSpecKeep;   // 0af8 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.x = RfxPow(r1.w, k2.x);   // 0b08 pow_pp
     r0.yzw = r0.yzw * r2.xxx;   // 0b18 mul
     r0.yzw = r2.www * r0.yzw;   // 0b28 mul_pp
@@ -9337,6 +9431,7 @@ float4 RfxPs97(RfxV2F i, bool face)
     r1.xyz = r1.www * (-r1.xyz) + r2.xyz;   // 08ac mad_pp
     r1.xyz = r0.www * r4.xyz + r1.xyz;   // 08c0 mad_pp
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 08d4 nrm_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 08e0 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 08f0 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 0900 dp3_sat_pp
@@ -9403,7 +9498,7 @@ float4 RfxPs97(RfxV2F i, bool face)
     r5.xyz = (-r2.xyz);   // 0cf8 mov
     r5.w = k3.x;   // 0d04 mov_pp
     r7 = (RfxReflection(r5.xyzw.xyz, r5.xyzw.w)).xyzw;   // 0d10 texldb_pp
-    r1.w = saturate(dot(r4.xyz, r5.xyz));   // 0d20 dp3_sat_pp
+    r1.w = saturate(dot(r4.xyz, r5.xyz)); r1.w *= rfxSunSpecKeep;   // 0d20 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.x = RfxPow(r1.w, k3.y);   // 0d30 pow_pp
     r2.xyz = r2.xxx * r3.xyz;   // 0d40 mul
     r2.xyz = r2.xyz * _RfxSunColor.xyz;   // 0d50 mul
@@ -9485,6 +9580,7 @@ float4 RfxPs98(RfxV2F i, bool face)
     r0.xyw = r1.www * (-r0.xyw) + r1.xyz;   // 0ae4 mad_pp
     r0.xyz = r0.zzz * r4.xyz + r0.xyw;   // 0af8 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 0b0c nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0b18 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 0b28 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 0b38 dp3_sat_pp
@@ -9548,7 +9644,7 @@ float4 RfxPs98(RfxV2F i, bool face)
     r7 = (RfxReflection(r5.xyzw.xyz, r5.xyzw.w)).xyzw;   // 0ef4 texldb_pp
     r8.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0f04 nrm_pp
     r1.x = saturate(dot(r8.xyz, r1.xyz));   // 0f10 dp3_sat_pp
-    r1.y = saturate(dot(r8.xyz, r5.xyz));   // 0f20 dp3_sat_pp
+    r1.y = saturate(dot(r8.xyz, r5.xyz)); r1.y *= rfxSunSpecKeep;   // 0f20 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.y = RfxLog(r1.y);   // 0f30 log_pp
     r2.w = min(r0.w, r1.x);   // 0f3c min
     r0.w = r2.w * k1.x + k1.x;   // 0f4c mad
@@ -9669,6 +9765,7 @@ float4 RfxPs100(RfxV2F i, bool face)
     r1.xyz = r1.www * (-r0.xyz) + r1.xyz;   // 0654 mad_pp
     r1.xyz = r0.www * r3.xyz + r1.xyz;   // 0668 mad_pp
     r2.xyz = RfxNrm(r1.xyz).xyz;   // 067c nrm_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 0688 dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 0698 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 06a8 dp3_sat_pp
@@ -9737,7 +9834,7 @@ float4 RfxPs100(RfxV2F i, bool face)
     r1.w = r1.w + r1.w;   // 0aac add_pp
     r4.xyz = r0.xyz * (-r1.www) + r4.xyz;   // 0abc mad_pp
     r0.x = saturate(dot(r7.xyz, r0.xyz));   // 0ad0 dp3_sat_pp
-    r0.y = saturate(dot(r7.xyz, (-r4.xyz)));   // 0ae0 dp3_sat_pp
+    r0.y = saturate(dot(r7.xyz, (-r4.xyz))); r0.y *= rfxSunSpecKeep;   // 0ae0 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.w = RfxPow(r0.y, k2.x);   // 0af0 pow_pp
     r3.xyz = r1.www * r3.xyz;   // 0b00 mul
     r3.xyz = r3.xyz * _RfxSunColor.xyz;   // 0b10 mul
@@ -9809,6 +9906,7 @@ float4 RfxPs101(RfxV2F i, bool face)
     r0.xyw = r1.www * (-r0.xyw) + r2.xyz;   // 0998 mad_pp
     r0.xyz = r0.zzz * r3.xyz + r0.xyw;   // 09ac mad_pp
     r2.xyz = RfxNrm(r0.xyz).xyz;   // 09c0 nrm_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 09cc dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 09dc mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 09ec dp3_sat_pp
@@ -9875,7 +9973,7 @@ float4 RfxPs101(RfxV2F i, bool face)
     r0.xyz = r7.xyz * r0.xyz + r4.xyz;   // 0dd8 mad_pp
     r4.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0dec nrm_pp
     r1.w = saturate(dot(r4.xyz, r2.xyz));   // 0df8 dp3_sat_pp
-    r2.x = saturate(dot(r4.xyz, r5.xyz));   // 0e08 dp3_sat_pp
+    r2.x = saturate(dot(r4.xyz, r5.xyz)); r2.x *= rfxSunSpecKeep;   // 0e08 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r3.w = RfxPow(r2.x, k2.x);   // 0e18 pow_pp
     r2.xyz = r3.www * r3.xyz;   // 0e28 mul
     r2.xyz = r2.xyz * _RfxSunColor.xyz;   // 0e38 mul
@@ -9986,7 +10084,7 @@ float4 RfxPs103(RfxV2F i, bool face)
     r0.w = r0.w + r0.w;   // 0420 add_pp
     r0.xyz = r1.xyz * (-r0.www) + r0.xyz;   // 0430 mad_pp
     r2.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0444 nrm_pp
-    r0.x = saturate(dot(r2.xyz, (-r0.xyz)));   // 0450 dp3_sat_pp
+    r0.x = saturate(dot(r2.xyz, (-r0.xyz))); r0.x *= rfxSunSpecKeep;   // 0450 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r0.y = saturate(dot(r2.xyz, r1.xyz));   // 0460 dp3_sat_pp
     r0.z = saturate(dot(_RfxSunDir.xyz, r1.xyz));   // 0470 dp3_sat_pp
     r1.x = RfxPow(r0.x, k1.z);   // 0480 pow_pp
@@ -10125,6 +10223,7 @@ float4 RfxPs105(RfxV2F i, bool face)
     r2 = r0.xyzw + (-k0.zzzz);   // 0608 add_pp
     r0.xyz = (-r2.www) * r0.xyz + r1.xyz;   // 0618 mad_pp
     r1.xyz = RfxNrm(i.t1.xyz).xyz;   // 062c nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r1.w = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0638 dp3_sat_pp
     r3.xyz = r1.www * _RfxLightColor1.xyz;   // 0648 mul
     r1.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 0658 dp3_sat_pp
@@ -10197,7 +10296,7 @@ float4 RfxPs105(RfxV2F i, bool face)
     r5.xyz = (-r1.xyz);   // 0ab0 mov_pp
     r5.w = k1.z;   // 0abc mov_pp
     r6 = (RfxReflection(r5.xyzw.xyz, r5.xyzw.w)).xyzw;   // 0ac8 texldb_pp
-    r1.x = saturate(dot(r3.xyz, r5.xyz));   // 0ad8 dp3_sat_pp
+    r1.x = saturate(dot(r3.xyz, r5.xyz)); r1.x *= rfxSunSpecKeep;   // 0ad8 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r3.x = RfxPow(r1.x, k2.x);   // 0ae8 pow_pp
     r1.xyz = r2.xyz * r3.xxx;   // 0af8 mul
     r1.xyz = r4.xxx * r1.xyz;   // 0b08 mul_pp
@@ -10264,6 +10363,7 @@ float4 RfxPs106(RfxV2F i, bool face)
     r0.xyw = r1.www * (-r0.xyw) + r2.xyz;   // 0830 mad_pp
     r0.xyz = r0.zzz * r3.xyz + r0.xyw;   // 0844 mad_pp
     r2.xyz = RfxNrm(r0.xyz).xyz;   // 0858 nrm_pp
+    rfxExpN = r2.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r2.xyz));   // 0864 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 0874 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r2.xyz));   // 0884 dp3_sat_pp
@@ -10324,7 +10424,7 @@ float4 RfxPs106(RfxV2F i, bool face)
     r1.w = r1.w + r1.w;   // 0c10 add
     r4.xyz = r2.xyz * (-r1.www) + r4.xyz;   // 0c20 mad
     r5.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0c34 nrm_pp
-    r1.w = saturate(dot(r5.xyz, (-r4.xyz)));   // 0c40 dp3_sat_pp
+    r1.w = saturate(dot(r5.xyz, (-r4.xyz))); r1.w *= rfxSunSpecKeep;   // 0c40 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r2.x = saturate(dot(r5.xyz, r2.xyz));   // 0c50 dp3_sat_pp
     r3.w = min(r0.w, r2.x);   // 0c60 min
     r0.w = RfxPow(r1.w, k2.z);   // 0c70 pow_pp
@@ -10424,6 +10524,7 @@ float4 RfxPs108(RfxV2F i, bool face)
     r0.y = i.t2.y;   // 0614 mov
     r0.z = i.t3.y;   // 0620 mov
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 062c nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0638 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 0648 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 0658 dp3_sat_pp
@@ -10473,6 +10574,7 @@ float4 RfxPs108(RfxV2F i, bool face)
     r4 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t4.xyzw.xy))).xyzw;   // 0930 texld_pp
     r5.xyz = r4.xxx * usr_wheel_color.xyz + (-r4.yyy);   // 0940 mad_pp
     r5.xyz = r4.xxx * r5.xyz + r4.yyy;   // 0954 mad_pp
+    rfxExpAlb = r5.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r3.xyz = usr_mud_color.xyz * r3.xyz + (-r5.xyz);   // 0968 mad_pp
     r1.w = r4.z + usr_mud_amount.w;   // 097c add_pp
     r1.w = saturate(r1.w + k0.y);   // 098c add_sat_pp
@@ -10536,6 +10638,7 @@ float4 RfxPs109(RfxV2F i, bool face)
     r0.y = i.t2.y;   // 0620 mov
     r0.z = i.t3.y;   // 062c mov
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 0638 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 0644 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 0654 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 0664 dp3_sat_pp
@@ -10585,6 +10688,7 @@ float4 RfxPs109(RfxV2F i, bool face)
     r4 = (SAMPLE_TEXTURE2D(_Tex1, sampler_Tex1, RfxUV(i.t4.xyzw.xy))).xyzw;   // 093c texld_pp
     r5.xyz = r4.xxx * usr_wheel_color.xyz + (-r4.yyy);   // 094c mad_pp
     r5.xyz = r4.xxx * r5.xyz + r4.yyy;   // 0960 mad_pp
+    rfxExpAlb = r5.xyz; rfxExpAlbOn = 1;   // (MATERIALS: ENHANCED: the program's albedo)
     r3.xyz = usr_mud_color.xyz * r3.xyz + (-r5.xyz);   // 0974 mad_pp
     r1.w = r4.z + usr_mud_amount.w;   // 0988 add_pp
     r1.w = saturate(r1.w + k0.y);   // 0998 add_sat_pp
@@ -10672,6 +10776,7 @@ float4 RfxPs110(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 0720 nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 072c mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 0740 nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 074c dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 075c mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 076c dp3_sat_pp
@@ -10734,7 +10839,7 @@ float4 RfxPs110(RfxV2F i, bool face)
     r1.w = r1.w + r1.w;   // 0b1c add
     r3.xyz = r1.xyz * (-r1.www) + r3.xyz;   // 0b2c mad_pp
     r4.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 0b40 nrm_pp
-    r1.w = saturate(dot(r4.xyz, (-r3.xyz)));   // 0b4c dp3_sat_pp
+    r1.w = saturate(dot(r4.xyz, (-r3.xyz))); r1.w *= rfxSunSpecKeep;   // 0b4c dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = saturate(dot(r4.xyz, r1.xyz));   // 0b5c dp3_sat_pp
     r2.w = min(r0.w, r1.x);   // 0b6c min
     r0.w = RfxPow(r1.w, k0.w);   // 0b7c pow_pp
@@ -10783,6 +10888,7 @@ float4 RfxPs111(RfxV2F i, bool face)
     r2.xyz = RfxNrm(r0.xyw).xyz;   // 151c nrm_pp
     r0.xyz = r0.zzz * r2.xyz + r1.xyz;   // 1528 mad_pp
     r1.xyz = RfxNrm(r0.xyz).xyz;   // 153c nrm_pp
+    rfxExpN = r1.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.x = saturate(dot(_RfxLightDir1.xyz, r1.xyz));   // 1548 dp3_sat_pp
     r0.xyz = r0.xxx * _RfxLightColor1.xyz;   // 1558 mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r1.xyz));   // 1568 dp3_sat_pp
@@ -10845,7 +10951,7 @@ float4 RfxPs111(RfxV2F i, bool face)
     r1.w = r1.w + r1.w;   // 1918 add
     r3.xyz = r1.xyz * (-r1.www) + r3.xyz;   // 1928 mad_pp
     r4.xyz = RfxNrm(_RfxSunDir.xyz).xyz;   // 193c nrm_pp
-    r1.w = saturate(dot(r4.xyz, (-r3.xyz)));   // 1948 dp3_sat_pp
+    r1.w = saturate(dot(r4.xyz, (-r3.xyz))); r1.w *= rfxSunSpecKeep;   // 1948 dp3_sat_pp (+ MATERIALS: ENHANCED: one sun highlight)
     r1.x = saturate(dot(r4.xyz, r1.xyz));   // 1958 dp3_sat_pp
     r2.w = min(r0.w, r1.x);   // 1968 min
     r0.w = RfxPow(r1.w, k0.w);   // 1978 pow_pp
@@ -10865,6 +10971,7 @@ float4 RfxPs112(RfxV2F i, bool face)
     const float4 k1 = float4(0.25, 1.0, 0.0, 0.0);
     float4 r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0;
     r0.xyz = RfxNrm(i.t1.xyz).xyz;   // 0420 nrm_pp
+    rfxExpN = r0.xyz; rfxExpNOn = 1;   // (MATERIALS: ENHANCED: the program's shading normal)
     r0.w = saturate(dot(_RfxLightDir1.xyz, r0.xyz));   // 042c dp3_sat_pp
     r1.xyz = r0.www * _RfxLightColor1.xyz;   // 043c mul
     r0.w = saturate(dot(_RfxLightDir0.xyz, r0.xyz));   // 044c dp3_sat_pp

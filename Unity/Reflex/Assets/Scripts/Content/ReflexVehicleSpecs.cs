@@ -84,8 +84,10 @@ namespace Reflex.Port.Content
             var install = VehicleCatalog.Shared.install;
             var s = new RiderSpec { gearIds = gearIds.ToArray() };
             var pieces = new List<(int order, RiderSpec.Part part)>();
+            var rx = new List<RxGearPiece>();
             foreach (int id in s.gearIds)
             {
+                if (RxGear.Piece(id) is RxGearPiece px) { rx.Add(px); continue; }   // a "gear" .rxmod piece (the MX vs ATV Alive gear): applied below
                 int r = t.Find("RiderGear", "RiderGearId", id);
                 if (r < 0) continue;
                 int type = t.Int("RiderGear", "RiderGearTypeId", r);
@@ -102,8 +104,9 @@ namespace Reflex.Port.Content
                     matsDb = mat?.db, matsPkg = mat?.pkg
                 }));
             }
-            if (pieces.Count == 0) return null;
+            if (pieces.Count == 0 && rx.Count == 0) return null;
             s.parts.AddRange(pieces.OrderBy(p => p.order).Select(p => p.part));
+            RxGear.Apply(s, rx);
             return s;
         }
     }

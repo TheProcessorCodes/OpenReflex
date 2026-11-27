@@ -14,6 +14,35 @@ namespace Reflex.Port.OriginalWorld
     {
         public struct TerrainPatch { public int x0, z0, w, h; public float[] heights, deform; }
 
+        /// SPLIT SCREEN (w-split; OpenReflexSimulation.View2 in the presentation's types): what a frame carries of the second local rider,
+        /// each value with its flag. valid = the session has two local riders. bike is blended by the presentation as the first rider's
+        /// is; the rest is the newer frame's. slot = the rider's seat slot (-1 unknown), finished = its standings row's flag,
+        /// drivingCamera = the core's preset 0..3 (-1 unknown).
+        public sealed class View2
+        {
+            public bool valid;
+            public ReflexBikeState bike = ReflexBikeState.Create(); public bool hasBike;
+            public Reflex.Port.RxCore.RxOnboardState onboardState;
+            public ReflexRaceState race; public bool hasRace;
+            public ReflexHudState hud; public bool hasHud;
+            public Reflex.Port.RxCore.RxWaypointState waypoint; public bool hasWaypoint;
+            public Reflex.Port.RxCore.RxRaceFormatState raceFormat; public bool hasRaceFormat;
+            public Reflex.Port.RxCore.RxRaceHudState raceHud; public bool hasRaceHud;
+            public Reflex.Port.RxCore.RxStuntHudState stuntHud; public bool hasStuntHud;
+            public Reflex.Port.RxCore.RxReflexHudState reflexHud; public bool hasReflexHud;
+            public Reflex.Port.RxCore.RxChallengeState challenge; public bool hasChallenge;
+            public Reflex.Port.RxCore.RxCompassState compass; public bool hasCompass;
+            public Reflex.Port.RxCore.RxPowercrossHudState powercross; public bool hasPowercross;
+            public Reflex.Port.Content.ReflexVehicleInfo vehicle; public bool hasVehicle;
+            public int slot = -1; public bool finished; public int drivingCamera = -1;
+            /// A recycled frame: every flag off (the structs keep their last values, the arrays their capacity).
+            public void Clear()
+            {
+                valid = hasBike = hasRace = hasHud = hasWaypoint = hasRaceFormat = hasRaceHud = hasStuntHud = hasReflexHud = hasChallenge = hasCompass = hasPowercross = hasVehicle = finished = false;
+                slot = -1; drivingCamera = -1; onboardState = default;
+            }
+        }
+
         public sealed class Results
         {
             public Reflex.Port.RxCore.ReplaySnapshot replay;
@@ -30,6 +59,9 @@ namespace Reflex.Port.OriginalWorld
             public Reflex.Port.Content.ReflexVehicleInfo vehicle; public bool hasVehicle;   // reflex_world_vehicle (ReflexAtv.cs): the class, an ATV's six bodies
             public int bikeNodes;
             public ReflexCamera camera; public bool hasCamera;
+            // SPLIT SCREEN (RxSplitScreen, ReflexSplitScreenView): the second local rider's camera, and everything else of that rider (View2)
+            public ReflexCamera camera2; public bool hasCamera2;
+            public readonly View2 view2 = new View2();
             public float[] tracks; public int trackTriangles; public bool tracksChanged;
             public float[] objects = new float[0]; public bool[] objectsValid = new bool[0];
             public readonly List<ReflexAudioCommand> audio = new List<ReflexAudioCommand>();

@@ -1,14 +1,20 @@
 // The REPLAY / PHOTO MODE screens over the world (ReflexReplay, after Open Unleashed's MxaReplayUi), UI Toolkit in the OPEN REFLEX menu
-// look (OuMenu / OuModern plus Resources/OpenFrontEnd/OuReplay.uss):
-//   REPLAY      the badge and the track (top left), the followed rider's card (top right: name, place, lap, speed), the transport at
-//               the bottom: the timeline (click or drag to scrub; the white tick is the live moment), start / back 5 s / play /
-//               forward 5 s / end, the time, SPEED, CAMERA and RIDER pickers, PHOTO MODE and EXIT; the KEYFRAMES row (ADD KEY /
-//               DELETE KEY / CLEAR / AIM; the keys are diamonds on the timeline, a click jumps to one) for the KEYFRAMES camera
-//   PHOTO MODE  the settings panel on the right (D-pad / arrows move, left / right change a value, A / Enter press; the mouse clicks
-//               the arrows or the bars), TAKE PHOTO, the moment strip (bottom left: scrub to another moment), the aspect mask, the
-//               composition grid and the logo's place over the view; a flash and a toast with the saved shot's thumbnail
-// H / X (Square) hides the UI (the aspect mask and the logo stay: they are the composition). The keys are ReflexReplay's; the hint bar
-// shows the keyboard's or the pad's.
+// look (OuMenu / OuModern plus Resources/OpenFrontEnd/OuReplay.uss). The two faces are one layout, inside the Open front end's content
+// frame (OuLayout.Insets: the same margins as the menus, centred on an ultrawide screen, following UI SCALE):
+//   top left     the badge (REPLAY / PHOTO MODE), the track and the camera
+//   top right    the followed rider's card (name, place, lap, speed)
+//   bottom       the dock: the timeline (click or drag to scrub; the white tick is the live moment; the KEYFRAMES camera's keys are
+//                diamonds on it), back 5 s / frame back / play / frame forward / forward 5 s, the time and how far before
+//                the live moment it is, then (REPLAY) SPEED, CAMERA and RIDER, and on both faces the other face's button and EXIT.
+//                REPLAY has the KEYFRAMES row above the timeline (ADD KEY / DELETE KEY / CLEAR / AIM); PHOTO MODE has no play button
+//                (the moment is frozen) and the dock ends where the settings panel begins
+//   right        PHOTO MODE's settings panel (CAMERA and RIDER first, as on the dock; D-pad / arrows move, left / right change a value,
+//                A / Enter press; the mouse clicks the arrows or the bars) and TAKE PHOTO; the aspect mask, the composition grid and the
+//                logo's place over the view; a flash and a toast with the saved shot's thumbnail
+//   bottom right the hint bar (the Open front end's key caps; the keyboard's, the Xbox pad's or the PlayStation pad's): the face's own
+//                keys first, then the same three on both faces: the other face, HIDE UI, EXIT (BACK when PHOTO MODE returns to the replay)
+// H / X (Square) hides all of it (the aspect mask and the logo stay: they are the composition); a SHOW UI note fades after a moment.
+// The keys are ReflexReplay's.
 using System;
 using System.Collections.Generic;
 using Reflex.Port.OpenFrontEnd;
@@ -22,10 +28,10 @@ namespace Reflex.Port.Replay
     public sealed class ReflexReplayUi : MonoBehaviour
     {
         ReflexReplay r;
-        VisualElement root, layer, top, transport, panel, moment, hints, flash, toast, thumb, hiddenNote, grid, logo;
+        VisualElement root, layer, top, dock, panel, hints, flash, toast, thumb, hiddenNote, grid, logo, playButton, chips, chipRow, controls, modeButton;
         readonly VisualElement[] mask = new VisualElement[4];
-        Label badge, sub, riderName, riderInfo, time, momentTime, toastTitle, toastPath, postNote;
-        VisualElement fill, headDot, momentFill, momentHead, keyMarks, keyRow;
+        Label badge, sub, riderName, riderInfo, time, offset, toastTitle, toastPath, postNote, modeLabel;
+        VisualElement fill, headDot, keyMarks, keyRow;
         Label keyNote, aimValue;
         float keyNoteAt = -10f;
         readonly List<VisualElement> keyDiamonds = new List<VisualElement>();
@@ -36,8 +42,14 @@ namespace Reflex.Port.Replay
         readonly OuStepper stepper = new OuStepper();
         readonly List<(VisualElement row, Action refresh)> rows = new List<(VisualElement, Action)>();
         float flashAt = -10f, toastAt = -10f, hiddenAt;
-        bool hintsPad, hintsBuilt;
+        bool hintsBuilt, hintsBack, hintsFit;
+        OuGlyphs.Device hintsDevice;
         ReflexReplay.View hintsFace;
+        (Vector4 insets, bool photo, float dockHeight, float topHeight, float width) laidOut;
+        /// The settings panel's width and the gap between it and the dock (layout px).
+        const float PanelWidth = 470f, Gap = 16f;
+        /// The width the replay's controls row needs with SPEED / CAMERA / RIDER in it (layout px).
+        const float ControlsWidth = 1700f;
         int gridShown = -1;
         Rect frameShown; float maskAspect = -1f; int logoShown = -1;
         bool dragging, wasPlaying;
@@ -72,15 +84,12 @@ namespace Reflex.Port.Replay
             if (ReflexReplay.LogoTexture) logo.style.backgroundImage = ReflexReplay.LogoTexture;
 
             BuildTop();
-            BuildTransport();
+            BuildDock();
             BuildPanel();
-            BuildMoment();
 
-            hints = OuUi.Div("mxa-hints", layer);
+            hints = OuUi.Div("mxa-hints", layer);   // (in the content frame, with the legend band behind it: OuLayout)
             hiddenNote = OuUi.Div("rp-hidden-note", layer);
-            var hk = OuUi.Div("mxa-hint", hiddenNote);
-            OuUi.Text("H", "mxa-key", hk);
-            OuUi.Text("SHOW UI", "mxa-hint-label", hk);
+            hiddenNote.pickingMode = PickingMode.Ignore;
 
             toast = OuUi.Div("rp-toast", layer);
             toast.pickingMode = PickingMode.Ignore;
@@ -118,14 +127,27 @@ namespace Reflex.Port.Replay
             if (r == null) return;
             bool photo = r.Face == ReflexReplay.View.Photo, hidden = r.UiHidden;
             Show(top, !hidden);
-            Show(top.Q(className: "rp-rider"), !photo);   // PHOTO MODE: the panel's SUBJECT row instead
-            Show(transport, !hidden && !photo);
+            Show(dock, !hidden);
+            Show(keyRow, !photo);       // (the KEYFRAMES camera is the replay's)
+            Show(playButton, !photo);   // (the moment is frozen)
+            Show(chips, !photo);        // (PHOTO MODE: the panel's CAMERA and RIDER rows, which the pad reaches)
+            Show(chipRow, !photo && chips.parent == chipRow);
+            dock.EnableInClassList("rp-dock-photo", photo);
             Show(panel, !hidden && photo);
-            Show(moment, !hidden && photo);
             Show(hints, !hidden);
             Show(hiddenNote, hidden);
-            if (hidden) { hiddenAt = Time.unscaledTime; hiddenNote.RemoveFromClassList("rp-hidden-note-fade"); }
+            if (hidden)
+            {   // SHOW UI, on the key of the device in use
+                hiddenAt = Time.unscaledTime; hiddenNote.RemoveFromClassList("rp-hidden-note-fade");
+                var device = OuGlyphs.Current;
+                string key = device == OuGlyphs.Device.Keyboard ? "H" : device == OuGlyphs.Device.PlayStation ? "Square" : "X";
+                hiddenNote.Clear();
+                var hk = OuUi.Div("mxa-hint", hiddenNote);
+                OuUi.Text(key, "mxa-key " + (OuGlyphs.CapClass(key) ?? ""), hk);
+                OuUi.Text("SHOW UI", "mxa-hint-label", hk);
+            }
             badge.text = photo ? "PHOTO MODE" : "REPLAY";
+            modeLabel.text = photo ? "REPLAY" : "PHOTO MODE";
             hintsBuilt = false;
             if (photo && !hidden) panel.schedule.Execute(() => { if (nav.Focused == null) nav.Focus(shoot); }).ExecuteLater(10);
             RefreshRows();
@@ -151,12 +173,13 @@ namespace Reflex.Port.Replay
             OuUi.Div("rp-rider-bar", rider);
         }
 
-        // ------------------------------------------------------------------------------------------ transport
+        // ----------------------------------------------------------------------------------------------- dock
 
-        void BuildTransport()
+        void BuildDock()
         {
-            transport = OuUi.Div("rp-transport", layer);
-            var timeline = OuUi.Div("rp-timeline", transport);
+            dock = OuUi.Div("rp-dock", layer);
+
+            var timeline = OuUi.Div("rp-timeline", dock);
             var track = OuUi.Div("rp-track", timeline);
             fill = OuUi.Div("rp-track-fill", track);
             OuUi.Div("rp-live", timeline);
@@ -165,30 +188,34 @@ namespace Reflex.Port.Replay
             headDot = OuUi.Div("rp-head", timeline);
             Scrubber(timeline);
 
-            // KEYFRAMES: camera keys along the timeline, flown by the KEYFRAMES camera
-            keyRow = OuUi.Div("rp-keyrow", transport);
+            // KEYFRAMES (REPLAY): camera keys along the timeline, flown by the KEYFRAMES camera
+            keyRow = OuUi.Div("rp-keyrow", dock);
             OuUi.Text("KEYFRAMES", "rp-keyrow-title", keyRow);
             TextButton(keyRow, "ADD KEY", () => r.AddKey(), false).AddToClassList("rp-key-button");
             TextButton(keyRow, "DELETE KEY", () => r.DeleteKey(), false).AddToClassList("rp-key-button");
             TextButton(keyRow, "CLEAR", () => r.ClearKeys(), false).AddToClassList("rp-key-button");
             aimValue = Chip(keyRow, "AIM", 90, _ => r.KeyAimRider = !r.KeyAimRider);
             keyNote = OuUi.Text("", "rp-keynote", keyRow);
-            keyRow.PlaceInFront(timeline);
 
-            var row = OuUi.Div("rp-controls", transport);
-            IconButton(row, ReflexReplayIcon.Kind.Start, () => r.Seek(r.Buffer.StartTime));
+            chipRow = OuUi.Div("rp-chiprow", dock);   // (SPEED / CAMERA / RIDER sit here when the controls row has no room for them: Layout)
+            var row = controls = OuUi.Div("rp-controls", dock);
             IconButton(row, ReflexReplayIcon.Kind.Back, () => r.Seek(r.PlayTime - 5f));
-            var play = IconButton(row, ReflexReplayIcon.Kind.Play, () => r.TogglePlay());
-            play.AddToClassList("rp-play");
-            playIcon = play.Q<ReflexReplayIcon>();
+            IconButton(row, ReflexReplayIcon.Kind.StepBack, () => r.Step(-1));
+            playButton = IconButton(row, ReflexReplayIcon.Kind.Play, () => r.TogglePlay());
+            playButton.AddToClassList("rp-play");
+            playIcon = playButton.Q<ReflexReplayIcon>();
+            IconButton(row, ReflexReplayIcon.Kind.StepForward, () => r.Step(1));
             IconButton(row, ReflexReplayIcon.Kind.Forward, () => r.Seek(r.PlayTime + 5f));
-            IconButton(row, ReflexReplayIcon.Kind.End, () => r.Seek(r.Buffer.EndTime));
             time = OuUi.Text("", "rp-time", row);
+            offset = OuUi.Text("", "rp-time rp-time-dim", row);
             OuUi.Div("rp-spacer", row);
-            speedValue = Chip(row, "SPEED", 76, d => r.ChangeSpeed(d));
-            camValue = Chip(row, "CAMERA", 300, d => r.CycleCamera(d));
-            riderValue = Chip(row, "RIDER", 250, d => r.CycleTarget(d));
-            TextButton(row, "PHOTO MODE", () => r.PhotoFromReplay(), true);
+            chips = OuUi.Div("rp-chips", row);
+            speedValue = Chip(chips, "SPEED", 64, d => r.ChangeSpeed(d));
+            camValue = Chip(chips, "CAMERA", 190, d => r.CycleCamera(d));
+            riderValue = Chip(chips, "RIDER", 160, d => r.CycleTarget(d));
+            // the same two on both faces: the other face, EXIT
+            var mode = modeButton = TextButton(row, "PHOTO MODE", () => { if (r.Face == ReflexReplay.View.Photo) r.SetFace(ReflexReplay.View.Replay); else r.PhotoFromReplay(); }, true);
+            modeLabel = mode.Q<Label>(className: "mxa-button-label");
             TextButton(row, "EXIT", () => r.Close(), false);
         }
 
@@ -299,7 +326,7 @@ namespace Reflex.Port.Replay
             panel = OuUi.Div("rp-panel", layer);
             panel.RegisterCallback<PointerEnterEvent>(_ => PointerOverPanel = true);
             panel.RegisterCallback<PointerLeaveEvent>(_ => PointerOverPanel = false);
-            OuUi.Text("PHOTO MODE", "rp-title", panel);
+            OuUi.Text("PHOTO SETTINGS", "rp-title", panel);
             OuUi.Text("THE MOMENT IS FROZEN · MOVE THE CAMERA, SET THE SHOT", "rp-sub rp-panel-sub", panel);
             var sv = new ScrollView(ScrollViewMode.Vertical) { verticalScrollerVisibility = ScrollerVisibility.Auto, horizontalScrollerVisibility = ScrollerVisibility.Hidden };
             sv.AddToClassList("rp-scroll");
@@ -309,9 +336,9 @@ namespace Reflex.Port.Replay
 
             Section(c, "CAMERA");
             Choice(c, "CAMERA", () => p.orbit ? "ORBIT" : "FREE", _ => r.SetPhotoOrbit(!p.orbit));
+            Choice(c, "RIDER", () => r.TargetName(r.Target), d => r.CycleTarget(d));   // (the dock's order and names: CAMERA, RIDER)
             Number(c, "FIELD OF VIEW", () => r.UserFov, v => r.UserFov = v, 5f, 110f, 1f, v => $"{v:0}°", false);
             Number(c, "ROLL", () => p.roll, v => p.roll = v, -45f, 45f, 1f, v => $"{v:+0;-0;0}°", true);
-            Choice(c, "SUBJECT", () => r.TargetName(r.Target), d => r.CycleTarget(d));
 
             Section(c, "LENS");
             Choice(c, "FOCUS", () => ReflexReplay.FocusNames[p.focus], d => p.focus = (p.focus + d + 3) % 3);
@@ -355,9 +382,6 @@ namespace Reflex.Port.Replay
 
             shoot = OuUi.Button("TAKE PHOTO", "rp-shoot", () => r.TakePhoto(), panel);
             shoot.name = "photo-take";
-            var back = OuUi.Div("rp-panel-buttons", panel);
-            OuUi.Button("REPLAY", "rp-text-button", () => r.SetFace(ReflexReplay.View.Replay), back);
-            OuUi.Button("DONE", "rp-text-button", () => r.PhotoBack(), back);
             nav.DefaultItem = () => shoot;
         }
 
@@ -459,22 +483,6 @@ namespace Reflex.Port.Replay
             if (postNote != null) Show(postNote, r != null && !r.PostAvailable);
         }
 
-        // ------------------------------------------------------------------------------------------ moment strip
-
-        void BuildMoment()
-        {
-            moment = OuUi.Div("rp-moment", layer);
-            var row = OuUi.Div("rp-moment-row", moment);
-            OuUi.Text("MOMENT", "rp-section rp-section-flush", row);
-            momentTime = OuUi.Text("", "rp-time rp-time-flush", row);
-            var timeline = OuUi.Div("rp-timeline rp-timeline-flush", moment);
-            var track = OuUi.Div("rp-track", timeline);
-            momentFill = OuUi.Div("rp-track-fill", track);
-            OuUi.Div("rp-live", timeline);
-            momentHead = OuUi.Div("rp-head", timeline);
-            Scrubber(timeline);
-        }
-
         // --------------------------------------------------------------------------------------------- per frame
 
         public void Frame()
@@ -485,29 +493,25 @@ namespace Reflex.Port.Replay
             var b = r.Buffer;
             float span = Mathf.Max(0.001f, b.Duration);
             float frac = Mathf.Clamp01((r.PlayTime - b.StartTime) / span);
-            string now = Clock(r.PlayTime - b.StartTime);
+            // the timeline and the clock: the same on both faces
+            fill.style.width = Length.Percent(frac * 100f);
+            headDot.style.left = Length.Percent(frac * 100f);
+            time.text = $"{Clock(r.PlayTime - b.StartTime)}  /  {Clock(span)}";
+            float back = b.EndTime - r.PlayTime;
+            offset.text = back < 0.005f ? "LIVE" : $"LIVE −{back:0.00} S";
             if (!photo)
             {
-                fill.style.width = Length.Percent(frac * 100f);
-                headDot.style.left = Length.Percent(frac * 100f);
-                time.text = $"{now}  /  {Clock(span)}";
                 playIcon.SetKind(r.Playing ? ReflexReplayIcon.Kind.Pause : ReflexReplayIcon.Kind.Play);
                 speedValue.text = r.SpeedLabel;
                 camValue.text = r.CameraLabel;
                 riderValue.text = r.TargetName(r.Target);
                 KeyFrame(b, span);
             }
-            else
-            {
-                momentFill.style.width = Length.Percent(frac * 100f);
-                momentHead.style.left = Length.Percent(frac * 100f);
-                float back = b.EndTime - r.PlayTime;
-                momentTime.text = back < 0.005f ? $"{now}  ·  LIVE" : $"{now}  ·  {back:0.00} S BEFORE";
-            }
             string track = r.Runtime ? (r.Runtime.level ?? "") : "";
-            sub.text = track.Replace('_', ' ').ToUpperInvariant() + (photo ? "" : "   ·   " + r.CameraLabel);
+            sub.text = track.Replace('_', ' ').ToUpperInvariant() + "   ·   " + (photo ? (ReflexReplay.Photo.orbit ? "ORBIT" : "FREE") : r.CameraLabel);
             riderName.text = r.TargetName(r.Target);
             riderInfo.text = r.TargetInfo();
+            Layout(photo);
             Hints(photo);
             Frame(photo ? ReflexReplay.FrameAspect(ReflexReplay.Photo.aspect) : 0f, photo ? ReflexReplay.Photo.logo : 0);
             Grid(photo && !r.UiHidden ? ReflexReplay.Photo.grid : 0);
@@ -538,27 +542,78 @@ namespace Reflex.Port.Replay
             return $"{m}:{s - m * 60f:00.00}";
         }
 
+        /// Everything inside the Open front end's content frame (OuLayout.Insets: the menus' margins, the 2:1 frame centred on an ultrawide
+        /// screen, UI SCALE): the top row, the dock above the hint bar (PHOTO MODE: up to the panel), the panel beside it, the toast over it.
+        void Layout(bool photo)
+        {
+            var i = OuLayout.Insets();
+            float dockHeight = dock.resolvedStyle.height, topHeight = top.resolvedStyle.height, width = layer.resolvedStyle.width;
+            if (float.IsNaN(dockHeight)) dockHeight = 0f;
+            if (float.IsNaN(topHeight)) topHeight = 0f;
+            if (float.IsNaN(width)) width = 0f;
+            var now = (i, photo, dockHeight, topHeight, width);
+            if (now.Equals(laidOut)) return;
+            if (width != laidOut.width || i != laidOut.insets) hintsBuilt = false;   // (the hint bar is fitted to the frame again)
+            laidOut = now;
+            float hintsBottom = Mathf.Max(24f, i.w - 88f);                          // (OuLayout's hint bar)
+            float dockBottom = Mathf.Max(84f, hintsBottom + 60f) + 12f;             // (above its legend band)
+            top.style.left = i.x; top.style.right = i.z; top.style.top = i.y;
+            dock.style.left = i.x; dock.style.bottom = dockBottom;
+            dock.style.right = photo ? i.z + PanelWidth + Gap : i.z;
+            // SPEED / CAMERA / RIDER: in the controls row, or in a row of their own above it when the frame is narrower than the row (a large UI SCALE)
+            bool narrow = width > 1f && width - i.x - i.z < ControlsWidth;
+            var home = narrow ? chipRow : controls;
+            if (chips.parent != home) { if (narrow) chipRow.Add(chips); else controls.Insert(controls.IndexOf(modeButton), chips); }
+            Show(chipRow, narrow && !photo);
+            panel.style.width = PanelWidth;
+            panel.style.right = i.z; panel.style.bottom = dockBottom;
+            panel.style.top = i.y + Mathf.Max(44f, topHeight) + Gap;
+            toast.style.bottom = dockBottom + dockHeight + Gap;
+            hiddenNote.style.right = i.z; hiddenNote.style.bottom = hintsBottom;
+        }
+
+        /// The hint bar: the face's own keys first (the main action, moving in time or space, the camera, the rider), then the same three
+        /// in the same order on both faces and every device: the other face, HIDE UI, EXIT (BACK when PHOTO MODE returns to the replay).
         void Hints(bool photo)
         {
-            bool pad = OuGlyphs.Current != OuGlyphs.Device.Keyboard;
-            if (hintsBuilt && pad == hintsPad && hintsFace == r.Face) return;
-            hintsBuilt = true; hintsPad = pad; hintsFace = r.Face;
-            bool ps = OuGlyphs.Current == OuGlyphs.Device.PlayStation;
+            var device = OuGlyphs.Current;
+            bool back = photo && r.PhotoReturnsToReplay;
+            if (hintsBuilt && device == hintsDevice && hintsFace == r.Face && back == hintsBack)
+            {
+                if (!hintsFit) FitHints();
+                return;
+            }
+            hintsBuilt = true; hintsDevice = device; hintsFace = r.Face; hintsBack = back; hintsFit = false;
+            bool pad = device != OuGlyphs.Device.Keyboard, ps = device == OuGlyphs.Device.PlayStation;
             string P(string playstation, string xbox) => ps ? playstation : xbox;
+            var list = new List<(string key, string label)>();
             if (!photo)
             {
-                if (pad) OuUi.Hints(hints, (P("Cross", "A"), "PLAY / PAUSE"), (P("L2 / R2", "LT / RT"), "SHUTTLE"), ("D-pad", "SKIP · SPEED"), (P("Triangle", "Y"), "CAMERA"),
-                                    (P("L1 / R1", "LB / RB"), "RIDER"), (P("R3", "RS"), "KEY"), (P("Create", "View"), "PHOTO"), (P("Square", "X"), "HIDE UI"), (P("Circle", "B"), "EXIT"));
-                else OuUi.Hints(hints, ("Space", "PLAY / PAUSE"), ("← →", "SKIP"), ("↑ ↓", "SPEED"), (", .", "FRAME"), ("C", "CAMERA"), ("[ ]", "RIDER"),
-                                ("K", "KEY"), ("P", "PHOTO"), ("H", "HIDE UI"), ("Esc", "EXIT"));
+                if (pad) list.AddRange(new[] { (P("Cross", "A"), "PLAY / PAUSE"), (P("L2 / R2", "LT / RT"), "SHUTTLE"), ("D-pad", "SKIP · SPEED"), (P("Triangle", "Y"), "CAMERA"),
+                                               (P("L1 / R1", "LB / RB"), "RIDER"), (P("R3", "RS"), "KEY") });
+                else list.AddRange(new[] { ("Space", "PLAY / PAUSE"), ("← →", "SKIP"), ("↑ ↓", "SPEED"), (", .", "FRAME"), ("C", "CAMERA"), ("[ ]", "RIDER"), ("K", "KEY") });
             }
             else
             {
-                if (pad) OuUi.Hints(hints, ("L Stick", "MOVE"), ("R Stick", "LOOK"), (P("L1 / R1", "LB / RB"), "DOWN / UP"), (P("L2 / R2", "LT / RT"), "ZOOM"),
-                                    (P("Triangle", "Y"), "TAKE PHOTO"), (P("Square", "X"), "HIDE UI"), (P("Create", "View"), "REPLAY"), (P("Circle", "B"), "BACK"));
-                else OuUi.Hints(hints, ("WASD", "MOVE"), ("Q / E", "DOWN / UP"), ("Right mouse", "LOOK"), ("Wheel", "ZOOM"), ("Shift", "FAST"),
-                                ("Space", "TAKE PHOTO"), (", .", "FRAME"), ("H", "HIDE UI"), ("Esc", "BACK"));
+                if (pad) list.AddRange(new[] { (P("Triangle", "Y"), "TAKE PHOTO"), ("L Stick", "MOVE"), ("R Stick", "LOOK"), (P("L1 / R1", "LB / RB"), "DOWN / UP"),
+                                               (P("L2 / R2", "LT / RT"), "ZOOM"), ("D-pad", "SETTINGS") });
+                else list.AddRange(new[] { ("Space", "TAKE PHOTO"), ("WASD", "MOVE"), ("Q / E", "DOWN / UP"), ("Right mouse", "LOOK"), ("Wheel", "ZOOM"), ("Arrows", "SETTINGS"),
+                                           (", .", "FRAME") });
             }
+            list.Add((pad ? P("Create", "View") : "P", photo ? "REPLAY" : "PHOTO MODE"));
+            list.Add((pad ? P("Square", "X") : "H", "HIDE UI"));
+            list.Add((pad ? P("Circle", "B") : "Esc", back ? "BACK" : "EXIT"));
+            hints.RemoveFromClassList("rp-hints-compact");
+            OuUi.Hints(hints, list.ToArray());
+        }
+
+        /// The hint bar wider than the content frame (a large UI SCALE, a narrow window): the compact caps.
+        void FitHints()
+        {
+            float w = hints.resolvedStyle.width, room = layer.resolvedStyle.width - laidOut.insets.x - laidOut.insets.z;
+            if (float.IsNaN(w) || w < 1f || float.IsNaN(room) || room < 1f) return;   // (not laid out yet)
+            hintsFit = true;
+            if (w > room) hints.AddToClassList("rp-hints-compact");
         }
 
         /// The aspect frame (inside the game camera's own part of the screen): the view outside it darkened, the grid and the logo's
@@ -642,7 +697,7 @@ namespace Reflex.Port.Replay
     /// The transport's vector icons (the fonts have no media glyphs).
     public sealed class ReflexReplayIcon : VisualElement
     {
-        public enum Kind { Play, Pause, Back, Forward, Start, End }
+        public enum Kind { Play, Pause, Back, Forward, Start, End, StepBack, StepForward }
         public Kind kind;
 
         public ReflexReplayIcon() { generateVisualContent += Draw; }
@@ -679,6 +734,8 @@ namespace Reflex.Port.Replay
                 case Kind.Forward: Tri(0f, w * 0.5f, true); Tri(w * 0.5f, w, true); break;
                 case Kind.Start: Bar(0f, w * 0.16f); Tri(w * 0.16f, w * 0.92f, false); break;
                 case Kind.End: Tri(w * 0.08f, w * 0.84f, true); Bar(w * 0.84f, w); break;
+                case Kind.StepBack: Tri(w * 0.06f, w * 0.62f, false); Bar(w * 0.74f, w * 0.92f); break;
+                case Kind.StepForward: Bar(w * 0.08f, w * 0.26f); Tri(w * 0.38f, w * 0.94f, true); break;
             }
         }
     }

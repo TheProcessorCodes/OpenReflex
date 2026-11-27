@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include "sound_state.h"
 #include "race_activity.h"
+#include "practice.h"
 #include "../src/fmt_scene.h"
 #include "../src/fmt_bxml.h"
 
@@ -196,6 +197,11 @@ void rx_activity_cues_play(rx_addr logic, rx_addr name, uint32_t a, uint32_t b) 
         case MOD_HUMAN_DRIVER: ok = default_ok(c, act) && human(a); break;                                         /* 00580a80 */
         case MOD_DRIVER: ok = default_ok(c, act) && (c->must_human == 0 || human(a)); break;                      /* 00580af0 */
         case MOD_CHALLENGE: ok = default_ok(c, act) && human(a) && b != 0 && (I32(b, 0) == c->award || c->award == 4); break;   /* 00580c20 */
+        }
+        /* PORT ADDITION (PRACTICE, practice.h): the gate starts down and nothing counts down: no countdown step cue, no DROP_GATE */
+        if (ok && rx_practice_applies(act)) {
+            const size_t n = strlen(c->path);
+            if (c->kind == MOD_COUNTDOWN || (n >= 10 && strcmp(c->path + n - 10, "/DROP_GATE") == 0)) ok = 0;
         }
         if (!ok) continue;
         if (c->kind == MOD_SELECT_INDEX && a != 0) c->index = I32(a, 0);                                        /* 00580b70 */

@@ -75,13 +75,14 @@ Shader "Reflex/Tree"
         //   branch / frond: alphaTest / min(sat(lod * c81.x + depth * c80.x + c80.y) + 1/3, 1)   (BranchFrondVertexShader 0418..04a4)
         //   leaf: alphaTest                                                                     (LeafVertexShader 0510..051c)
         // depth = dot(P - camera, forward) (= the clip w the original uses, dp4 r0.y, r1, c7)
-        float3 TreeVertex(TreeInst t, float3 posOS, float lod, float3 corner, out float fade)
+        // right / up / fwd: the frame the leaf cards face (the view's; the shadow caster's: the light's)
+        float3 TreeVertexFacing(TreeInst t, float3 posOS, float lod, float3 corner, float3 right, float3 up, float3 fwd, out float fade)
         {
             float3 P = TreePoint(t, posOS);
             float alphaTest = dot(_RfxTreeSel, t.alpha);
             if (_RfxTreeLeaf > 0.5)
             {
-                float3 r0 = corner.x * _RfxTreeCamRight.xyz + corner.y * _RfxTreeCamUp.xyz + corner.z * _RfxTreeCamFwd.xyz;
+                float3 r0 = corner.x * right + corner.y * up + corner.z * fwd;
                 P += t.scale * r0;                                   // mad r1.xyz, c65.y, r0, r2 (c65.y = gWorld._22 = scale)
                 fade = alphaTest;
             }
@@ -93,6 +94,10 @@ Shader "Reflex/Tree"
                 fade = alphaTest * rcp(d);
             }
             return P;
+        }
+        float3 TreeVertex(TreeInst t, float3 posOS, float lod, float3 corner, out float fade)
+        {
+            return TreeVertexFacing(t, posOS, lod, corner, _RfxTreeCamRight.xyz, _RfxTreeCamUp.xyz, _RfxTreeCamFwd.xyz, fade);
         }
 
         float TreeAlpha(float fade, float texAlpha)
@@ -175,7 +180,9 @@ Shader "Reflex/Tree"
                 o.normalWS = N; o.tangentWS = T; o.binormalWS = cross(T, N);
                 o.uv = v.uv0;
                 o.fog = RfxFog(P, _WorldSpaceCameraPos);
-                o.ambient = float4(_Template < 0.5 ? RfxAmbient(N) : float3(0, 0, 0), fade);
+                // the fill lights take the unit normal (gWorld x normal carries the tree's scale, and MAP SCALE with it: the vertex ambient
+                // grew with the tree's size, and stepped against its billboard, which is lit with a unit normal)
+                o.ambient = float4(_Template < 0.5 ? RfxAmbient(N * rsqrt(max(dot(N, N), 1e-12))) : float3(0, 0, 0), fade);
                 o.shade = v.uv2.x; o.dith = t.dith;
                 return o;
             }
@@ -237,6 +244,9 @@ Shader "Reflex/Tree"
                         float4 sc = TransformWorldToShadowCoord(P);
                         sun *= RfxMainLightShadow(sc) * rfxOcc.g;
                         colour = sun * albedo + albedo * RfxEnhAmbient(amb0, N, rfxOcc.r);
+                        // WEATHER: snow on the leaves, wet. The snow lies on what faces up; a leaf card's lower faces stay in the crown's
+                        // shade (lit flat, a leafy crown went one white mass; the cards of the far trees do the same: ReflexTreeBillboard)
+                        colour = RfxWeatherFoliage(colour, P, N.y, (sun + RfxEnhAmbient(amb0, N, rfxOcc.r)) * (0.6 + 0.4 * saturate(N.y)), 0.75);
                     }
                 #else
                     colour = sun * albedo + albedo * amb0;
@@ -286,6 +296,9 @@ Shader "Reflex/Tree"
                     else D = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, i.uv.xy);
                     D.rgb = RfxTreeAlbedo(RfxIsAliveData() ? D.rgb * i.shade : D.rgb);
                     colour = D.rgb * ambient + sun * D.rgb;
+                #if defined(_RFX_ENHANCED)
+                    colour = RfxWeatherFoliage(colour, P, N2.y, ambient + sun, 0.9);   // WEATHER: snow on the branches, wet
+                #endif
                     alpha = saturate(1.0 - fade);
                 }
                 TreeClip(alpha);
@@ -319,13 +332,17 @@ Shader "Reflex/Tree"
             {
                 Varyings o;
                 TreeInst t = LoadTree(v.instanceID);
-                float3 P = TreeVertex(t, v.positionOS, TreeLodValue(v), TreeCorner(v), o.fade);
                 float3 N = normalize(TreeDir(t, v.normalOS));
             #if _CASTING_PUNCTUAL_LIGHT_SHADOW
-                float3 lightDirectionWS = normalize(_LightPosition - P);
+                float3 lightDirectionWS = normalize(_LightPosition - TreePoint(t, v.positionOS));
             #else
                 float3 lightDirectionWS = _LightDirection;
             #endif
+                // the leaf cards face the light here (the forward pass turns them to the camera: cast with that frame, a crown's shadow
+                // thinned and filled again as the camera turned, edge-on to the sun at a right angle to it)
+                float3 lf = -lightDirectionWS;
+                float3 lr = abs(lf.y) > 0.999 ? float3(1, 0, 0) : normalize(cross(float3(0, 1, 0), lf));
+                float3 P = TreeVertexFacing(t, v.positionOS, TreeLodValue(v), TreeCorner(v), lr, cross(lf, lr), lf, o.fade);
                 float4 positionCS = TransformWorldToHClip(ApplyShadowBias(P, N, lightDirectionWS));
             #if UNITY_REVERSED_Z
                 positionCS.z = min(positionCS.z, UNITY_NEAR_CLIP_VALUE);

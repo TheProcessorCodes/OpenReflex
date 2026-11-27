@@ -26,19 +26,22 @@ namespace Reflex.Port.OriginalWorld
         public bool topDownOnly;
         static readonly int TopDownId = Shader.PropertyToID("_TopDownMap"), TopDownMeanId = Shader.PropertyToID("_AliveTopDownMean");
 
-        readonly RenderTexture[] rings = new RenderTexture[4];
-        readonly Vector2[] centres = new Vector2[4];
-        readonly bool[] drawn = new bool[4];
+        // per world view (SPLIT SCREEN, w-split: 1 = the second rider's camera, ReflexWorldViews): the camera-centred rings 0..2 of its own,
+        // made when that view first renders and released when its camera goes; the whole-terrain ring 3 is the first set's for both.
+        sealed class RingSet { public readonly RenderTexture[] rings = new RenderTexture[4]; public readonly Vector2[] centres = new Vector2[4]; public readonly bool[] drawn = new bool[4]; }
+        readonly RingSet[] sets = { new RingSet(), new RingSet() };
         CommandBuffer cmd;
         static readonly int[] TexIds = { Shader.PropertyToID("_AliveVT0"), Shader.PropertyToID("_AliveVT1"), Shader.PropertyToID("_AliveVT2"), Shader.PropertyToID("_AliveVT3") };
         static readonly int[] RectIds = { Shader.PropertyToID("_AliveVTRect0"), Shader.PropertyToID("_AliveVTRect1"), Shader.PropertyToID("_AliveVTRect2"), Shader.PropertyToID("_AliveVTRect3") };
         public int Redraws { get; private set; }
 
-        void OnEnable() { RenderPipelineManager.beginCameraRendering += OnBegin; }
+        void OnEnable() { RenderPipelineManager.beginCameraRendering += OnBegin; ReflexWorldViews.SecondGone += ForgetSecond; }
+        void Release(RingSet s) { for (int k = 0; k < s.rings.Length; k++) { if (s.rings[k]) { s.rings[k].Release(); Destroy(s.rings[k]); } s.rings[k] = null; s.drawn[k] = false; } }
+        void ForgetSecond(Camera gone) { Release(sets[1]); }
         void OnDisable()
         {
-            RenderPipelineManager.beginCameraRendering -= OnBegin;
-            for (int k = 0; k < rings.Length; k++) { if (rings[k]) { rings[k].Release(); Destroy(rings[k]); } rings[k] = null; drawn[k] = false; }
+            RenderPipelineManager.beginCameraRendering -= OnBegin; ReflexWorldViews.SecondGone -= ForgetSecond;
+            Release(sets[1]); Release(sets[0]);
             var m = terrain && terrain.UnityTerrain ? terrain.UnityTerrain.materialTemplate : terrainMaterial;
             if (m) for (int k = 0; k < 4; k++) m.SetVector(RectIds[k], Vector4.zero);
             cmd?.Release(); cmd = null;
@@ -50,13 +53,16 @@ namespace Reflex.Port.OriginalWorld
         {
             var target = targetCamera ? targetCamera : Camera.main;
             var mat = terrain && terrain.UnityTerrain && terrain.UnityTerrain.materialTemplate ? terrain.UnityTerrain.materialTemplate : terrainMaterial;
-            if (c != target || decals == null || decals.Count == 0 || !mat) return;
+            if (!ReflexWorldViews.Is(target, c) || decals == null || decals.Count == 0 || !mat) return;
+            int view = topDownOnly ? 0 : ReflexWorldViews.Index(c);
+            RenderTexture[] rings = sets[view].rings; Vector2[] centres = sets[view].centres; bool[] drawn = sets[view].drawn;
             cmd ??= new CommandBuffer { name = "Alive terrain decals" };
             cmd.Clear();
             var p = new Vector2(c.transform.position.x, c.transform.position.z) / (mapScale > 0f ? mapScale : 1f);
             bool any = false;
             for (int k = topDownOnly ? 3 : 0; k < rings.Length; k++)
             {
+                if (view == 1 && k == 3) continue;   // (the whole terrain: the first set's)
                 float size = SizeOf(k);
                 Vector2 want = RingSizes[k] > 0f && size < terrainExtent ? Snap(p, size / 16f) : terrainCentre;
                 if (drawn[k] && (RingSizes[k] <= 0f || (want - centres[k]).magnitude < size / 8f)) continue;
@@ -102,7 +108,7 @@ namespace Reflex.Port.OriginalWorld
             }
             for (int k = 0; k < rings.Length; k++)
             {
-                if (!drawn[k]) continue;
+                if (!drawn[k]) continue;   // (the second view's ring 3 is never drawn: the first view's stays bound)
                 float size = SizeOf(k);
                 mat.SetTexture(TexIds[k], rings[k]);
                 float s = mapScale > 0f ? mapScale : 1f;

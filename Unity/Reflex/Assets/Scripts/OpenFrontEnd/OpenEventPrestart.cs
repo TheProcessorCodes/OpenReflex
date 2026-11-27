@@ -84,6 +84,9 @@ namespace Reflex.Port.OpenFrontEnd
                 // what ReflexEventSelect.Launch and Awake give the world: MAP SCALE, a custom track's files, the AI, the duration, the vehicle
                 RxMapScale.Set(OpenSetup.MapScaleOf(e), OpenSetup.MapScaleBase(e));   // (BASE SCALE: the track's default, an Alive race level's)
                 RxPracticeMode.Set(setup.practice);   // PRACTICE (ReflexEventSelect.Launch sets the same at PRESS START)
+                RxAnyVehicle.Set(setup.OffEvent(e));   // ANY VEHICLE (the same)
+                RxSplitScreen.Set(setup.SplitScreen);   // SPLIT SCREEN (the same: the second local rider is added when this session loads the event)
+                UnleashedLevels.Bind(e.location);
                 TrackMods.Bind(e.trackMod);
                 ReflexEventSelect.LaunchAi(setup.Ai(e), out int opponents, out int aiSkill, setup.LaunchRiders(e));
                 var garage = ReflexEventSelect.LaunchGarage(e, setup.Garage(e));
@@ -96,7 +99,7 @@ namespace Reflex.Port.OpenFrontEnd
                 p.eventKey = e.key; p.key = Key(spec, challenges); p.startedAt = Time.realtimeSinceStartup;
                 p.sim = OpenReflexSelector.CreateOpen(ReflexInstall.Require(), spec, true, true, persistence: persistence, replayPresentation: true, inCareerMode: challenges);
                 s_current = p;
-                Debug.Log($"[LoadArena] {e.key}: the event's session starts in the front end ({spec.EventType}/{spec.Location}, riders {spec.riders}, AI {spec.ai_difficulty}, duration {spec.duration} {spec.DurationType}, map scale {RxMapScale.Current:0.##})");
+                Debug.Log($"[LoadArena] {e.key}: the event's session starts in the front end ({spec.EventType}/{spec.Location}, riders {spec.riders}, AI {spec.ai_difficulty}, duration {spec.duration} {spec.DurationType}, map scale {RxMapScale.Current:0.##}{(RxSplitScreen.Requested ? ", split screen" : "")})");
                 return p;
             }
             catch (Exception x)
@@ -149,7 +152,7 @@ namespace Reflex.Port.OpenFrontEnd
             s.duration, s.DurationType, s.riders, s.ai_difficulty, s.vehicle_class, s.PlayerMode, s.PlayerName, challenges ? "challenges" : "-",
             RxMapScale.Current.ToString("R", System.Globalization.CultureInfo.InvariantCulture), RxMapScale.Base.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
             RxCustomTrack.For(s.Location) ? RxCustomTrack.Folder : "-",
-            RxPracticeMode.Current ? "practice" : "-");
+            RxPracticeMode.Current ? "practice" : "-", RxAnyVehicle.Current ? "anyvehicle" : "-", RxSplitScreen.Requested ? "split" : "-");
 
         // The event's load states: frames as OriginalWorldRuntime.PollOpenStartup submits them (no input, the fixed step), until the snapshot.
         void Update()

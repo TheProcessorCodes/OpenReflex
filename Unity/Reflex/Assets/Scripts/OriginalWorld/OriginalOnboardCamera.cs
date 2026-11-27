@@ -62,6 +62,10 @@ namespace Reflex.Port.OriginalWorld
         [NonSerialized] public Vector3 headLimit = new Vector3(0.6f,0.8f,0.7f);
         /// Tests (FpvRideProbe's comparison cameras): settings set in code; Load / Save and the key watch leave them alone.
         [NonSerialized] public bool ownSettings;
+        /// SPLIT SCREEN (w-split): the second local rider's camera: the free-look stick is lookPad's alone (null: none) and the mouse does not
+        /// turn its head (the keyboard and mouse are the first rider's).
+        [NonSerialized] public bool ownPad;
+        [NonSerialized] public Gamepad lookPad;
         public bool Active { get; private set; }
         public float LeanDeg { get; private set; }
         public float LookYaw => yaw;
@@ -128,7 +132,7 @@ namespace Reflex.Port.OriginalWorld
         // (w-fpvrevert) any writer of a ReflexFpv.* key (the options rows, a share code, RESET, a restored backup) reaches the running camera: the next
         // Apply reads the settings again
         bool settingsDirty;
-        void OnEnable() { ReflexSave.Changed += OnSaveChanged; }
+        void OnEnable() { ReflexSave.Changed += OnSaveChanged; UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering += BeforeCamera; }
         void OnSaveChanged(string key) { if (key != null && key.StartsWith(P, StringComparison.Ordinal)) settingsDirty = true; }
         /// The player's settings (the ReflexFpv.* keys, ReflexSettings.Onboard*; an unset key = this file's default). The 7a9c99ff camera read the same
         /// keys from PlayerPrefs with the current field as the fallback, so after RESET (the keys deleted) a running camera kept the old values.
@@ -189,6 +193,14 @@ namespace Reflex.Port.OriginalWorld
             if(!OriginalInput.IsCameraKey(Key.F12)&&kb.f12Key.wasPressedThisFrame){freeLook=!freeLook;changed=true;}
             if(changed)Save();
         }
+        /// SPLIT SCREEN (w-split): a half-height view (twice the screen's aspect, ~32:9) shows the middle band of what the whole screen would:
+        /// the screen's own vertical angle (VerticalFov of the screen's aspect) halved in tangent space, so the angle across stays the one set
+        /// (116 degrees across a 16:9 screen: 84 up and down on the whole screen, 48.5 in a half; VerticalFov alone gave 145 across). One view: VerticalFov.
+        public static float ViewFov(float fovDeg,float aspect)
+        {
+            if(!Reflex.Port.RxCore.RxSplitScreen.TwoViews||!(aspect>0))return VerticalFov(fovDeg,aspect);
+            return 2*Mathf.Atan(Mathf.Tan(VerticalFov(fovDeg,aspect*.5f)*.5f*Mathf.Deg2Rad)*.5f)*Mathf.Rad2Deg;
+        }
         public static float VerticalFov(float fovDeg,float aspect)
         {
             float t=Mathf.Tan(Mathf.Clamp(fovDeg,1,179)*.5f*Mathf.Deg2Rad);
@@ -211,13 +223,13 @@ namespace Reflex.Port.OriginalWorld
         public void Deactivate()
         {
             if(Active&&rider)SetCockpit(rider,false);
-            Active=false;
+            Active=false;otherView=false;
             // Missing/invalid authored pose also suspends this view, without a head-position veto.
             // Never integrate the whole time spent in an external camera through the eye spring on recovery.
             Resnap();
         }
-        void OnDisable(){ReflexSave.Changed -= OnSaveChanged;Deactivate();}
-        void OnDestroy(){ReflexSave.Changed -= OnSaveChanged;Deactivate();ReleaseCockpit(rider);camLog?.Dispose();camLog=null;}
+        void OnDisable(){ReflexSave.Changed -= OnSaveChanged;UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= BeforeCamera;Deactivate();}
+        void OnDestroy(){ReflexSave.Changed -= OnSaveChanged;UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= BeforeCamera;Deactivate();ReleaseCockpit(rider);camLog?.Dispose();camLog=null;}
         static bool Finite(Vector3 v) => !(float.IsNaN(v.x)||float.IsNaN(v.y)||float.IsNaN(v.z)||float.IsInfinity(v.x)||float.IsInfinity(v.y)||float.IsInfinity(v.z));
 
         // Reflex bone axes are not the source game's canonical head axes. Recover that basis once from the bind skeleton.
@@ -392,14 +404,14 @@ namespace Reflex.Port.OriginalWorld
         }
         float DynamicPitch(float leanFb)=>pitch*20+15+(leanPitch&&leanFb>0?leanFb*10:0);
         float FrameTime(out bool newFrame){newFrame=lastFrame!=Time.frameCount;lastFrame=Time.frameCount;return newFrame?Time.unscaledDeltaTime:0;}
-        float StickYaw() { var pad = LocalGamepadRouting.ActiveLocalPad; return freeLook && !rightStickRiding && pad != null ? HeadingCurve(pad.rightStick.x.ReadValue()) * 60 : 0; }
+        float StickYaw() { var pad = ownPad ? lookPad : LocalGamepadRouting.ActiveLocalPad; return freeLook && !rightStickRiding && pad != null ? HeadingCurve(pad.rightStick.x.ReadValue()) * 60 : 0; }
         static float HeadingCurve(float x){const float dz=.15f;if(Mathf.Abs(x)<dz)return 0;float a=(Mathf.Abs(x)-dz)/(1-dz);return Mathf.Sign(x)*a*a;}
         static float? commandYaw;
         static float CommandYaw {get {if(!commandYaw.HasValue){var a=Environment.GetCommandLineArgs();int i=Array.IndexOf(a,"-reflexLookYaw");if(i<0)i=Array.IndexOf(a,"-mxaLookYaw");commandYaw=i>=0&&i+1<a.Length&&float.TryParse(a[i+1],System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out float y)?y:0;}return commandYaw.Value;}}
         bool Publish(Transform head,Vector3 eye,Quaternion q)
         {
             if(!Finite(eye)||!Finite(q*Vector3.forward)||!Finite(q*Vector3.up))return Reject("view-nonfinite");
-            EyeInHead=head.InverseTransformPoint(eye);cam.transform.SetPositionAndRotation(eye,q);cam.fieldOfView=VerticalFov(fov,cam.aspect);cam.nearClipPlane=nearPlane;
+            EyeInHead=head.InverseTransformPoint(eye);cam.transform.SetPositionAndRotation(eye,q);cam.fieldOfView=ViewFov(fov,cam.aspect);cam.nearClipPlane=nearPlane;
             if(!Active)SetCockpit(rider,true);Active=true;FallbackReason="";if(fallbackSince>=0f)FallbackEnded();return true;
         }
         bool ApplyTrue(Transform head,Vector3 actualEye,Quaternion gaze,Vector3 bodyPos,Quaternion bodyRot,Vector3 vel,float leanFb,float dt,bool lookBack)
@@ -436,7 +448,7 @@ namespace Reflex.Port.OriginalWorld
         static float Soft(float x,float lo,float hi){float l=x<0?lo:hi;return l>0?l*(float)Math.Tanh(x/l):0;}
         void MouseLook(float dt)
         {
-            var m=Mouse.current;Vector2 d=m!=null?m.delta.ReadValue():Vector2.zero;
+            var m=ownPad?null:Mouse.current;Vector2 d=m!=null?m.delta.ReadValue():Vector2.zero;
             if(d.sqrMagnitude>.01f){mouseYaw=Mathf.Clamp(mouseYaw+d.x*.15f,-120,120);mousePitch=Mathf.Clamp(mousePitch-d.y*.15f,-60,60);mouseIdle=0;return;}
             mouseIdle+=dt;if(mouseIdle>1.5f){float k=1-Mathf.Exp(-dt/.25f);mouseYaw=Mathf.Lerp(mouseYaw,0,k);mousePitch=Mathf.Lerp(mousePitch,0,k);}
         }
@@ -642,6 +654,33 @@ namespace Reflex.Port.OriginalWorld
             cockpits.Remove(r);
         }
 
+        /// The rider's models are about to be destroyed (OriginalOpponents rebuilding: the second local rider's): its cockpit parts go first.
+        public static void Forget(OriginalRider r) { ReleaseCockpit(r); }
+
+        // SPLIT SCREEN (w-split): the cockpit rider is this camera's alone while two views are drawn. SetCockpit's state (the cockpit mesh
+        // drawn without a shadow, the whole part as a shadow-only copy, the helmet and goggles shadow-only) is what this camera sees; before
+        // any other camera renders, the whole rider is put back for it without touching a mesh (skinning is not per camera): the shadow copy
+        // is drawn (it is the whole part on the same bones), the cockpit mesh casts only, the rigid gear is drawn. One view: nothing here
+        // runs (otherView stays false), the cockpit is every camera's as it always was.
+        bool otherView;
+        void BeforeCamera(UnityEngine.Rendering.ScriptableRenderContext context, Camera c)
+        {
+            if (!Active) return;
+            bool other = ReflexWorldViews.Two && c != cam;
+            if (other == otherView) return;
+            otherView = other;
+            if (!rider || !cockpits.TryGetValue(rider, out var parts)) return;
+            foreach (var p in parts)
+            {
+                if (!p.smr || !p.shadow) continue;   // (a part without a cockpit mesh is the whole part for every camera)
+                p.smr.shadowCastingMode = other ? UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly : UnityEngine.Rendering.ShadowCastingMode.Off;
+                p.shadow.shadowCastingMode = other ? UnityEngine.Rendering.ShadowCastingMode.On : UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly;
+            }
+            if (rider.rigidMeshes != null)
+                foreach (var m in rider.rigidMeshes)
+                    if (m) m.shadowCastingMode = other ? UnityEngine.Rendering.ShadowCastingMode.On : UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly;
+        }
+
         /// The cockpit rider (no head and torso; their shadows kept) on or off: the OPEN REFLEX replay's onboard camera.
         public static void SetCockpitView(OriginalRider r, bool on) { if (r) SetCockpit(r, on); }
 
@@ -653,7 +692,7 @@ namespace Reflex.Port.OriginalWorld
                 if (!c.smr) continue;
                 c.smr.sharedMesh = on && c.cockpit ? c.cockpit : c.full;
                 c.smr.shadowCastingMode = on ? UnityEngine.Rendering.ShadowCastingMode.Off : UnityEngine.Rendering.ShadowCastingMode.On;
-                if (c.shadow) c.shadow.enabled = on && c.smr.enabled;
+                if (c.shadow) { c.shadow.enabled = on && c.smr.enabled; c.shadow.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly; }   // (BeforeCamera's per-view state: back to the copy's own)
             }
             if (r.rigidMeshes != null)
                 foreach (var m in r.rigidMeshes)

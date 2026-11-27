@@ -1,5 +1,6 @@
 /* free_air.c -- PORT ADDITION (not original game code): FREER AIR and AIR LOOSENESS (free_air.h, core/notes/bike.md "FREER AIR"). */
 #include "free_air.h"
+#include <math.h>
 #include "phys_vec.h"
 #include "rider_cap.h"
 
@@ -7,6 +8,7 @@ uint32_t rx_fa_mask_value;
 float    rx_fa_level_value = 1.0f;     /* non-zero initial values are restored with the other statics (session-reset.md) */
 float    rx_fa_snap_value = 1.0f;
 float    rx_fa_looseness_value;
+float    rx_fa_lip_value = 1.0f;
 uint32_t rx_fa_any;
 /* the factors at L = 1, chosen from the w-freeair2 measurements (core/plan/QUEUE.md w-freeair2): the coast damping 0.985 -> 0.9895
  * (time constant 0.50 -> 0.71 s; 0.991 let a full whip coast > 190 deg), the lag 0.1 s -> 0.08 s (0.07 s made the first frame of
@@ -20,7 +22,7 @@ static uint32_t fa_part(void) {
 }
 static void fa_update_any(void) {
     rx_fa_mask_value = (rx_fa_snap_value <= 0.0f ? RX_FREE_AIR_NO_HOLD : 0u) | (rx_fa_level_value <= 0.0f ? RX_FREE_AIR_NO_SETTLE : 0u);
-    rx_fa_any = rx_fa_mask_value != 0 || fa_part() != 0 || rx_fa_looseness_value > 0.0f;
+    rx_fa_any = rx_fa_mask_value != 0 || fa_part() != 0 || rx_fa_looseness_value > 0.0f || rx_fa_lip_value < 1.0f;
 }
 static float fa_unit(float x) { return x > 0.0f ? (x < 1.0f ? x : 1.0f) : 0.0f; }
 void rx_fa_set(uint32_t mask) {
@@ -30,6 +32,7 @@ void rx_fa_set(uint32_t mask) {
 }
 void rx_fa_set_helpers(float level, float snap) { rx_fa_level_value = fa_unit(level); rx_fa_snap_value = fa_unit(snap); fa_update_any(); }
 void rx_fa_set_looseness(float l) { rx_fa_looseness_value = l > 0.0f ? (l < 1.0f ? l : 1.0f) : 0.0f; fa_update_any(); }
+void rx_fa_set_lip(float lip) { rx_fa_lip_value = fa_unit(lip); fa_update_any(); }
 
 /* MXGame [0x00a946b8]: the player slots G+0x153ec (count byte G+0x1541c), players G+0x7460 + slot * 0x12a0 (+0x10: 0 human,
  * 1 computer; +0x1ac the vehicle), the vehicle's simulation at +0x234 (the slot walk of api/rx_session.c local_player). Every
@@ -44,7 +47,7 @@ uint32_t rx_fa_local(rx_addr sim) {
         const rx_addr p = rx_seat(g + 0x7460, slot);
         if (U32(p, 0x10) != 0) continue;
         const rx_addr v = U32(p, 0x1ac);
-        if (v && U32(v, 0x234) == sim) return rx_fa_mask_value | fa_part() | (rx_fa_looseness_value > 0.0f ? RX_FA_LOOSE : 0u);
+        if (v && U32(v, 0x234) == sim) return rx_fa_mask_value | fa_part() | (rx_fa_looseness_value > 0.0f ? RX_FA_LOOSE : 0u) | (rx_fa_lip_value < 1.0f ? RX_FA_LIP : 0u);
     }
     return 0;
 }
@@ -69,4 +72,18 @@ float rx_fa_lag_update(rx_addr f, float dt, float target) {
     SF32(f, 8, k);
     SF32(f, 0, next);
     return next;
+}
+
+/* LIP PULL: the ground's rise along the bike's horizontal heading h, tan = -(n . h) / n.y; 0 at tan 10 deg (0.176327), 1 at tan 25 deg (0.466308) */
+float rx_fa_lip_slope(rx_v4 n, rx_v4 fwd) {
+    const float hl = sqrtf(fwd.v[0] * fwd.v[0] + fwd.v[2] * fwd.v[2]);
+    if (!(hl > 1e-6f)) return 0.0f;                       /* pointing straight up / down: no heading */
+    if (!(n.v[1] > 1e-6f)) return 1.0f;                   /* a wall */
+    const float rise = -(n.v[0] * fwd.v[0] + n.v[2] * fwd.v[2]) / hl / n.v[1];
+    return fa_unit((rise - 0.176327f) / (0.466308f - 0.176327f));
+}
+float rx_fa_lip_blend(float before, float limited, rx_v4 n, rx_v4 fwd) {
+    const float keep = 1.0f - (1.0f - rx_fa_lip_value) * rx_fa_lip_slope(n, fwd);
+    if (!(keep < 1.0f)) return limited;                    /* flat ground (or LIP PULL 1): the original's value as it is */
+    return before + (limited - before) * keep;
 }

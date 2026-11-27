@@ -1,0 +1,522 @@
+{
+  "snow": {
+    "layers": [
+      {
+        "donor": "FR_Cheyenne",
+        "albedo": "FR_CH_Snow01",
+        "bump": "FR_CH_Snow01_Bm",
+        "mean": [
+          0.37248,
+          0.39561,
+          0.42236
+        ],
+        "tile": 100
+      },
+      {
+        "donor": "FR_Cheyenne",
+        "albedo": "FR_CH_Snow01",
+        "bump": "FR_CH_Snow01_Bm",
+        "mean": [
+          0.37248,
+          0.39561,
+          0.42236
+        ],
+        "tile": 100
+      },
+      {
+        "donor": "FR_Cheyenne",
+        "albedo": "FR_CH_Rock01",
+        "bump": "FR_CH_Rock01_Bm",
+        "mean": [
+          0.21357,
+          0.21285,
+          0.20581
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "FR_Cheyenne",
+        "albedo": "FR_CH_Snow01",
+        "bump": "FR_CH_Snow01_Bm",
+        "mean": [
+          0.37248,
+          0.39561,
+          0.42236
+        ],
+        "tile": 100
+      }
+    ],
+    "cover": "snow",
+    "rut_strength": 0.3,
+    "version": 1,
+    "name": "snow"
+  },
+  "snow_mud": {
+    "layers": [
+      {
+        "donor": "NAT_Bedford",
+        "albedo": "NAT_BE_Dirt01",
+        "bump": "NAT_BE_Dirt01_BumpNew",
+        "mean": [
+          0.30484,
+          0.24226,
+          0.20041
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "NAT_Bedford",
+        "albedo": "NAT_BE_Dirt02",
+        "bump": "NAT_BE_Dirt02_Bump",
+        "mean": [
+          0.32027,
+          0.26507,
+          0.21739
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "FR_Cheyenne",
+        "albedo": "FR_CH_Rock01",
+        "bump": "FR_CH_Rock01_Bm",
+        "mean": [
+          0.21357,
+          0.21285,
+          0.20581
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "FR_Cheyenne",
+        "albedo": "FR_CH_Snow01",
+        "bump": "FR_CH_Snow01_Bm",
+        "mean": [
+          0.37248,
+          0.39561,
+          0.42236
+        ],
+        "tile": 100
+      }
+    ],
+    "cover": "snow",
+    "rut_strength": 0.5,
+    "version": 1,
+    "name": "snow_mud"
+  },
+  "dunes": {
+    "layers": [
+      {
+        "donor": "FR_Gibson",
+        "albedo": "FR_GI_DetailDirt2",
+        "bump": "FR_GI_DetailDirt2_Bm",
+        "mean": [
+          0.30072,
+          0.25717,
+          0.20308
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "FR_Gibson",
+        "albedo": "FR_GI_DetailDirt2",
+        "bump": "FR_GI_DetailDirt2_Bm",
+        "mean": [
+          0.30072,
+          0.25717,
+          0.20308
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "FR_Gibson",
+        "albedo": "FR_GI_DetailDirtRocky1",
+        "bump": "FR_GI_DetailDirtRocky1_Bm",
+        "mean": [
+          0.25831,
+          0.22527,
+          0.18528
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "NAT_Concord",
+        "albedo": "NAT_CO_B_Grass",
+        "bump": "NAT_CO_B_GrassBUMPS",
+        "mean": [
+          0.17973,
+          0.18115,
+          0.09357
+        ],
+        "tile": 50
+      }
+    ],
+    "cover": "sparse_grass",
+    "rut_strength": 0.3,
+    "version": 1,
+    "name": "dunes"
+  },
+  "arid": {
+    "layers": [
+      {
+        "donor": "FR_Gibson",
+        "albedo": "FR_GI_DetailDirt1",
+        "bump": "FR_GI_DetailDirt1_Bm",
+        "mean": [
+          0.3364,
+          0.258,
+          0.18858
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "FR_Gibson",
+        "albedo": "FR_GI_DetailDirt2",
+        "bump": "FR_GI_DetailDirt2_Bm",
+        "mean": [
+          0.30072,
+          0.25717,
+          0.20308
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "FR_Gibson",
+        "albedo": "FR_GI_DetailDirtRocky1",
+        "bump": "FR_GI_DetailDirtRocky1_Bm",
+        "mean": [
+          0.25831,
+          0.22527,
+          0.18528
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "NAT_Concord",
+        "albedo": "NAT_CO_B_Grass",
+        "bump": "NAT_CO_B_GrassBUMPS",
+        "mean": [
+          0.17973,
+          0.18115,
+          0.09357
+        ],
+        "tile": 50
+      }
+    ],
+    "cover": "sparse_grass",
+    "rut_strength": 0.5,
+    "version": 1,
+    "name": "arid"
+  },
+  "coastal": {
+    "layers": [
+      {
+        "donor": "FR_Gibson",
+        "albedo": "FR_GI_DetailDirt2",
+        "bump": "FR_GI_DetailDirt2_Bm",
+        "mean": [
+          0.30072,
+          0.25717,
+          0.20308
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "FR_Gibson",
+        "albedo": "FR_GI_DetailDirt1",
+        "bump": "FR_GI_DetailDirt1_Bm",
+        "mean": [
+          0.3364,
+          0.258,
+          0.18858
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "FR_Gibson",
+        "albedo": "FR_GI_DetailDirtRocky1",
+        "bump": "FR_GI_DetailDirtRocky1_Bm",
+        "mean": [
+          0.25831,
+          0.22527,
+          0.18528
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "NAT_Concord",
+        "albedo": "NAT_CO_B_Grass",
+        "bump": "NAT_CO_B_GrassBUMPS",
+        "mean": [
+          0.17973,
+          0.18115,
+          0.09357
+        ],
+        "tile": 50
+      }
+    ],
+    "cover": "sparse_grass",
+    "rut_strength": 0.45,
+    "version": 1,
+    "name": "coastal"
+  },
+  "red_clay": {
+    "layers": [
+      {
+        "donor": "NAT_Stillwater",
+        "albedo": "NAT_ST_Dirt_01",
+        "bump": "NAT_ST_Dirt_01_Bump",
+        "mean": [
+          0.26338,
+          0.14776,
+          0.11037
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "NAT_Stillwater",
+        "albedo": "NAT_ST_Dirt_02",
+        "bump": "NAT_ST_Dirt_02_Bump",
+        "mean": [
+          0.18043,
+          0.10345,
+          0.05282
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "FR_Gibson",
+        "albedo": "FR_GI_DetailDirtRocky1",
+        "bump": "FR_GI_DetailDirtRocky1_Bm",
+        "mean": [
+          0.25831,
+          0.22527,
+          0.18528
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "NAT_Concord",
+        "albedo": "NAT_CO_B_Grass",
+        "bump": "NAT_CO_B_GrassBUMPS",
+        "mean": [
+          0.17973,
+          0.18115,
+          0.09357
+        ],
+        "tile": 50
+      }
+    ],
+    "cover": "grass",
+    "rut_strength": 0.55,
+    "version": 1,
+    "name": "red_clay"
+  },
+  "woodland": {
+    "layers": [
+      {
+        "donor": "NAT_Bedford",
+        "albedo": "NAT_BE_Dirt01",
+        "bump": "NAT_BE_Dirt01_BumpNew",
+        "mean": [
+          0.30484,
+          0.24226,
+          0.20041
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "NAT_Bedford",
+        "albedo": "NAT_BE_Dirt02",
+        "bump": "NAT_BE_Dirt02_Bump",
+        "mean": [
+          0.32027,
+          0.26507,
+          0.21739
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "FR_Cheyenne",
+        "albedo": "FR_CH_Rock01",
+        "bump": "FR_CH_Rock01_Bm",
+        "mean": [
+          0.21357,
+          0.21285,
+          0.20581
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "NAT_Concord",
+        "albedo": "NAT_CO_B_Grass",
+        "bump": "NAT_CO_B_GrassBUMPS",
+        "mean": [
+          0.17973,
+          0.18115,
+          0.09357
+        ],
+        "tile": 50
+      }
+    ],
+    "cover": "grass",
+    "rut_strength": 0.55,
+    "version": 1,
+    "name": "woodland"
+  },
+  "supermoto": {
+    "layers": [
+      {
+        "donor": "NAT_Bedford",
+        "albedo": "NAT_BE_Dirt01",
+        "bump": "NAT_BE_Dirt01_BumpNew",
+        "mean": [
+          0.30484,
+          0.24226,
+          0.20041
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "NAT_Bedford",
+        "albedo": "NAT_BE_Dirt02",
+        "bump": "NAT_BE_Dirt02_Bump",
+        "mean": [
+          0.32027,
+          0.26507,
+          0.21739
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "FMX_DoverB",
+        "albedo": "FMX_DO_B_Asphalt",
+        "bump": "FMX_DO_AsphaltBump",
+        "mean": [
+          0.41845,
+          0.41805,
+          0.41699
+        ],
+        "tile": 100
+      },
+      {
+        "donor": "NAT_Concord",
+        "albedo": "NAT_CO_B_Grass",
+        "bump": "NAT_CO_B_GrassBUMPS",
+        "mean": [
+          0.17973,
+          0.18115,
+          0.09357
+        ],
+        "tile": 50
+      }
+    ],
+    "cover": "grass",
+    "rut_strength": 0.35,
+    "version": 1,
+    "name": "supermoto"
+  },
+  "stadium": {
+    "layers": [
+      {
+        "donor": "NAT_Bedford",
+        "albedo": "NAT_BE_Dirt01",
+        "bump": "NAT_BE_Dirt01_BumpNew",
+        "mean": [
+          0.30484,
+          0.24226,
+          0.20041
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "NAT_Bedford",
+        "albedo": "NAT_BE_Dirt02",
+        "bump": "NAT_BE_Dirt02_Bump",
+        "mean": [
+          0.32027,
+          0.26507,
+          0.21739
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "FR_Cheyenne",
+        "albedo": "FR_CH_Rock01",
+        "bump": "FR_CH_Rock01_Bm",
+        "mean": [
+          0.21357,
+          0.21285,
+          0.20581
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "NAT_Concord",
+        "albedo": "NAT_CO_B_Grass",
+        "bump": "NAT_CO_B_GrassBUMPS",
+        "mean": [
+          0.17973,
+          0.18115,
+          0.09357
+        ],
+        "tile": 50
+      }
+    ],
+    "cover": "grass",
+    "rut_strength": 0.55,
+    "version": 1,
+    "name": "stadium"
+  },
+  "dry_woodland": {
+    "layers": [
+      {
+        "donor": "NAT_Bedford",
+        "albedo": "NAT_BE_Dirt01",
+        "bump": "NAT_BE_Dirt01_BumpNew",
+        "mean": [
+          0.30484,
+          0.24226,
+          0.20041
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "NAT_Bedford",
+        "albedo": "NAT_BE_Dirt02",
+        "bump": "NAT_BE_Dirt02_Bump",
+        "mean": [
+          0.32027,
+          0.26507,
+          0.21739
+        ],
+        "tile": 128
+      },
+      {
+        "donor": "FR_Cheyenne",
+        "albedo": "FR_CH_Rock01",
+        "bump": "FR_CH_Rock01_Bm",
+        "mean": [
+          0.21357,
+          0.21285,
+          0.20581
+        ],
+        "tile": 80
+      },
+      {
+        "donor": "NAT_Stillwater",
+        "albedo": "NAT_ST_Grass_01",
+        "bump": "NAT_ST_Grass_01_Bump",
+        "mean": [
+          0.40935,
+          0.31886,
+          0.21102
+        ],
+        "tile": 50
+      }
+    ],
+    "cover": "grass",
+    "rut_strength": 0.55,
+    "version": 1,
+    "name": "dry_woodland"
+  }
+}

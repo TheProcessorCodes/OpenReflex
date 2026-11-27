@@ -226,6 +226,7 @@ namespace Reflex.Port.Content
                 if (!tex) throw new InvalidDataException("an unsupported texture format");
                 tex.wrapModeU = Wrap(t.addrU); tex.wrapModeV = Wrap(t.addrV);
                 tex.filterMode = t.mipFilter >= 2 ? FilterMode.Trilinear : FilterMode.Bilinear;   // MIPFILTER point / linear
+                Rendering.ReflexTextureFiltering.Register(tex);
                 textureCache[key] = tex;
                 return tex;
             }
@@ -299,7 +300,15 @@ namespace Reflex.Port.Content
         public Texture2D RawTexture(VehicleMaterialDef.Tex t)
         {
             if (t != null && t.external) return t.external;
-            if (t?.asset == null) return null;
+            if (t?.asset == null)
+            {   // (a slot whose texture no package of the vehicle holds: said once, by name)
+                if (t != null && !string.IsNullOrEmpty(t.name))
+                {
+                    bool first; lock (rawCache) first = rawFailed.Add("missing|" + t.name);
+                    if (first) Debug.LogWarning($"Reflex texture {t.name}: not found in the vehicle's packages (its material slot is drawn without it)");
+                }
+                return null;
+            }
             string key = t.asset.package.database.name + "/" + t.asset.package.name + "/" + t.asset.name + "|" + t.addrU + "," + t.addrV + "," + t.magFilter + "," + t.minFilter + "," + t.mipFilter + "," + t.maxAniso + "," + t.mipBias;
             lock (rawCache) { if (rawCache.TryGetValue(key, out var c) && c is Texture2D ct && ct) return ct; if (rawFailed.Contains(key)) return null; }
             try
@@ -313,6 +322,7 @@ namespace Reflex.Port.Content
                 var tex = ReflexTex.ToTexture(lt, Wrap(t.addrU), Wrap(t.addrV), filter, t.minFilter == 3 ? Math.Max(1, t.maxAniso) : 1, t.asset.package.database.name);
                 if (!tex) throw new InvalidDataException("no texture");
                 tex.mipMapBias = t.mipBias;
+                Rendering.ReflexTextureFiltering.Register(tex);
                 lock (rawCache) rawCache[key] = tex;
                 return tex;
             }

@@ -115,6 +115,11 @@ void rx_atv_ground_control(rx_addr s,float dt){
                 factor=atv_control_lerp(edge,nose_high,factor);}
         }
         float x=phys_mul(factor,w.v[0]);if(pitching)x=phys_max(x,-1.5f);
+        if(pitching&&(rx_fa_for(s)&RX_FA_LIP)){   /* LIP PULL (port addition, free_air.h): eased on a steep face; the rear wheels' contact normal(s) */
+            const int rl=U32(s,0x94e0)!=0,rr=U32(s,0x9630)!=0;
+            const rx_v4 n=rl&&rr?v4_add(rx_ld4(s+0x9510),rx_ld4(s+0x9660)):rx_ld4(s+(rl?0x9510:0x9660));
+            x=rx_fa_lip_blend(w.v[0],x,n,forward);
+        }
         rx_st4(s+0x740,v4(x,w.v[1],w.v[2],w.v[3]));
         SF32(s,0x99b4,phys_add(F32(s,0x99b4),dt));if(F32(s,0x99b4)>.25f)SU32(s,0x2eb8,1);
     }

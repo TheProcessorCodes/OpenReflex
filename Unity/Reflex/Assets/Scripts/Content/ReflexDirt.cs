@@ -48,7 +48,10 @@ namespace Reflex.Port.Content
         int collectedFor = -1;
         ReflexMudState state; bool haveState;
         // dynamics
-        float fresh, rate, lastGame = -1, lastChangeTime; Vector3 lastPos; bool havePos; float wheelRadius, unit = 1;
+        float fresh, rate, lastGame = -1, lastChangeTime; Vector3 lastPos; bool havePos; float wheelRadius, unit = FeetPerMetre;
+        /// The models' units per metre until a vehicle's rear tyre says so (Collect): the game's models are in feet. A rider without a vehicle (no
+        /// tyre to measure) was given 1: its dirt mask read feet as metres (dirt only on the boots' soles, the noise 3.3 times too fine).
+        const float FeetPerMetre = 3.2808f;
         float shownAmount = -1, shownWet = -1; Vector4 shownColor, shownFwd; float seed;
 
         /// Called with every valid mud record of a vehicle (ReflexMud.Apply): the models it belongs to and the record.
@@ -81,6 +84,20 @@ namespace Reflex.Port.Content
                 var b = new Bounds(); bool any = false;
                 foreach (var r in bike.rearWheel.GetComponentsInChildren<MeshRenderer>(true)) { if (!any) { b = r.bounds; any = true; } else b.Encapsulate(r.bounds); }
                 if (any) { wheelRadius = Mathf.Max(b.size.x, b.size.y, b.size.z) * 0.5f; unit = Mathf.Max(0.5f, wheelRadius * 2f / 0.66f); }
+            }
+        }
+
+        /// A vehicle's model got further materials (a distance LOD built later names one LOD 0 does not, an ATV's ATV_Grips: ReflexBikeModel.Lod.cs):
+        /// its materials are collected again and the dirt written again (the new material would stay clean on a dirty vehicle).
+        public static void Recollect(GameObject model)
+        {
+            if (!model) return;
+            foreach (var d in all)
+            {
+                var b = d.bike;
+                bool owns = b != null && (b.chassis == model || (b.frontWheel && b.frontWheel.gameObject == model) || (b.rearWheel && b.rearWheel.gameObject == model))
+                            || d.rider != null && d.rider.root == model;
+                if (owns) { d.collectedFor = -1; d.shownAmount = -1; }
             }
         }
 
@@ -131,19 +148,25 @@ namespace Reflex.Port.Content
             }
             else if (Time.time - lastChangeTime > 0.4f) rate *= Mathf.Exp(-dt / 0.5f);
             if (jumped) { fresh = 0; rate = 0; }
+            // MUD ONLY IN THE RAIN: a dry track leaves the vehicle and the rider clean. The mud is collected while the ground is wet (rain, not
+            // snow cover); what was collected stays on when the rain stops, the game's own record counts only on wet ground.
+            float groundWet = Reflex.Port.Rendering.ReflexWeather.Active ? Reflex.Port.Rendering.ReflexWeather.Wetness * (1f - Reflex.Port.Rendering.ReflexWeather.SnowCover) : 0f;
+            float rainMud = Mathf.Clamp01(groundWet / 0.3f);
             if (dt > 0f)
             {
                 if (grounded && speed > 2f && rate > 0)
                 {
                     float k = Mathf.Clamp(rate / 0.004f, 0f, 2.5f) * Mathf.Clamp01((speed - 2f) / 12f);
-                    fresh += k * dt * 0.0135f * (1f - 0.45f * fresh);
+                    fresh += k * dt * 0.0135f * (1f - 0.45f * fresh) * rainMud;
                 }
                 if (rate < -0.01f) fresh -= dt * Mathf.Clamp01(-rate / 0.05f) * 0.25f;
                 fresh = Mathf.Clamp(fresh, 0f, 0.86f);
             }
 
-            float amount = Mathf.Min(0.88f, Mathf.Max(fresh, 1f - Mathf.Exp(-3.2f * game)));
+            float amount = Mathf.Min(0.88f, Mathf.Max(fresh, (1f - Mathf.Exp(-3.2f * game)) * rainMud));
             float wet = Mathf.Max(Mathf.Clamp01(state.wetness.w), Mathf.Clamp01((rate - 0.02f) / 0.06f) * 0.9f);
+            // WEATHER: in the rain the mud on the vehicle stays wet (darker, glossy: ReflexVehiclePBR.hlsl's dirt layer)
+            wet = Mathf.Max(wet, groundWet * 0.9f);
             if (!ReflexEnhancedMaterials.MudOn) { amount = 0; wet = 0; }
             if (ForceAmount >= 0f) { amount = Mathf.Min(0.88f, ForceAmount); wet = ForceWet; }
 

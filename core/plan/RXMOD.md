@@ -37,6 +37,13 @@ README.txt                    optional, packed along
 
 Several bikes may share files (a 250 and a 450 drawn from one model: one `.rxmesh`, two bikes; the archive stores equal bytes once).
 
+Several bikes may also ride as **the same original** (a "Stock OEMs" pack with an FC450 and a 450SX-F, both on the KTM 450F, #28): each
+is a garage card of its own (`BikeMods.SplitBikes`). The mod's first bike of that VehicleModelId keeps the mod's own entry (its id, so a
+saved choice stays); each further one is an entry `<mod id>#<bike id>` (its `id`, else its index in `bikes`), named as that bike, its
+choice saved under that id (`BikeModel.Model.<VehicleModelId>`, `RxPart.<mod id>#<bike id>...`), its online token
+`b:<12 hex>:<VehicleModelId>` with its own 12 hex (the first 12 of SHA-256 of `<mod hash>#<bike id>`: the form every host accepts). The
+file is opened once; the entries share it.
+
 ### Manifest (`mod.json`)
 
 ```json
@@ -60,7 +67,7 @@ Several bikes may share files (a 250 and a 450 drawn from one model: one `.rxmes
 
 | field | meaning |
 |---|---|
-| `format`, `version`, `type` | `"reflex-mod"`, `1`, `"bikes"` (or `"skins"`: see "Skins"); a newer version is refused with a message |
+| `format`, `version`, `type` | `"reflex-mod"`, `1`, `"bikes"` (or `"skins"`: see "Skins"; `"parts"`: "Parts"; `"gear"`: "Gear"); a newer version is refused with a message |
 | `id` | optional: the mod's stable id, which skins name (`"nfgcole-2023-yamaha-yz-f"`); the name works too |
 | `bikes[].id` | optional: the bike's id in the mod, which skins name (`"yz250f"`); the model line or the VehicleModelId work too |
 | `name`, `author`, `description` | the garage card's lines: the card says `BY <author>` |
@@ -71,6 +78,7 @@ Several bikes may share files (a 250 and a 450 drawn from one model: one `.rxmes
 | `bikes[].logo` | a brand logo picture in the mod |
 | `bikes[].mesh` | the bike's `.rxmesh` |
 | `bikes[].fit` | `"axles"` (default: scaled so both axles sit exactly on the original's) or `"keep"` (the mod's own size, aligned on the rear axle) |
+| `bikes[].parts` | optional: the bike's own part slots (see "Parts") |
 | `bikes[].materials.<name>` | each material the mesh names: `template` (below), `diffuse`, `spec`, `normal`, optional `sfx` (an authored SFX map instead of the one made from `spec`), `mud` (0..1, default 1), `shine` (a scale of the spec map, default 1), `twoSided`, `alphaTest` + `alphaRef`, `normalFlipY`, `numbers` (true: the rider's run-time number plate on the mesh's second UV set, laid out as the original plastics' "Numbers" plate - the imported Alive bikes' plastics; default false: clear) |
 
 ### Mesh (`.rxmesh`)
@@ -132,6 +140,142 @@ A **skin** is a `.rxmod` of its own that repaints a bike of another `.rxmod` —
   bike's diffuse map(s) into `<folder>/skin/` as the starting point and writes the `mod.json`; paint them (the bike's PSD template, exported
   with `psd_compose.py` or Photoshop), `rxmod.py check <folder> --base <bike .rxmod>`, try the folder in `Mods/Bikes`, `rxmod.py pack`.
   A skin is made over the bike author's template: credit them and follow their terms.
+
+## Parts (a bike's own kits and parts)
+
+Status: experimental (2026-11-10). Reader: `Content/RxParts.cs`; scan: `BikeMods.ResolveParts`; builder: `ReflexBikeModel.RxMod.cs`
+(`AddMesh`); garage: `OpenFrontEnd/OpenShell.GarageRxParts.cs`.
+
+A `.rxmod` bike can have **parts of its own**: other graphic kits (liveries), exhausts, handlebars, tyres, anything that changes its
+look. They are listed in GARAGE > VEHICLE > CUSTOMIZE VEHICLE **on that bike and on no other**, in place of the original game's parts.
+
+**Where compatibility is declared: the manifest.** A part exists only as an option of a slot that names its bike. Nothing is derived
+from model slots, node names or part types: an original part is never drawn on a `.rxmod` bike (the original's model is not), and a
+`.rxmod` part has no entry on an original bike. Two ways to declare slots:
+
+* in the bike's own `mod.json`: `"bikes": [ { ..., "parts": [ <slots> ] } ]`;
+* in a **parts mod**, a `.rxmod` of `"type": "parts"` that names the bike as a skin does (the bike mod's `id` or name, the bike's `id`,
+  model or VehicleModelId), so parts can be added to a bike without touching its mod (its content hash, the online token, stays):
+
+```json
+{ "format": "reflex-mod", "version": 1, "type": "parts", "name": "YZ250F parts", "author": "Someone",
+  "parts": [ { "mod": "nfgcole-2023-yamaha-yz-f", "bike": "YZ250F", "slots": [
+    { "slot": "GraphicKit", "name": "GRAPHIC KIT", "options": [
+        { "id": "stock", "name": "Stock", "default": true },
+        { "id": "monster", "name": "Monster Energy", "brand": "D'Cor", "materials": { "bike": { "diffuse": "kits/monster.png" } } } ] },
+    { "slot": "Exhaust", "name": "EXHAUST", "replaces": [17, 18], "options": [
+        { "id": "stock", "name": "Stock", "default": true },
+        { "id": "fmf", "name": "Factory 4.1", "line": "FMF", "mesh": "exhaust/fmf.rxmesh",
+          "materials": { "pipe": { "template": "engine", "diffuse": "exhaust/fmf.png", "spec": "exhaust/fmf_spec.png" } } } ] } ] } ] }
+```
+
+| field | meaning |
+|---|---|
+| `slots[].slot` | the slot's id (letters; the saved choice names it) |
+| `slots[].name` | the garage card's title (`EXHAUST`) |
+| `slots[].replaces` | the surfaces of the **bike's own mesh**, by index, that an option with a `mesh` takes the place of (the bike's default part) |
+| `options[].id`, `.name`, `.line`, `.brand` | the option: its id (saved), its name, its product line (the options of a line are listed under its header), its brand |
+| `options[].default` | true: the bike as it is (one per slot; added as STOCK when none is marked) |
+| `options[].mesh` | a `.rxmesh` in the bike's mesh space, on its nodes (fitted, posed and wheel-scaled as the bike's own surfaces) |
+| `options[].materials.<name>` | a material named as one of the **bike's** replaces it (with `"template"`: the whole material; without: only the fields given, as a skin's); any other name is a material of the option's mesh (the bike's material fields: `template`, `diffuse`, `spec` / `sfx`, `normal`, `mud`, `shine`, `twoSided`, `alphaTest`, `alphaRef`, `numbers`) |
+
+* **Kit packs** (a parts entry that names its bike **by model**, not by mod): `"share"` (the bike's share key, "Shared bikes") and
+  `"bike"` (its VehicleModelId, a number); `"mod"` is then optional. `"model"` is the bike's name: the pack goes only on the bike of that
+  share, VehicleModelId **and** name (its model line or brand + model; case, spaces and punctuation ignored); without it, on any bike of
+  that share and VehicleModelId. Such a pack adds liveries
+  to a bike without carrying (or redistributing) its model: its options never carry a mesh, their `materials` name the bike's own
+  materials (`body`, `seat`, `m0` ...), the fields given replacing the bike's. See "Shared bikes" below for how its kits are listed.
+
+```json
+{ "format": "reflex-mod", "version": 1, "type": "parts", "id": "ktm6060-factory-bikes-kits", "name": "Factory Bikes", "author": "KTM6060",
+  "parts": [ { "share": "sb1-b0cef2942e9d318e", "bike": 10, "model": "YZ450F", "slots": [
+    { "slot": "GraphicKit", "name": "GRAPHIC KIT", "options": [
+      { "id": "star-yamaha", "name": "Star Yamaha", "brand": "Factory",
+        "materials": { "body": { "diffuse": "yz450f/star-yamaha.png" }, "seat": { "diffuse": "yz450f/star-yamaha.png" } } } ] } ] } ] }
+```
+
+* **Loading** (`BikeMods.ResolveParts`, after the scan): each parts entry finds its bike among the installed `.rxmod` bikes (a kit pack's:
+  the bike of that `share`, `bike` and `model`, or the one it was joined into); a parts mod whose bike is not installed is logged ("needs the bike
+  pack ...") and left out; a second slot of the same id for a bike is logged and left out, except **kits**: a parts mod's `GraphicKit`
+  slot **always joins** the bike's GRAPHIC KIT when it has one (its own, a shared bike's, or an earlier parts mod's), whether the pack
+  names the bike by mod or by `share`. The bike's options keep their ids (saved choices stay); the joining ones get
+  `<parts mod's manifest id, else its path>:<option id>`, each read from its own mod. When the bike has none, a mod-named pack's slot is
+  added as it is (its ids as written) and a `share`-named pack makes one ("Shared bikes"). So a kit pack can add liveries to another
+  creator's bike (NFG COLE's) or an imported Alive bike, whose own `-parts` mod already has a GRAPHIC KIT. Order: the parts mods with
+  `"importer"` (an Alive bike's own parts) first, then by mod id, so the bike's own list is the one joined into.
+* **The choice**: client save `RxPart.<bike mod id>.<VehicleModelId>.<slot>` = the option's id (`""` the default). `BikeSpec.rxParts`
+  carries the worn options; the bike is built with them in the garage, the menus and the race.
+* **The garage's rule** (`RxParts.OriginalTypeFits`, test page `alive-parts`): on a `.rxmod` bike the list is its own slots; a bike with
+  none says so (`<BIKE> HAS NO PARTS OF ITS OWN ...`) instead of listing the original's. Of the **original** vehicle's part types only
+  those that still do something on the bike stay, under **PERFORMANCE**: the types with a tuning attribute (exhaust = engine, suspension,
+  tyres: the bike rides as that vehicle 1:1, so their tuning points apply) and, on a bike without wheels of its own, its tyres / wheels
+  (they are drawn on its axles). An original bike, and a classic `.dx9` bike mod (it takes the original's parts), list the original
+  parts and the kit packs as before.
+* **Tuning points**: nothing here writes the profile. `PlayerVehicleParts` / `PlayerVehicleTuning` are the original vehicle's and are
+  changed only by its own parts (`CoreGarageProfile.EquipPart`) and VEHICLE TUNING (`SetTuning`), on any bike card.
+* **Online**: not sent yet. The look carries the bike's token (and skin); another rider sees the bike with its default parts.
+
+## Shared bikes (one bike, the kits of several packs)
+
+Status: experimental (2026-11-14). Scan: `BikeMods.ResolveShared` (before the skins and parts); fields: `RxModBike.share`, `kitName`,
+`kitBrand`, `kitMaterials`, `sharedInto`.
+
+Each `.rxmod` carries its own copy of its bike's mesh, so two packs made on one model (the Skin Builder's "Stock OEMs" and "Factory Bikes",
+each with a YZ450F on the same `.blend`) would be two YZ450F cards. A bike with a **share key** is joined with the bikes of the same key in
+other mods **and the same name**: one card, whose GRAPHIC KIT lists every pack's kits. The name is the bike's model line (`model`, else
+the model parsed from `name`), compared with case, spaces and punctuation ignored ("YZ450F" = "yz 450-f"): a "YZ450F" and a "YZ450F
+Monster" on one model stay two cards. A name **alone never joins**: two creators' "YZ450F" on different models, or an updated model,
+have different keys and stay separate cards, so a kit is never drawn on a mesh it was not painted for.
+
+Two cards that keep one bike name (normalized as above; under one original or anywhere in the garage) show their pack's name after it:
+`YZ450F · STOCK OEMS 2025` (`BikeMods.CardNameFor`, the garage's mod cards). A unique name stays as it is.
+
+```json
+"bikes": [ { "bike": 40, "brand": "Yamaha", "model": "YZ450F", "mesh": "yz450f.rxmesh",
+             "share": "sb1-3f9a0c1d2e4b5a67", "kit": "Stock", "kitBrand": "Factory", "kitMaterials": ["body", "seat"], "materials": { ... } } ]
+```
+
+| field | meaning |
+|---|---|
+| `bikes[].share` | the model's key: its geometry, UV layout, which part each piece goes on and its material names (no map, no fit); bikes with the same `share`, `bike` (VehicleModelId) **and** name are one bike |
+| `bikes[].kit`, `.kitBrand` | the name and brand of the bike's own graphics kit (its default), as the joined GRAPHIC KIT lists it (else its own GraphicKit's default, else its mod's name) |
+| `bikes[].kitMaterials` | the materials a kit repaints; missing: every material name the joined bikes have in common |
+
+* **Joining** (on every scan): the bikes of `"bikes"` mods with the same `share`, `bike` and name, ordered by mod id (case ignored); the first is
+  the **base** and keeps its card. Its `GraphicKit` slot (made when it has none: its default the base as it is, named by `kit` / `kitBrand`,
+  else STOCK) gets, for each other bike: its own kit (its `diffuse`, `spec`, `normal`, `sfx` and `numbers` - whether it shows the rider's number is the kit's - on the kit materials, read from **its own
+  mod**), then the other options of its own `GraphicKit` (over its own kit). Those options' ids are `<that mod's id>:<option id>` (its own
+  kit `<mod id>:<its default's id, else stock>`; the mod's id is its manifest `id`, else its path under Mods/Bikes), so two packs' `stock`
+  never clash. The other bikes are joined (`sharedInto`): no card of
+  their own (a mod whose every bike is joined shows none), a choice saved for one counts as the base's card; their mods' authors are named on
+  the card (`BY ANN, BOB`). Only the GraphicKit is joined: the other slots are the base's.
+* **Parts and skins**: a parts mod that names a joined bike adds its slots to the base; its `GraphicKit` options join the shared slot (ids
+  `<parts mod id>:<option id>`). A skin that names a joined bike paints that bike (its maps name that mod's entries) on its own card.
+* **Kit packs** (the Skin Builder's way to ship liveries: one bike pack carries the model, kit-only packs carry no mesh): a parts entry
+  with `share` + `bike` ("Parts") finds the installed bike of that share and VehicleModelId (and of its `model` name when given), joined
+  or not. Its `GraphicKit` options
+  **always join** the bike's GRAPHIC KIT: when the bike has none, one is made whose default is the bike as it is, named after its `kit`
+  (brand `kitBrand`; else STOCK; an unnamed STOCK default of its own slot also takes the `kit` name); then each kit, id
+  `<parts mod id>:<option id>`, its files read from the kit pack. Several kit packs for one bike all add theirs (a repeated id is logged
+  and left out). Its other slots (an exhaust ...) follow the usual rule. No installed bike of the share: logged, the pack left out. Since a
+  kit pack carries no bike, the bike pack stays the base (and the default kit): the base rule is unchanged (first by mod id).
+* **The choice**: `RxPart.share-<share>-<name>.<VehicleModelId>.<slot>` (the name normalized as above) in place of the mod id, so it
+  survives packs being added or removed (which can change the base); a chosen kit that is gone is the default.
+* **Online**: unchanged. The token names the base's mod (the card ridden); another rider's joined bike is drawn as itself, with its own kit.
+* **Older mods**: without `share` nothing changes.
+
+## Gear (rider gear)
+
+Status: experimental (2026-11-10), made by the MX vs ATV Alive importer only (`Content/AliveImport/AliveGear.cs`); reader
+`Content/RxGear.cs`, rider builder `Content/ReflexRiderModel.RxGear.cs`, the fit `Content/RxGearRig.cs`.
+
+A `"type": "gear"` mod holds rider gear pieces: `"gear": [ { "id", "slot" (helmet, goggles, jersey, boots, neck_brace), "name", "line",
+"brand", "mesh", "materials": { <mesh material>: { "role" (jersey, helmet, boots, goggles, lens, strap, neck_brace), "diffuse", "sfx",
+"normal", "plate", ... } } } ]`, `"rig": "alive"` and for head pieces `"headBox"` (the reference helmet's bounds in the rig's rest space).
+The mesh's node table is the rider rig it was made on (its rest pose); the client fits it to Reflex's rider (ALIVE_BIKES.md "Rider gear").
+Scanned from `<content>/AliveGear/<slug>/` only (not from `Mods/Gear`, which holds the classic kit packs). A piece is listed in GARAGE >
+RIDER in its gear type, tagged ALIVE, owned at once; the choice is the client save's `RxGear.<RiderGearTypeId>` = `<mod id>/<piece id>`
+(the profile keeps its stock piece, as with the kit packs). Not sent online.
 
 ### Skins of the original bikes
 
@@ -307,4 +451,36 @@ online in-game: skin token -> painted, unknown skin token -> the bike's own maps
 malformed tokens refused. Kit packs: the six installed bike kits (`Mods/Gear`: Red Bull KTM (Dakumoto), BARX Suzuki, Chase Sexton HRC,
 Jett Lawrence, Jorge Prado Kawasaki, Ken Roczen SX Paris) packed with `pack-kit` into a test `Mods/Gear` of `.rxmod` files only: all six
 unpack and load (showcase `gearmods`: ALL PASS, every kit previewed on its bikes, a race).
+
+## High-res twin (a bike's garage model)
+Status: experimental (2026-11-11). Reader: `RxModBikes.ReadManifest` (type `"hr"`), `BikeMods.ResolveHr`; builder: `ReflexBikeModel.RxHighRes`.
+The game keeps a second, high-res model of every vehicle for the garage and the menus (its `HR_` packages). A `.rxmod` bike can have one
+too: an **hr mod**, a FOLDER of `"type": "hr"` that names its bike as a parts mod does and holds two ordinary mods:
+```json
+{ "format": "reflex-mod", "version": 1, "type": "hr", "name": "RMZ450 high-res model", "mod": "alive-49-suzuki-rmz450", "bike": "suzuki_rmz450" }
+```
+* `bike/`: a `"bikes"` mod of that one bike (its mesh and materials: the same nodes, any material names);
+* `parts/` (optional): a `"parts"` mod of its kits and parts. A worn part is drawn on the twin by the option of the **same slot and
+  option id**; if a worn part has no such option, or a skin paints the bike, the bike's own model is drawn instead.
+The twin is drawn where the game draws its own HR twins (`ReflexBikeModel.HighRes`: the garage, the menus); a race draws the bike's own
+model. It is never a card of its own, takes no part in the online token (that is the bike mod's content hash) and is optional.
+
+## Colours (run-time colours of a bike's materials)
+Status: experimental (2026-11-11). Reader: `RxParts.ReadSlots` / `ReadSets`, `RxModBikes.ReadTint`; `RxModBikes.Tinted` makes the map.
+A parts mod can let the player paint materials. A **colour slot** is a slot with `"color": "<colour id>"` whose options carry `"rgb"`:
+```json
+{ "slot": "RimColor", "name": "RIM COLOR", "color": "MxRimDynColor", "options": [
+    { "id": "stock", "name": "Stock", "default": true }, { "id": "c9", "name": "Gold", "rgb": [1.0, 0.78, 0.01] } ] }
+```
+A material is painted by a colour id through its `"tint"`: in a part's material entry, or for the bike's own materials in the parts
+entry's `"tints": { "<material>": { ... } }` (the bike's own mod.json is not touched):
+```json
+"tint": { "color": "MxRimDynColor", "bake": "rim", "source": "maps/MX_Rim_SFX_source.png", "default": [0, 0, 0] }
+```
+| `bake` | the diffuse drawn, from `source` (R, B) and the colour c | |
+|---|---|---|
+| `rim` | R x (1 + B (0.92 c - 1)) | a rim: R the shading, B where the colour tints |
+| `hub`, `tint` | R x c | a hub; a frame, swing arm, A-arm |
+| `plate` | the material's diffuse + (c - default) x R | a number plate: R of `source` is the plate's mask, `default` the colour baked in |
+The default option draws the material's diffuse as it is. The choice is saved as any part's (`RxPart.<bike>.<model>.<slot>`).
 

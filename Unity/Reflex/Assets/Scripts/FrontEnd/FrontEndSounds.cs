@@ -458,6 +458,7 @@ namespace Reflex.Port.FrontEnd
         /// The music channel's level: the MUSIC switch x MusicVolume x the install's Music MasterVolume.
         static float MusicLevel()
         {
+            if (Reflex.Port.Options.ReflexSettings.StreamerMode) return 0f;   // STREAMER MODE: no music at all
             if (PlayerPrefs.GetInt("ReflexAudio.musicOn", 1) == 0) return 0f;
             float music = PlayerPrefs.GetFloat("ReflexAudio.music", 0.6f), master = 1f;
             try { master = ReflexVolumeChannels.Shared[ReflexChannel.Music].master; } catch (Exception) { }

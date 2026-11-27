@@ -78,7 +78,7 @@ namespace Reflex.Port.Options
                 row.name = RowId(id);
                 row.EnableInClassList("rx-cam-custom", e.Custom);
             }
-            Note(panel, "Which cameras the Camera action, F7 and the pause page's CAMERA go through, in this order. At least one stays on. A camera turned off is skipped (turning off the one in use moves to the next). Ours.");
+            Help(panel, "The cameras the Camera action, F7 and the pause page's CAMERA go through, in this order. A camera that is OFF is skipped; at least one stays ON.");
 
             Section(panel, "MY CAMERAS");
             foreach (var p in ReflexCameraPresets.Presets)
@@ -94,7 +94,7 @@ namespace Reflex.Port.Options
                 ShowCameraEditor(p.id, "cam-name");
             }, panel), "cam-new");
             make.EnableInClassList("rx-cam-full", ReflexCameraPresets.Full);
-            Note(panel, "Your own third-person cameras: one of the game's views moved, widened, softened and shaken to taste, with a name of your own that shows when you switch to it. NEW CAMERA starts from the camera in use. Open one to edit it; over a race the race shows behind the editor. Ours.");
+            Help(panel, "Your own chase cameras: one of the original's views moved, widened, softened and shaken to taste, under a name of your own. NEW CAMERA starts from the camera in use; open one to edit it.", When.None);
             CameraShareImportRows(panel);   // (CAMERA SHARING: PASTE SHARE CODE, files)
         }
 

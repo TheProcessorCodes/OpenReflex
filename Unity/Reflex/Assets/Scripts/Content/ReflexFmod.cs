@@ -1,8 +1,11 @@
 // Run-time readers for the game's FMOD Ex data (ports of _re/formats/fev_parse.py and fsb_export.py):
-//   * FEV1 v0x3a event projects ("sound" assets: a 0x88-byte wrapper + the FEV1 image),
+//   * FEV1 v0x3a event projects ("sound" assets: a 0x88-byte wrapper + the FEV1 image), and MX vs ATV Alive's FEV1 v0x40 projects
+//     (its engine sets, core/plan/ALIVE_ENGINE_SOUNDS.md): the same layout but for an object-count table after the header, an 8-byte
+//     bank hash in each wave-bank entry and 70-byte sound-def blocks (the v0x3a 15 dwords + 10 bytes, zero in every Alive project),
 //   * FSB3/FSB4 wave banks ("soundbnk" assets: a wrapper + the FSB), their sample headers and the codecs:
 //     MPEG Layer III (every shipped bank; FMOD pads frames to 16 bytes, the padding is stripped to a clean MP3 stream),
-//     PCM8/PCM16 and FMOD IMA ADPCM (not used by the shipped banks, covered by a synthetic test).
+//     PCM8/PCM16 and FMOD IMA ADPCM (not used by the shipped banks, covered by a synthetic test); a sample header's SYNC block (the
+//     sync points of Alive's engine recordings, which drive its engine state machine) is read into Sample.syncs.
 // Nothing here touches the Unity API, so it can run on any thread. Semantics: _re/notes/game-audio.md, engine-audio.md.
 using System;
 using System.Collections.Generic;
@@ -34,7 +37,7 @@ namespace Reflex.Port.Content
             public int Count() { uint n = U32(); if (n > 1_000_000) throw new InvalidDataException("FEV: implausible count " + n); return (int)n; }
         }
 
-        public const uint FevVersion = 0x003a0000;
+        public const uint FevVersion = 0x003a0000, FevVersionAlive = 0x00400000;
         public static readonly string[] PlayModes = { "sequential", "random", "random_no_repeat", "sequential_event_restart", "shuffle", "programmer", "shuffle_global" };
 
         public sealed class Point { public float x, y; public uint shape; }
@@ -85,7 +88,7 @@ namespace Reflex.Port.Content
         }
         public sealed class WaveEntry { public uint type, weight; public string kind, wave, bank; public uint index, lengthMs; }
         public sealed class SoundDef { public string name; public uint block; public WaveEntry[] entries; }
-        public sealed class WaveBankRef { public uint flags, maxStreams; public string name; }
+        public sealed class WaveBankRef { public uint flags, maxStreams; public string name; public byte[] hash; /* v0x40 only: the bank's FSB4 header +0x18..0x20 */ }
         /// A reverb definition of the project (the FEV's tail: u32 count, then per definition a name and 33 dwords; _re/notes/audio-port.md 9.1,
         /// EventSystemI::load): what EventSystem::getReverbPreset(name) (Audio_GetReverbPreset 00805610) hands the game. Room / RoomHF / RoomLF /
         /// Reflections / Reverb in mB, the delays and the decay in seconds (the FMOD_REVERB_PROPERTIES fields of the same names).
@@ -97,7 +100,7 @@ namespace Reflex.Port.Content
         }
         public sealed class Fev
         {
-            public string name; public WaveBankRef[] waveBanks; public Group[] groups; public SoundDefBlock[] blocks; public SoundDef[] soundDefs;
+            public uint version; public string name; public WaveBankRef[] waveBanks; public Group[] groups; public SoundDefBlock[] blocks; public SoundDef[] soundDefs;
             public ReverbDef[] reverbs = new ReverbDef[0];
             /// every event with its "Group/Sub" path (audio_export.walk_events), in file order.
             public IEnumerable<(string path, Event ev)> Events()
@@ -183,18 +186,25 @@ namespace Reflex.Port.Content
             return g;
         }
 
-        /// A "sound" asset (wrapper + FEV1) or a bare FEV1 image; null when it is not a FEV1 v0x3a file (the shipped
-        /// CROWD_IND_MED/SML and Editor_Default are v0x2d and are not read, as in fev_parse).
+        /// A "sound" asset (wrapper + FEV1) or a bare FEV1 image; null when it is not a FEV1 v0x3a or v0x40 file (the shipped
+        /// CROWD_IND_MED/SML and Editor_Default are v0x2d and are not read, as in fev_parse). v0x40 (MX vs ATV Alive, little-endian like
+        /// Reflex's): after the two header words a u32 count + count x (u32 id, u32 count) object table; wave banks u32 flags, u32 maxStreams,
+        /// u8[8] bank hash, string name; sound-def blocks 70 bytes; the tail is u32 0 (reverbs) and a "comp" chunk (ignored).
         public static Fev ParseFev(byte[] asset)
         {
             int i = IndexOf(asset, 0, Math.Min(asset.Length, 0x100), (byte)'F', (byte)'E', (byte)'V', (byte)'1');
             if (i < 0) return null;
             var r = new FevReader(asset, i + 4);
-            if (r.U32() != FevVersion) return null;
+            uint version = r.U32();
+            if (version != FevVersion && version != FevVersionAlive) return null;
+            bool v40 = version == FevVersionAlive;
             r.U32(); r.U32();                          // pool size, skipped
-            var f = new Fev { name = r.S() };
+            if (v40) { int nc = r.Count(); for (int k = 0; k < nc; k++) { r.U32(); r.U32(); } }   // object counts (id, count), skipped
+            var f = new Fev { version = version, name = r.S() };
             f.waveBanks = new WaveBankRef[r.Count()];
-            for (int k = 0; k < f.waveBanks.Length; k++) f.waveBanks[k] = new WaveBankRef { flags = r.U32(), maxStreams = r.U32(), name = r.S() };
+            for (int k = 0; k < f.waveBanks.Length; k++)
+                f.waveBanks[k] = v40 ? new WaveBankRef { flags = r.U32(), maxStreams = r.U32(), hash = r.Raw(8), name = r.S() }
+                                     : new WaveBankRef { flags = r.U32(), maxStreams = r.U32(), name = r.S() };
             Category(r);
             f.groups = new Group[r.Count()]; for (int k = 0; k < f.groups.Length; k++) f.groups[k] = ReadGroup(r);
             f.blocks = new SoundDefBlock[r.Count()];
@@ -202,6 +212,7 @@ namespace Reflex.Port.Content
             {
                 var b = new SoundDefBlock { playMode = r.U32(), spawnMin = r.U32(), spawnMax = r.U32(), f04 = r.U32(), f10 = r.F32(), x1 = r.U32(), f14 = r.F32(), f18 = r.F32(), f1c = r.F32(), f20 = r.F32() };
                 b.x2 = r.U32(); b.f24 = r.F32(); b.f28 = r.F32(); b.f2c = r.F32(); b.u30 = r.U32();
+                if (v40) r.Raw(10);                    // the v0x40 block's 10 more bytes (zero in every Alive project)
                 f.blocks[k] = b;
             }
             f.soundDefs = new SoundDef[r.Count()];
@@ -264,7 +275,28 @@ namespace Reflex.Port.Content
         {
             public int index; public string name; public int lengthSamples, lengthBytes, loopStart, loopEnd; public uint mode; public int frequency;
             public int defaultVolume, defaultPan, defaultPriority, channels, dataOffset; public float minDistance, maxDistance;
+            /// The sample header's SYNC points (sample position, name), in file order; empty when it has none (every Reflex bank).
+            public List<(int sample, string name)> syncs = new List<(int sample, string name)>();
             public string Stem => Stem(name);
+        }
+
+        /// A SYNC block inside a sample header's bytes after the fixed 80-byte part ([from, to)): "SYNC", u32 count, count x { u32 sample,
+        /// char[256] name }. Alive's headers put it after the XMA seek block (+0x5C: u32 size, u32 1, u32 n, (n-1) x u32); the block is
+        /// searched for, and taken only when its count fits inside the header.
+        static void ReadSyncs(byte[] b, int from, int to, List<(int sample, string name)> into)
+        {
+            for (int at = IndexOf(b, from, to, (byte)'S', (byte)'Y', (byte)'N', (byte)'C'); at >= 0; at = IndexOf(b, at + 1, to, (byte)'S', (byte)'Y', (byte)'N', (byte)'C'))
+            {
+                if (at + 8 > to) return;
+                long n = BitConverter.ToUInt32(b, at + 4);
+                if (n > 10000 || at + 8 + n * 260 > to) continue;
+                for (int k = 0, q = at + 8; k < n; k++, q += 260)
+                {
+                    int e = q + 4; while (e < q + 260 && b[e] != 0) e++;
+                    into.Add(((int)BitConverter.ToUInt32(b, q), Encoding.GetEncoding(28591).GetString(b, q + 4, e - q - 4)));
+                }
+                return;
+            }
         }
         public sealed class Fsb
         {
@@ -315,6 +347,7 @@ namespace Reflex.Port.Content
                 s.channels = nch != 0 ? nch : (s.mode & M_STEREO) != 0 ? 2 : 1;
                 s.dataOffset = dataOff + off;
                 if (size >= 80) { s.minDistance = BitConverter.ToSingle(blob, p + 64); s.maxDistance = BitConverter.ToSingle(blob, p + 68); }
+                if (size > 80 + 8 && p + size <= dataOff) ReadSyncs(blob, p + 80, p + size, s.syncs);
                 if (s.lengthBytes < 0 || s.dataOffset + (long)s.lengthBytes > blob.Length) throw new InvalidDataException("FSB sample outside the bank");
                 smp[i] = s; off += s.lengthBytes; p += size;
             }

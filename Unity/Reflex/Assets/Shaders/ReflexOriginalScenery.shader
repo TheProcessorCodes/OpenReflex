@@ -434,7 +434,9 @@ Shader "Reflex/Original Scenery"
                 o.binormalWS = cross(o.tangentWS, o.normalWS);
                 o.uv = float4(v.uv0, v.uv1);
                 o.color = v.color;
-                o.ambient = RfxAmbient(o.normalWS);
+                // the fill lights take the unit normal: the original's programs pass gWorld x normal as it is (its scenery is unscaled),
+                // which at MAP SCALE other than 100 % (and on any scaled model) multiplied the vertex ambient by the scale
+                o.ambient = RfxAmbient(o.normalWS * rsqrt(max(dot(o.normalWS, o.normalWS), 1e-12)));
                 o.fog = RfxFog(o.positionWS, _WorldSpaceCameraPos);
                 return o;
             }
@@ -473,7 +475,9 @@ Shader "Reflex/Original Scenery"
             #if defined(_RFX_ENHANCED)
                 // LIGHTING: ENHANCED (not the original program): screen-space AO on the ambient term, contact shadows on the sun term,
                 // every lit object receives the real-time sun shadow, the sky's colour on the ambient, a Fresnel sky reflection
-                float2 rfxOcc = RfxEnhOcclusion(i.positionCS);
+                // (a blended material draws in the Transparent queue and is not in the depth the occlusion was made from: what is
+                // there belongs to the surface behind it, so it takes none)
+                float2 rfxOcc = (_SrcBlend != 1.0 || _DstBlend != 0.0) ? float2(1.0, 1.0) : RfxEnhOcclusion(i.positionCS);
                 bool rfxLit = false;
             #endif
 
@@ -502,7 +506,8 @@ Shader "Reflex/Original Scenery"
                     {
                         // the detail at UV0, or (hills) at 5 x the model-space position through the volume-shadow projection (VS 0x: dp4 o5, v0, c39 / c40)
                         float2 tuv = i.uv.xy;
-                        if (_FsParams2.x > 1.5) tuv = 5.0 * (0.5 + _RfxVolumeShadowParams.x * mul(GetWorldToObjectMatrix(), float4(P, 1.0)).xz);
+                        // (MAP SCALE: the model-space position is in the level's own feet, the projection in the scaled world's)
+                        if (_FsParams2.x > 1.5) tuv = 5.0 * (0.5 + _RfxVolumeShadowParams.x * RfxMapScale() * mul(GetWorldToObjectMatrix(), float4(P, 1.0)).xz);
                         a = lerp(SAMPLE_TEXTURE2D(_DetailMap, sampler_DetailMap, tuv).rgb, tex.rgb, i.color.a);
                     }
                     if (_AOMode > 0.5) a *= SAMPLE_TEXTURE2D(_AOMap, sampler_AOMap, uv1).rgb;
@@ -842,11 +847,42 @@ Shader "Reflex/Original Scenery"
                         float k = RfxEnhFresnel(N, V) * _RfxEnhParams2.x * (_EnvParams.y > 0.5 ? 1.0 : 0.5) * mudSpec;
                         colour += RfxEnhSkyReflection(-Rm, rough) * k * (minShadow * 0.5 + 0.5) * lerp(1.0, rfxOcc.r, 0.75);
                     }
+                    // WEATHER (Scripts/Rendering/ReflexWeather.cs; nothing without it): snow settles on the upward faces, rain wets them
+                #if defined(_ALIVE_VM) || defined(_ALIVE_VM_GENERAL)
+                    // (the Alive programs' variants: no branch and no further sky sample, FXC does not survive them here)
+                    {
+                        float3 sunRawW = (_ShadowLit > 0.5 ? shadow : 1.0) * RfxMapShadow(P) * rad * _RfxSunColor.rgb;
+                        float3 wxC = RfxWeatherObject(colour, float4(0, 0, 0, 1), P, N, -V, ambient, sunRawW, _RfxWeatherFog.rgb, 1.0, 0.6);
+                        colour = (RfxWeatherOn() && _SrcBlend == 1.0 && _DstBlend == 0.0) ? wxC : colour;
+                    }
+                #else
+                    [branch] if (RfxWeatherOn() && _SrcBlend == 1.0 && _DstBlend == 0.0)
+                    {
+                        float3 sunRawW = (_ShadowLit > 0.5 ? shadow : 1.0) * RfxMapShadow(P) * rad * _RfxSunColor.rgb;
+                        colour = RfxWeatherObject(colour, float4(0, 0, 0, 1), P, N, -V, ambient, sunRawW, RfxWeatherReflection(reflect(-V, N), 0.35), 1.0, 0.6);
+                    }
+                #endif
                 #endif
                 }
             #if defined(_RFX_ENHANCED)
                 // prelit / baked templates keep their light; the AO only grounds them (not the light sources: modes 1, 9, 12, 18, 19, 26)
                 if (!rfxLit && _Mode > 1.5 && !(_Mode > 8.5 && _Mode < 9.5) && !(_Mode > 17.5 && _Mode < 19.5) && !(_Mode > 25.5 && _Mode < 26.5)) colour *= lerp(1.0, rfxOcc.r, _RfxEnhParams.z);
+                // WEATHER on what has no light to dim (prelit scenery, backdrops, banners, the unlit Alive programs): the clouds' share of
+                // its baked light, snow on its upward faces, the rain's darkening (ReflexWeather.hlsl RfxWeatherPrelit). Not what gives
+                // light itself: the light sources (modes 1, 9, 18, 19, 26; 12 has returned) and everything additive (glows, beams).
+                {
+                    bool wxPrelit = !rfxLit && !(_Mode > 0.5 && _Mode < 1.5) && !(_Mode > 8.5 && _Mode < 9.5) && !(_Mode > 17.5 && _Mode < 19.5)
+                                    && !(_Mode > 25.5 && _Mode < 26.5) && !(_Mode > 22.5 && _Mode < 23.5 && _PrelitPower > 1.01)   // (23 brighter than its texture: the arena lights)
+                                    && !(_DstBlend > 0.5 && _DstBlend < 1.5);
+                    float3 wxN = i.normalWS * rsqrt(max(dot(i.normalWS, i.normalWS), 1e-12));
+                #if defined(_ALIVE_VM) || defined(_ALIVE_VM_GENERAL)
+                    // (no branch in the Alive programs' variants, as above; the function is exact without weather)
+                    float3 wxP = RfxWeatherPrelit(colour, P, wxN, 1.0);
+                    colour = wxPrelit ? wxP : colour;
+                #else
+                    [branch] if (wxPrelit && RfxWeatherOn()) colour = RfxWeatherPrelit(colour, P, wxN, 1.0);
+                #endif
+                }
             #endif
 
             #if defined(_ALPHATEST_ON)

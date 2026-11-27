@@ -98,12 +98,12 @@ namespace Reflex.Port.Options
             Note(panel, "How much HEAD SHIFT moves the eye. 0 turns the sway off.");
             void Gain(string label, string id, string key) => Spin(label, id, () => F(key, F("shiftStrength", 1)).ToString("0.00", FpvCi), d => SetF(key, Mathf.Clamp(Mathf.Round((F(key, F("shiftStrength", 1)) + d * .1f) * 10f) / 10f, 0, 3)));
             Gain("HEAD SHIFT LONGITUDINAL", "fpv-shiftlong", "shiftLong"); Gain("HEAD SHIFT LATERAL", "fpv-shiftlat", "shiftLat"); Gain("HEAD SHIFT VERTICAL", "fpv-shiftvert", "shiftVert");
-            Named(OptUi.Button("RESET TO DEFAULTS", "mxa-link", () =>
+            var fpvReset = Named(OptUi.Button("RESET TO DEFAULTS", "mxa-link rx-opt-reset", null, panel), "fpv-reset");
+            ((OptNavItem)fpvReset.userData).submit = () => ConfirmReset("RESET FIRST-PERSON VIEW", "Every first-person setting goes back to its default, your eye offset too. Your saved first-person setups stay.", () =>
             {
                 ReflexSettings.ResetOnboard();
                 var rt = ReflexClientLive.Runtime; if (rt && rt.onboard) rt.onboard.Load();
-                ReflexSettings.Save(); ShowOptionsAt(_tab, "fpv-reset");
-            }, panel), "fpv-reset");
+            }, "fpv-reset");
             Note(panel, "Puts every first-person setting back to its default (your eye offset too).");
             FpvShareRows(panel);   // (CAMERA SHARING: FIRST-PERSON SETUPS, share codes: ReflexOptionsMenu.CameraShare.cs)
         }

@@ -11,6 +11,7 @@
 #include "build_stream.h"
 #include "build_world.h"
 #include "map_scale.h"
+#include "world_dropgate.h"
 #ifndef RX_ORACLE
 #include "sound_state.h"
 #endif
@@ -107,8 +108,8 @@ static void make_collision(rx_addr L, rx_addr gate, rx_addr scene /* the scene m
 }
 
 /* the drop animation (ScenarioAnimEntity_Play 0074a9f0 with its motion not looping: it ends on its last key; `blend` s of transition from
- * the pose shown, 0 = a cut) */
-static int play_drop(rx_addr e, float blend) {
+ * the pose shown, 0 = a cut); `at_end`: started at its last key (the gate already down, no swing to see) */
+static int play_drop(rx_addr e, float blend, int at_end) {
     const rx_addr h = U32(U32(e, 0x100), 0x44) + 0x10;
     rx_addr name_tmp = rx_sp() - 0x40;
     uint32_t own;
@@ -130,6 +131,7 @@ static int play_drop(rx_addr e, float blend) {
         ANIM_CALL_FRAME(0); rx_addr slot = rx_character_anim_find_slot(res, c); ANIM_CALL_FRAME_END(0);
         if (slot == 0) { ANIM_CALL_FRAME(8); slot = rx_character_anim_set_animation(c, res, 0); ANIM_CALL_FRAME_END(8); }
         ANIM_CALL_FRAME(4); rx_character_anim_play(c, slot, blend); ANIM_CALL_FRAME_END(4);
+        if (at_end && slot) SF32(c, 0x3c, F32(U32(U32(slot, 0), 0x44), 0x4c));   /* the character's time = the motion's length */
         SU8(e, 0xa2, 1);
         SU32(e, 0x70, 1);
     } else fprintf(stderr, "rxcore: Alive start gate: no animation %s in the level\n", anim);
@@ -153,7 +155,7 @@ void rx_alive_gate_attach(rx_addr A, rx_addr gate) {
 /* 006bdbe0's rule (world_dropgate.c): a gated race starts closed; a free ride, mode 0 / 6 or a session result starts open */
 void rx_alive_gate_start(rx_addr A) {
     if (!g_gate) return;
-    const int upright = U32(A, 0x23c) != 8 && U32(A, 0x238) != 0 && U32(A, 0x238) != 6 && U32(A, 0xfe8) == 0;
+    const int upright = rx_gate_starts_closed(A);
     if (upright) {
         set_collision(1);
         g_drop = -1; g_cleared = 0;
@@ -162,7 +164,7 @@ void rx_alive_gate_start(rx_addr A) {
     }
     set_collision(0);
     g_cleared = 1; g_drop = 0x7fffffff;
-    play_drop(g_gate, 0.0f);
+    play_drop(g_gate, 0.0f, 1);
 }
 
 void rx_alive_gate_state_entered(rx_addr A, uint32_t state) {
@@ -177,7 +179,7 @@ void rx_alive_gate_state_entered(rx_addr A, uint32_t state) {
     }
     if (state != 2 || g_drop >= 0) return;
     g_drop = 0; g_cleared = 0;
-    play_drop(g_gate, 0.0f);
+    play_drop(g_gate, 0.0f, 0);
 #ifndef RX_ORACLE
     /* the drop's sound: Reflex's gate sound is an activity audio cue, "<ACTIVITY_*>/ACTIVITY/DROP_GATE" on "InProgress Entered" / "Countdown
      * Step" 0, from the ActivityAudioManager entity of a Reflex level (activity_cues.c). An Alive level has none (its RaceActivityAudioManager

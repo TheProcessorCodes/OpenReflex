@@ -768,6 +768,7 @@ static void cp_run(void*opaque){
   c->rc=rx_career_presentation_begin(&s->career_presentation,&g_career_public_queue,&services);if(c->rc)break;
   s->career_phase=RX_CAREER_PHASE_CONFIGURED;rx_career_host host;
   rx_ms_set(1.0f);   /* MAP SCALE (port): a career event is always at 100 % */
+  rx_ms_set_any_vehicle(0);   /* ANY VEHICLE (port): never in the career */
   cp_require(rx_career_presentation_bind(&s->career_presentation,&host),"career API presentation binding rejected");
   host=(rx_career_host){s,cp_ui_event,cp_ui_route,cp_hub,cp_route_accept,cp_checkpoint};
   rx_career_composition_install(&host);

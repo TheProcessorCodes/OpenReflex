@@ -504,6 +504,24 @@ static void vp_nodes(rx_addr V, const vp_entry* e) {
     fprintf(stderr, "rxcore: ALIVE CLASS %d: %u of the model's hierarchy nodes take the bike's own rest pose\n", (int)e->cls, done);
 }
 
+/* OPEN REFLEX's tune of an Alive class (user request 2026-11-09: the 50cc "isn't very controllable in air and a bit too weak", the ATV 1000
+ * "underpowered"), applied to the file's values as they are read, so every client rides the same physics (the boards alive_mx50 /
+ * alive_atv1000 time it):
+ *   air      the airborne records (AirBorne_*, VehicleSim_AirBorne*) stay the Reflex class file's: Alive's values (the take-off spin kept
+ *            nearly whole, an air drag ~6x Reflex's) go with Alive's own air control (AirBorne_Pos_* / _Vel_*, which Reflex has not)
+ *   torque   Engine_TorqueCurve's torques scaled (the ATV 1000's peak 35.6 to Reflex's ATV's 48)
+ *   final    DriveTrain_FinalRatio scaled (the 50cc's 4.0 to 3.4: it ran out of revs at 62 in top gear)
+ *   rear     RearSuspension_SpringRestLength (> 0: set): the 50cc's 4.2 (the 125's, for a 1.78 ft arm) hung its 1.0 ft arm at full
+ *            extension right at the fold-over guard of the arm solve (bike_slot16: the arm's direction past z -0.7 snaps to a fixed one,
+ *            and the rear anchor with it), so in the air the rear wheel and the arm fluttered every other frame; 4.1 hangs it 0.1 ft higher
+ *            (-0.75 at most, leaning included)
+ * The MXFR650 is Alive's as it is. core/plan/ALIVE_BIKES.md "Playtest fixes". */
+static const struct { int32_t cls; int reflex_air; float torque, final_ratio, rear_rest; } k_vp_tune[] = {
+    {RX_VP_MX50, 1, 1.2f, 0.85f, 4.1f},
+    {RX_VP_ATV1000, 1, 1.35f, 1.0f, 0.0f},
+};
+static int vp_air_record(const char* name) { return strncmp(name, "AirBorne_", 9) == 0 || strncmp(name, "VehicleSim_AirBorne", 19) == 0; }
+
 /* the file's values as the original's reader would read them (load_class's reading, over the registration defaults) */
 int rx_vp_set(int32_t vehicle_model, int32_t cls, const uint8_t* data, uint32_t size, char* report, uint32_t cap) {
     if (report && cap) report[0] = 0;
@@ -513,6 +531,9 @@ int rx_vp_set(int32_t vehicle_model, int32_t cls, const uint8_t* data, uint32_t 
     if (!e) { if (g_vp_n >= RX_VP_MAX) return -2; e = &g_vp[g_vp_n]; }
     vp_entry t; memset(&t, 0, sizeof t);
     t.model = vehicle_model; t.cls = cls; t.atv = vp_is_atv(cls);
+    int reflex_air = 0; float torque = 1.0f, final_ratio = 1.0f, rear_rest = 0.0f; uint32_t air_kept = 0;
+    for (size_t k = 0; k < sizeof k_vp_tune / sizeof k_vp_tune[0]; k++)
+        if (k_vp_tune[k].cls == cls) { reflex_air = k_vp_tune[k].reflex_air; torque = k_vp_tune[k].torque; final_ratio = k_vp_tune[k].final_ratio; rear_rest = k_vp_tune[k].rear_rest; }
     const veh_param* tab = t.atv ? k_atv_params : k_moto_params;
     const char* const* names = t.atv ? k_ps_names_atv : k_ps_names_moto;
     const uint32_t ntab = t.atv ? 103u : 108u;
@@ -528,6 +549,7 @@ int rx_vp_set(int32_t vehicle_model, int32_t cls, const uint8_t* data, uint32_t 
         while (k + run < nch && strcasecmp(fmt_bxml_tag(d, fmt_bxml_child(d, 0, k + run)), tag) == 0) run++;
         for (uint32_t i = 0; i < ntab; i++) {
             if (strcasecmp(names[i], tag) != 0) continue;
+            if (reflex_air && vp_air_record(names[i])) { air_kept++; break; }   /* the tune: the Reflex class file's air */
             ps_param* p = &t.p[i];
             p->kind = tab[i].kind; p->in_file = 1; t.n_in_file++;
             float f[20]; memset(f, 0, sizeof f);
@@ -554,6 +576,10 @@ int rx_vp_set(int32_t vehicle_model, int32_t cls, const uint8_t* data, uint32_t 
                 p->def[2 * n] = fb(attr_float(d, node, "mleft", 0.0f));
                 p->def[2 * n + 1] = fb(attr_float(d, node, "mright", 0.0f));
             }
+            if (torque != 1.0f && p->kind == 2 && strcmp(names[i], "Engine_TorqueCurve") == 0)
+                for (int j = 0; j < p->knots; j++) p->def[j] = fb(bf(p->def[j]) * torque);   /* (the knots' y: their torques) */
+            if (final_ratio != 1.0f && p->kind == 0 && strcmp(names[i], "DriveTrain_FinalRatio") == 0) p->def[0] = fb(bf(p->def[0]) * final_ratio);
+            if (rear_rest > 0.0f && p->kind == 0 && strcmp(names[i], "RearSuspension_SpringRestLength") == 0) p->def[0] = fb(rear_rest);
             break;
         }
         k += run;
@@ -563,7 +589,8 @@ int rx_vp_set(int32_t vehicle_model, int32_t cls, const uint8_t* data, uint32_t 
     *e = t;
     if (e == &g_vp[g_vp_n]) g_vp_n++;
     g_rx_vp_on = 1;
-    if (report && cap) snprintf(report, cap, "%u of %u records for VehicleModelId %d (class %d)", t.n_in_file, ntab, (int)vehicle_model, (int)cls);
+    if (report && cap) snprintf(report, cap, "%u of %u records for VehicleModelId %d (class %d; tune: %u air records kept, torque x%.2f, final ratio x%.2f)",
+                                t.n_in_file, ntab, (int)vehicle_model, (int)cls, air_kept, (double)torque, (double)final_ratio);
     return (int)t.n_in_file;
 }
 

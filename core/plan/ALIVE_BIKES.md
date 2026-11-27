@@ -142,7 +142,8 @@ every machine, so two players who imported the same bike hold the same `.rxmod` 
 
 Known limits: only each bike's default graphic kit (Alive's other kits - 10-31 per brand pack, 126 in the Rider Gear packs - could be
 generated as `.rxmod` skins); one LOD (the race model also in the garage: no HR twin); Alive's per-part custom colours are its defaults;
-the bikes keep Reflex's engine sound of the bike they ride as.
+the bikes play their own Alive engine once its sound set is imported (ALIVE_ENGINE_SOUNDS.md), else Reflex's engine sound of the
+bike they ride as.
 
 ## The 50cc and the MXFR650: their own classes (built 2026-11-09)
 
@@ -176,4 +177,170 @@ the fork and fender one piece, hands on the bars), the 650 PASS (15.8 / 14.4 in)
 the mini's own size.
 
 Known limits: the rider is Reflex's full-size rider (MX animations) fitted to the mini's grips and pegs, not Alive's 50cc animation set; a
-remote 50cc is drawn as the original; both use the engine sound of their base slot.
+remote 50cc is drawn as the original. Both play their own Alive engine (MX_50cc, the 650's MX_400_TRACK) once its sound set is
+imported (ALIVE_ENGINE_SOUNDS.md), else the engine sound of their base slot; a remote rider keeps its base slot's engine.
+
+## Playtest fixes (2026-11-09 evening)
+
+The user's report: the 50cc was not in the VEHICLE choices of practice / free ride / races; its wheel bounced in the air; the rider's
+limbs "inverted" as the suspension compressed; the 50cc was hard to control in the air and too weak; the ATV 1000 underpowered.
+
+* **Class select**: the own classes are VEHICLE choices of their own on the setup page (`OpenSetup.OwnTypes`, ids from 1000: the 50cc, the
+  650, the ATV 1000 where the event takes their base model's VehicleType). The classes are the base type's; RIDER is YOUR RIDER only; the
+  ride is the player's own vehicle of the base model, else a pro's vehicle of it under the player's rider; the launch forces the `.rxmod`
+  bike for that ride (`BikeMods.RideModel` / `RideMod`, cleared when the front end comes back), so its own physics and board come along.
+  Showcase page `alive-class` (PRACTICE, RACE, FREE RIDE).
+* **The wheel in the air** was the rear suspension: the rear spring runs from a fixed point 3 ft up (z -2.6) to the wheel, and in the air
+  the wheel hangs where that is the spring's rest length; Alive's 50cc keeps the 125's 4.2 ft (made for a 1.78 ft arm), which hung its
+  1.0 ft arm 45 degrees down, right at the original's fold-over guard (`bike_slot16` 0043e200: an arm direction past z -0.7 snaps to a
+  fixed one, the rear anchor with it). So in the air the arm and the rear wheel fluttered every other frame (the posed rear tyre
+  -0.87 / -0.26 / -0.87 ft, the wheel body +-0.1 ft fore and aft); the physics' front and the fork were steady (`alive_class_probe`
+  ALIVE_TRACE=1 / 2 / 3, ALIVE_RENDER, ALIVE_PAD: the bodies, the fork nodes, every node and rider bone, the sticks swinging). The tune
+  sets the 50cc's rear spring rest length to 4.1 (below): the arm hangs at -0.75 at most, no flips in three runs (19 before). Backstop
+  in the client: `OriginalBikePose.SwingFix` ("pose": "physics" bikes) turns the drawn arm about its hinge onto the simulation's rear
+  wheel body, the tyre on that line at the wheel's distance held to 0.9 - 1.08 of the arm (in the dropouts).
+* **The rider**: the core seats its rider as on the 125 (its animations, its locators): on the 50cc that is 0.17 ft further back and at the
+  125's height over a seat 0.3 ft lower, so the arms could not reach the low bars and the IK locked them straight; a straight limb has no
+  bend side and the grip IK after it read one from noise, so the elbows flipped inside out. Now: `"riderOffset": [0, -0.28, 0.15]` in the
+  50cc's mod.json (the drawn rider moved onto its seat: `OriginalWorldRuntime.ApplyRider`, on a copy of the core's pose); the limb offsets
+  of a "pose": "physics" bike are the locators' change in the frame's space (the parents move too on a bike of another size) less that
+  move; `RiderLimbRetarget.TwoBone` stops at 98% of a limb's length (`MaxReach`). Arms at 0.75 - 0.8 of their reach (the 125's: 0.8),
+  knees up; `rxmod_ride.py` logs the frames an elbow / knee bent the wrong way (0 of 6339 in a race).
+* **Tune** (core `k_vp_tune` in `game/phys_studio.c`, applied as Alive's file is read, so every client rides the same and the boards
+  `alive_mx50` / `alive_atv1000` time it): the 50cc and the ATV 1000 keep the Reflex class file's airborne records (`AirBorne_*`,
+  `VehicleSim_AirBorne*`: Alive's take-off damping kept nearly all of the take-off spin, 0.98 / 0.8 / 1 against Reflex's 0.85 / 0.5 / 0.8,
+  and its air drag is ~6x Reflex's; both go with Alive's own air control, `AirBorne_Pos_*` / `_Vel_*`, which Reflex has not); the 50cc's
+  torque x1.2, final drive x0.85 (4.0 -> 3.4: it ran out of revs at 62 ft/s in 5th) and rear spring rest length 4.1 (the
+  wheel in the air, above; it sits 0.1 ft lower on the ground); the ATV 1000's torque x1.35 (its peak 35.6 to
+  Reflex's ATV's 48). The 650 is Alive's as it is. Native checks: 50cc top 62.0 -> 71.8 ft/s with the same launch (15.3 ft/s at frame
+  31); ATV 1000 on FR_Alpine 16.7 -> 25.1 ft/s at frame 61 (the Raven 25.2), 49.5 at 121 (Raven 46.5).
+
+## Liveries and parts (2026-11-10)
+
+Alive's tables list, per vehicle, every part it takes (`VehicleModelParts`, 3153 rows; `VehiclePart` 879; by `VehiclePartType`). The
+importer now makes them with the bike: a **parts** `.rxmod` folder beside it, `<content>/AliveBikes/<slug>-parts/` (RXMOD.md "Parts":
+`"type": "parts"`, naming the bike by its mod and bike id), so the bike's own folder stays byte for byte what it was (its content hash
+is the online token; a player without the Rider Gear packs' kits holds the same bike). Code: `AliveImport/AliveBikeParts.cs`
+(`ConvertParts`), `AliveBikes.cs` (`AliveBikeSource.slots`, `BikeBuild`: the conversion split so an option is made exactly as the bike).
+
+What Alive has, by type (motorcycles / ATVs), and what becomes of it:
+
+| Alive type | options a vehicle | made | how |
+|---|---|---|---|
+| GraphicKits (the liveries) | 16 - 27 / 10 - 17 | all | the bike's materials the kit changes (its plastics: the dynamic colour and plate baked as the bike's own) |
+| Handlebars | 50 - 51 / 44 - 45 | all | a mesh per bar model in the default bar's place + the colour's material |
+| Exhausts | 5 - 13 / 17 - 18 | all | a mesh in the default exhaust's place |
+| Tires | 6 / 9 | all | meshes (front + rear: tyre, rim, spokes, hub) in the default tyres' place |
+| Wheels, A-Arms, Bumpers, NerfBars, Suspensions (ATV) | 16 / 10 / 12 / 10 / 8 | all | meshes |
+| Frame (ATV "Factory" frame colour) | 1 | where its package is in the sources | materials |
+| Forks, Frame, Brakes, Hub, Wheels (motorcycles) | 8 / 2 / 2 / 1 / 1 | **none** | tuning files and stickers only: nothing drawn changes |
+| NumberPlate (blue / yellow / red) | 3 | **none** | they recolour the kit's plastics (a bake per kit and colour) |
+| EngineAudio, Performance | - | none | not customizable in Alive |
+
+26 of the 30 vehicles have options; the MXFR 650, the ATV 1000, the 50cc and the MX250 FMX have only their default parts in Alive's data
+(the garage says so). The 26 with options: 2,530 options, 330 MB; all 30 bikes with their parts in 57 s (`tests/alive_bikes/run.sh <scratch> --out DIR --bikes all --parts`); the 30
+bikes are byte-identical to the previous importer's (691 files compared). A motorcycle's parts are 12 - 16 MB (75 - 92 options), an
+ATV's 9 - 12 MB (124 - 136).
+
+Not carried over: Alive's per-part tuning bonus (written as `"aliveTune"` for reference, not applied: the tuning points are the Reflex
+vehicle's, below), the user-picked rim / hub / frame colours (the parts' default colours are baked), Alive's vehicle levels that unlock
+parts (every imported part is owned).
+
+**In the garage** (RXMOD.md "Parts", `OpenShell.GarageRxParts.cs`): on an Alive bike CUSTOMIZE VEHICLE lists its own slots (GRAPHIC
+KIT, HANDLEBARS, EXHAUST, TIRES ...; an ATV: + BUMPER, NERF BARS, A-ARMS, SHOCKS, WHEELS), tagged ALIVE; the original bike's graphics
+kits, handlebars, number plates ... are not listed there (they do not fit), and no Alive part is listed on a Reflex bike. Under
+PERFORMANCE stay the Reflex vehicle's tuning parts.
+
+**Tuning points** (checked by the test page `alive-parts`): they are granted by `CoreGarageProfile.EquipPart` (a part of a type with a
+`TuningAttribute` writes its `DefaultTuneAttribute1 / 2` into the vehicle's `PlayerVehicleTuning` row) and spent by `SetTuning`
+(VEHICLE TUNING), both keyed by the **PlayerVehicle** - the Reflex vehicle an Alive / `.rxmod` bike rides as. The parts list of a `.rxmod`
+bike is a client-side view; wearing its parts writes only the client save. So on an Alive or modded bike the points are earned (fit a
+performance part under PERFORMANCE) and spent (VEHICLE TUNING) exactly as on the Reflex bike, and are the same when the original's card
+is ridden again.
+
+## Rider gear (2026-11-10)
+
+Alive's `RiderGear` (604 rows) by `RiderGearType`: Helmet 148, Goggles 97, Jersey 159 (the whole suit: Alive has no separate pants or
+gloves; the suit's atlas holds jersey, pants and gloves), Boots 56, Neckbrace 4, Butt Patch 136, Skin 4. Imported: **454 pieces of 107
+gear models** (141 helmets, 97 goggles, 157 suits, 56 boots, 3 neck braces: the visible, named store products), 161 MB, 14 s, into
+`<content>/AliveGear/<slug>/` as `"type": "gear"` folders (RXMOD.md "Gear"; `AliveImport/AliveGear.cs`), one per gear model with its
+colours as pieces. Not imported: the butt patches (a texture on the pants) and Alive's skin tones.
+
+Alive's rider is another rig than Reflex's (`Rider_M_Hierarchy`, 55 nodes: a T pose, a longer spine chain, other limb lengths, a head
+joint 0.3 ft higher; `MXRider_Hierarchy` has 69). `RxGearRig.Make` fits it: the torso by a translation that lays hips, shoulders and neck
+base on Reflex's (0.18 - 0.22 ft), each limb segment turned and stretched onto Reflex's joints, the feet by the bone frames; helmets and
+goggles by a reference helmet box laid on a Reflex helmet's (so Alive's goggles keep their place in Alive's helmets). A suit draws
+Alive's jersey and pants; the gloves and the skin stay Reflex's (the stock jersey model's glove and skin surfaces: Alive's seven finger
+bones do not map onto Reflex's fourteen). Materials borrow the Reflex program of their role (Jersey_FNL, Helmet_FNL, Boots_FNL,
+Goggle_FNL, Lens_Clr_FNL) from the rider's stock piece.
+
+**Playtest fixes (2026-11-10, after 067f0b88).** (1) Reflex's rider has no body of its own: head, neck, wrists (skin) and gloves are
+surfaces of the jersey model. In the garage the suit's id took the stock jersey's place, so no jersey model was named and the rider had
+no head, neck or hands; and the garage's high-res rider copy (`FrontEndVehicleSelect.HighResRider`) dropped the Alive pieces whenever a
+Reflex piece with an HR twin was worn too. Now a suit always names a Reflex jersey for the body (`RxGear.Body`: the player's own, else
+the reference outfit's) and the HR copy keeps `rx`. The suit's own gloves (its surface on the `Gloves` node) are not drawn (Reflex's
+are), and the forearm is drawn out by `RxGearRig.SleeveReach` (0.877 / 0.695: Alive's sleeve ends at 0.695 of its forearm, above a bare
+forearm and a long glove cuff that are not drawn; Reflex's ends at 0.877) so the sleeve meets the wrist. A neck brace rides the chest
+(the game's clips leave `NeckBrace` at the chest's frame; by the node's bind it hung beside the arm). (2) Shading: the importer's
+`.rxmesh` files carry no tangents and the gear programs light through the tangent frame: `GearTangents` makes them (unit dP/du, square
+to the normal: 0.96 - 0.99 against the game's own on its jersey, helmet and boots); and Jersey_FNL reads its G16R16F normal map as
+0 .. 1 (2 v - 1; the stock maps' mean is 0.5), not signed as the tyres': `RxModBikes.Normal(.., biased: true)`, flat = (0.5, 0.5).
+No re-import is needed for either. (3) GAME LIBRARY > MX vs ATV ALIVE: IMPORT was only enabled with a level or a bike ticked; rider gear
+(or bikes) alone now import. Tests: page `alive-gear` (five mixes of Alive and Reflex pieces, body checks), `alive-gear-import`,
+`rxmod_ride.py --env REFLEX_RXMOD_OWN=1 --save RxGear.<type>=...` (the player's own rider in a race).
+
+**Custom gear skin under Alive gear (2026-11-10, after v1.1.0).** With a gear / kit pack piece (Mods/Gear: a custom gear skin) chosen for
+a gear type and an Alive piece then worn for it, the RACE drew the custom skin's maps on the Alive mesh (and its body under a suit); the
+garage was right. The race put the Alive piece on the spec's part of the slot after `ReflexRoster.ApplyKits` had made that part the
+pack's (its model and material package), and `RxGearTemplate` borrowed the material of "the rider's own piece of the slot": the pack's,
+whose map names are its own, so the Alive maps went into the wrong slots and the pack's stayed in the others. The garage builds the same
+outfit with no pack part for that type. Now `RxGear.ApplyChosen(spec, stock)` sets an Alive piece's part back to the profile's own
+piece (the pack's piece of that type is neither drawn nor offered; the types without an Alive piece keep their custom skin; taking the
+Alive piece off brings it back: the pack's choice is kept in the save), and the borrowed material is always the reference outfit's.
+Online riders and ghosts are built from look tokens (`ReflexRoster.ForLook`): they never carry Alive gear (they show the custom skin).
+Tests: page `alive-gear-kits`, `rxmod_ride.py --env REFLEX_RXMOD_OWN=1 --env REFLEX_RXMOD_KITS=3,1,4 --save RxGear.<type>=...`.
+
+**The size of a rider in Alive gear (2026-11-16, after v1.4.1; uncommitted).** A player: the Alive rider "is a lot bigger than the Reflex
+model so it doesn't suit the Reflex bikes". Measured: the gear was already on Reflex's skeleton (`RxGearRig.Make`: same height, limb
+lengths, helmet size), but kept Alive's girth. In Reflex's rest space against the stock jersey: upper arm 1.1 - 1.45 x as thick, forearm
+1.2 - 1.25, shin 1.15 - 1.2, waist 1.1 - 1.25, shoulders 1.18 x as wide (all 157 suits share one mesh), and every one of the 16 boot
+models hung 0.13 - 0.17 ft under Reflex's sole. On screen (the same frame shot with each outfit, `REFLEX_RXMOD_TWINS=1`) the Alive rider
+covered 102 - 110 % of the stock rider's area at the gate. Now a suit and boots are also SHAPED to Reflex's rider (`RxGearRig.cs` "the
+size", `ReflexRiderModel.RxGear.cs` `ShapedPositions`): the suit's outline is laid on the stock jersey's (nine segments of Reflex's rest
+skeleton, steps along each and sectors around it, the outer radius per cell; scales 0.6 .. 1, never larger), each boot's box on the stock
+boot's; measured from the meshes when a piece is first built (no constants, no re-import), written back through each vertex's blended
+alignment so the skinning is unchanged. After: 96 - 106 % of the stock rider's area at the gate. Helmets, goggles and neck braces were
+already sized by the head box. `REFLEX_RXGEAR_SHAPE=0` gives the old fit (tests). One path for the garage, the player, AI (B.R.A.A.P.)
+and any other rider (`BuildRxGear`); stock Reflex gear is not touched.
+
+## Playtest: bikes and parts (2026-11-11, after v1.1.0)
+A tester's garage report (low-poly exhausts / tyres / wheels, no model detail, kits wrong, suspension parts that change nothing, no plate /
+rim / hub colour). What the data says and what changed:
+* **High-res garage models.** Alive has `HR_` databases for 26 of the 30 vehicles and for their exhausts, handlebars, tyres, wheels, kits
+  and an ATV's bumpers, nerf bars, A-arms and shocks: one LOD with the cables, levers, bolts and hubs modelled and its own maps (Suzuki
+  RMZ450: chassis 35,060 vertices against the race model's 9,322 LOD 0; stock exhaust 2,253 / 304; front wheel 18,082 / 1,918; the whole
+  bike 69,340 / 13,288). The importer took the race models only (their LOD 0: it never took a lower LOD), which is what a race should
+  draw and what the garage should not. Now each such bike also gets `<slug>-hr/` (`AliveBikeHr.cs`; RXMOD.md "High-res twin"), made by the
+  same code from the HR twins of its packages, and the garage draws it. No HR in Alive: the 50cc, the MXFR 650, the ATV 1000, the MX250 FMX.
+  The bike's own folder and its online token are unchanged (checked byte for byte); the 30 bikes grow from 0.39 GB to 1.9 GB on disk.
+  Two importer faults the HR set showed: an HR exhaust package repeats the chassis' engine material, which made every kit and part look
+  like a repaint of the engine and dropped the ATV's parts (`SameMaterial`); the HR frame's fork sticker and the HR ATV tyre's mud map
+  were taken for the diffuse (`Roles`).
+* **Colours** (RXMOD.md "Colours"). Alive's tables hold them: `CustomColor` (UserCustomizable: the rims, the hubs, an ATV's rims, frame,
+  swing arm and A-arms), a 24-colour palette (`CustomDynamicColor`, UserSelectable) and the `NumberPlate` parts (Stock / Blue / Red /
+  Yellow: `DynNumPlate`). They are now slots of the bike: NUMBER PLATE, RIM COLOR, HUB COLOR (ATV: RIM / FRAME / SWINGARM / A-ARM COLOR),
+  painted at run time from the source maps the parts folder now carries. The palette rows have no names: the importer names them by hue.
+  Not offered: the plastics' own colour (`UserDynColor`: it is baked per kit through the kit's alpha) and the number's font colour.
+  A 125's green plate (Suzuki RM125, top view) is Alive's own default for that class (`DynNumPlate` 0, 0.58, 0.19), not a fault.
+* **Kits.** Every kit of a bike shares its plastics' layout; the contact sheet (tests: page `alive-sheet`, `tests/alive_bikes/sheet.py`)
+  shows them per vehicle. A kit that is mostly the bike's plain colour with small decals is that kit.
+* **PERFORMANCE parts** (the Reflex vehicle's exhaust / tires / suspension on an Alive bike) bring tuning points and draw nothing, by
+  design: the stage no longer tags them PREVIEW, it says PERFORMANCE ONLY - NOT DRAWN ON THIS BIKE.
+* **Reflex tyres / wheels on an Alive bike**: not done. The complaint was the race model in the garage, which the HR set answers with
+  Alive's own wheels. Drawing Reflex's instead means hiding the Alive wheel surfaces and fitting Reflex's hub, disc and sprocket to
+  another fork and swing arm; whether that fits was not measured, so it is left as a possible option rather than guessed at.
+Players must import again to get the HR sets and the colours (the parts folder is rewritten). The bike folder comes out byte for byte
+the same for 29 of the 30 vehicles; the **KTM 250SXF**'s changes (and so its online token): its race frame material lists the fork
+sticker `HR_MX_Fork` before its frame map `HR_MX_KTM_Frame`, the sticker (a black map) was taken for the frame's diffuse and the frame
+was drawn black; it now takes the frame map. A player who has not imported again sees another player's KTM 250SXF as the original bike.
+

@@ -58,6 +58,9 @@ namespace Reflex.Port.Content
             public int shadowSize, shadowHeight;   // the volume shadow map's width / height (texels)
             public float? shadowConstant;      // a 1x1 non-R32F volume shadow map (FreightYard: Editor_Default_Black): its texel's R everywhere
             public LevelTexture softness;
+            // UNTAMED GROUND OVERLAY (an imported MX vs ATV Untamed stadium, Content/UntamedImport/UxGroundOverlay.cs): the baked overlay
+            // coordinates and weight on the height grid (R32F, D3D row order) and the names of the two overlay textures; null without
+            public float[] overlayU, overlayV, overlayW; public int overlaySize; public string overlayA, overlayB;
             public string[] trackNames = new string[4];   // generic, MX, ATV, default (UTV/Pro4/ProLite/Buggy)
             public readonly Dictionary<string, LevelTexture> trackTextures = new Dictionary<string, LevelTexture>();
         }
@@ -97,7 +100,7 @@ namespace Reflex.Port.Content
                     ti.heights = ReflexTex.ReadR32F(ReadAsset(ti.heightName, "texture"), out int hw, out int hh);
                     Rfx.Check(hw == hh, "non-square height map");
                     ti.size = hw;
-                    if (ExperimentalTerrain.For(level)) { ti.heights=ExperimentalTerrain.Read(TrackMods.Bound.folder); ti.size=2048; ti.spacing=2; }
+                    if (ExperimentalTerrain.For(level)) { ti.heights=ExperimentalTerrain.Read(ExperimentalTerrain.Path); ti.size=2048; ti.spacing=ExperimentalTerrain.Spacing(ExperimentalTerrain.Path); }
                 });
                 if (!string.IsNullOrEmpty(ti.shadowName))
                     jobs.Add(() =>
@@ -120,11 +123,32 @@ namespace Reflex.Port.Content
                         if (t != null) ti.textures[n] = t; else Warn($"terrain texture {n}: unsupported format");
                     });
                 }
-                if (ExperimentalTerrain.For(level)) jobs.Add(() =>
+
+                // UNTAMED GROUND OVERLAY: five textures the converter adds beside the detail mask (slot 5), named after it
+                string ovMask = ti.material.textures.Count > 5 ? ti.material.textures[5] : null;
+                if (!donorOnly && !string.IsNullOrEmpty(ovMask) && HasAsset(ovMask + "_UxOvW", "texture") && HasAsset(ovMask + "_UxOvU", "texture")
+                    && HasAsset(ovMask + "_UxOvV", "texture") && HasAsset(ovMask + "_UxOvA", "texture") && HasAsset(ovMask + "_UxOvB", "texture"))
                 {
-                    const string rock="NAT_CO_Slate";
-                    var t=ReflexTex.Parse(rock,ReadAsset(rock,"texture")); if(t!=null)ti.textures[rock]=t;
-                });
+                    jobs.Add(() =>
+                    {
+                        var u = ReflexTex.ReadR32F(ReadAsset(ovMask + "_UxOvU", "texture"), out int uw, out int uh);
+                        var v = ReflexTex.ReadR32F(ReadAsset(ovMask + "_UxOvV", "texture"), out int vw, out int vh);
+                        var w = ReflexTex.ReadR32F(ReadAsset(ovMask + "_UxOvW", "texture"), out int ww, out int wh);
+                        if (uw != uh || vw != uw || vh != uw || ww != uw || wh != uw) { Warn("Untamed ground overlay: the three maps differ in size"); return; }
+                        ti.overlaySize = uw; ti.overlayU = u; ti.overlayV = v; ti.overlayW = w;
+                    });
+                    foreach (string suffix in new[] { "_UxOvA", "_UxOvB" })
+                    {
+                        string n = ovMask + suffix;
+                        jobs.Add(() =>
+                        {
+                            var t = ReflexTex.Parse(n, ReadAsset(n, "texture"));
+                            if (t != null) ti.textures[n] = t; else Warn($"Untamed ground overlay texture {n}: unsupported format");
+                        });
+                    }
+                    ti.overlayA = ovMask + "_UxOvA"; ti.overlayB = ovMask + "_UxOvB";
+                }
+
                 if (ExperimentalTerrain.For(level) && TrackMods.Bound?.id != "McKennaRock")
                 {
                     // Resolve on the loading thread before texture jobs: the install's database
@@ -144,13 +168,38 @@ namespace Reflex.Port.Content
                 }
                 if (ExperimentalTerrain.For(level))
                 {
-                    foreach(string name in new[]{"NAT_CO_B_SandBUMP","NAT_CO_B_DirtLightBUMP","NAT_CO_B_SandInsideBUMP","NAT_CO_B_GrassBUMPS","NAT_CO_B_Ruts","HFT_Default_Deform_Reveal"})
+                    var common=install.Pkg("NAT_Concord","NAT_ConcordBase");
+                    foreach(string name in new[]{"NAT_CO_Slate","NAT_CO_B_SandBUMP","NAT_CO_B_DirtLightBUMP","NAT_CO_B_SandInsideBUMP","NAT_CO_B_GrassBUMPS","NAT_CO_B_Ruts","HFT_Default_Deform_Reveal"})
+                    {
+                        var asset=common?.Find(name,"texture");
                         jobs.Add(() =>
                         {
-                            var t=ReflexTex.Parse(name,ReadAsset(name,"texture"));
+                            var t=ReflexTex.Parse(name,asset!=null?install.Read(asset):ReadAsset(name,"texture"));
                             Rfx.Check(t!=null,"Unsupported MTX bump texture: "+name);
                             ti.textures[name]=t;
                         });
+                    }
+                }
+                var importedStyle = UnleashedLevels.Style;
+                if (ExperimentalTerrain.For(level) && importedStyle != null)
+                {
+                    foreach (var layer in importedStyle.layers)
+                    {
+                        var package = install.Pkg(layer.donor, layer.donor + "Base");
+                        // (a layer's albedo may be a picture of the level's own: Untamed's pavement / concrete on the hard layer)
+                        var own = UnleashedLevels.LayerPicture(layer);
+                        if (own != null) ti.textures[layer.albedo] = own;
+                        foreach (string name in own != null ? new[] { layer.bump } : new[] { layer.albedo, layer.bump })
+                        {
+                            var asset = package?.Find(name, "texture");
+                            Rfx.Check(asset != null, "Unleashed " + importedStyle.name + " donor texture missing: " + name);
+                            jobs.Add(() => {
+                                var texture = ReflexTex.Parse(name, install.Read(asset));
+                                Rfx.Check(texture != null, "Unsupported Unleashed donor texture: " + name);
+                                ti.textures[name] = texture;
+                            });
+                        }
+                    }
                 }
                 // AutoSphericalLightMap: the light entity loads its own SphericalLightMap (007f0c20..007f0cb5) and the renderer binds it to
                 // the terrain's usr_sampler_spherical_light_map (s7) at draw time (recorded: NAT_CON_A_LightSLM-1067972 on Concord,
@@ -249,15 +298,18 @@ namespace Reflex.Port.Content
         /// `aniso` (OPEN REFLEX, not the original): anisotropic filtering for the tiled detail layers, whose grazing-angle smear was part of the
         /// same complaint (the original's MAXANISOTROPY is 1).
         /// Anisotropic filtering of the terrain's detail layers and the RT_Bump bump textures (w-terrainseam; 1 = the original's isotropic look).
-        public const int DetailAniso = 1;   // the original's isotropic filtering (MAXANISOTROPY 1)
+        /// DetailAniso marks a tiled detail layer: the original's isotropic filtering (MAXANISOTROPY 1) unless TEXTURE FILTERING (OPTIONS >
+        /// VIDEO, Rendering/ReflexTextureFiltering) raises it; every other terrain texture keeps its sampler state whatever the option.
+        public const int DetailAniso = -1;
 
         Texture2D TerrainTexture(string name, Dictionary<int, float> st, int aniso = 1)
         {
             if (string.IsNullOrEmpty(name) || !terrainData.textures.TryGetValue(name, out var lt)) return null;
             bool clamp = st != null && st.TryGetValue(1, out var au) && au == 3f;
             var wrap = clamp ? TextureWrapMode.Clamp : TextureWrapMode.Repeat;
-            var tex = ReflexTex.ToTexture(lt, wrap, wrap, FilterMode.Trilinear, aniso);
+            var tex = ReflexTex.ToTexture(lt, wrap, wrap, FilterMode.Trilinear, Math.Max(1, aniso));
             Track(tex);
+            if (aniso == DetailAniso) Rendering.ReflexTextureFiltering.Register(tex);
             return tex;
         }
 
@@ -352,15 +404,36 @@ namespace Reflex.Port.Content
                 if (result.shaderKeyword != null) mat.EnableKeyword(result.shaderKeyword);
                 mat.SetVector("_ColorRef", lighting.colorReference);
                 if (ReflexLook && IsAliveTerrain(ti)) BuildLookTerrain(mat, ti);   // ALIVE LOOK REFLEX (Content/AliveLook.cs)
+                // UNTAMED GROUND OVERLAY: the three baked maps as one float texture (rg the coordinates, b the weight; bilinear, rows flipped to
+                // Unity's order as the shader samples it at the terrain UV), and the two overlay textures
+                if (ti.overlayW != null && !basic && !IsAliveTerrain(ti))
+                {
+                    var ta = TerrainTexture(ti.overlayA, null, DetailAniso); var tb = TerrainTexture(ti.overlayB, null, DetailAniso);
+                    if (ta && tb)
+                    {
+                        int on = ti.overlaySize; var px = new float[on * on * 4];
+                        for (int y = 0; y < on; y++)
+                            for (int x = 0; x < on; x++)
+                            {
+                                int s = (on - 1 - y) * on + x, d = (y * on + x) * 4;
+                                px[d] = ti.overlayU[s]; px[d + 1] = ti.overlayV[s]; px[d + 2] = ti.overlayW[s]; px[d + 3] = 1f;
+                            }
+                        var om = new Texture2D(on, on, TextureFormat.RGBAFloat, false, true) { name = $"{level} Untamed ground overlay map", wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear, hideFlags = HideFlags.DontSave };
+                        om.SetPixelData(px, 0); om.Apply(false, true);
+                        Track(om); mat.SetTexture("_UxOvMap", om); mat.SetTexture("_UxOvA", ta); mat.SetTexture("_UxOvB", tb);
+                        mat.SetVector("_UxOv", new Vector4(1f, 1f, 1f, 0f));
+                    }
+                    ti.overlayU = ti.overlayV = ti.overlayW = null;
+                }
                 if (ExperimentalTerrain.For(level))
                 {
                     mat.SetFloat("_UseShadowVis",0);
                     mat.SetVector("_MtxDetail",new Vector4(.22f,.32f,240f,0));
-                    var surface=ExperimentalTerrain.Surface(TrackMods.Bound.folder);
+                    var surface=ExperimentalTerrain.Surface(ExperimentalTerrain.Path);
                     if(surface!=null) BuildMtxSurface(mat,result,ti,surface);
                     else
                     {
-                        var courseMask=ExperimentalTerrain.CourseMask(TrackMods.Bound.folder); Track(courseMask); mat.SetTexture("_DetailMask",courseMask);
+                        var courseMask=ExperimentalTerrain.CourseMask(ExperimentalTerrain.Path); Track(courseMask); mat.SetTexture("_DetailMask",courseMask);
                         mat.SetTexture("_TopDownMap",Texture2D.grayTexture);
                         mat.SetTexture("_ChromLumMap",Texture2D.grayTexture);
                         mat.SetVector("_DetailFade",new Vector4(100000f,128f,0,0));
@@ -424,10 +497,55 @@ namespace Reflex.Port.Content
 
         public int TerrainSpacing => terrainData?.spacing ?? 0;
         public int TerrainGridSize => terrainData?.size ?? 0;
-        void BuildMtxSurface(Material mat, TerrainMaterialBuild result, TerrainInfo ti, byte[] surface)
+        void BuildUnleashedSurface(Material mat, TerrainMaterialBuild result, TerrainInfo ti, byte[] surface, UnleashedLevels.TerrainStyle style)
         {
             const int n=2048;
-            var authored=ExperimentalTerrain.Colour(TrackMods.Bound.folder);
+            var mask=new Color32[n*n];var soft=new Color32[n*n];var far=new Color32[n*n];var chroma=new Color32[n*n];
+            var layers=style.layers;
+            for(int z=0;z<n;z++)for(int x=0;x<n;x++)
+            {
+                int src=4*(z*n+x),dst=(n-1-z)*n+x;
+                float cover=surface[src]/255f,rough=surface[src+1]/255f,hard=surface[src+2]/255f;
+                float soil=Mathf.Max(0,1-cover-hard);
+                float patches=Mathf.PerlinNoise(x/39f+17,z/39f+41);
+                rough=Mathf.Min(soil,rough+soil*(.10f+.22f*patches));
+                float baseWeight=Mathf.Max(0,soil-rough);
+                // alpha: the specular mask. Unleashed's surface data has no gloss channel: as on the MTX venues (BuildMtxSurface), bare soil keeps
+                // the faint 3 / 255 and what covers it (grass / snow, rock) the 10 / 255
+                mask[dst]=new Color32((byte)(255*rough/Mathf.Max(soil,.0001f)),(byte)(255*hard/Mathf.Max(1-cover,.0001f)),surface[src],(byte)Mathf.Lerp(10,3,Mathf.Clamp01(soil)));
+                float coverSoft=style.cover=="snow"?.85f:.30f,coverShear=style.cover=="snow"?.65f:.25f;
+                soft[dst]=new Color(.85f*soil+coverSoft*cover+.05f*hard,.65f*soil+coverShear*cover+.05f*hard,1,1);
+                float tone=.90f+.10f*patches+.08f*Mathf.PerlinNoise(x/171f+5,z/171f+13);
+                var color=(layers[0].Mean*baseWeight+layers[1].Mean*rough+layers[2].Mean*hard+layers[3].Mean*cover)*tone;
+                color.a=1;far[dst]=color;chroma[dst]=new Color32(0,0,0,(byte)(127.5f*tone));
+            }
+            Texture2D Own(string name,Color32[] pixels)
+            {
+                var t=new Texture2D(n,n,TextureFormat.RGBA32,true,true){name=level+" "+name,wrapMode=TextureWrapMode.Clamp,filterMode=FilterMode.Trilinear};
+                t.SetPixels32(pixels);t.Apply(true,true);Track(t);
+                return Rendering.ReflexTextureFiltering.Register(t);   // TEXTURE FILTERING (ORIGINAL: this isotropic state)
+            }
+            mat.SetFloat("_UnleashedDetail",1);mat.EnableKeyword("_UNLEASHED_DETAIL");   // (the terrain's variant with UnleashedDetail.hlsl's taps)
+            mat.SetFloat("_MtxSourceColour",0);mat.SetVector("_MtxDetail",Vector4.zero);
+            mat.SetTexture("_DetailMask",Own("biome placement",mask));
+            result.colorMap=Own("Reflex biome macro color",far);mat.SetTexture("_TopDownMap",result.colorMap);
+            mat.SetTexture("_ChromLumMap",Own("biome variation",chroma));result.softnessMask=Own("biome softness",soft);
+            for(int i=0;i<4;i++)
+            {
+                var texture=TerrainTexture(layers[i].albedo,ti.material.samplerStates[1],DetailAniso);
+                Rfx.Check(texture,"Missing biome albedo "+layers[i].albedo);mat.SetTexture(TerrainSlotProperties[i+1],texture);
+            }
+            mat.SetVector("_DetailTile",new Vector4(layers[0].tile,layers[1].tile,layers[2].tile,layers[3].tile)*(ti.spacing*Reflex.Port.RxCore.RxMapScale.Current));
+            mat.SetVector("_DetailFade",new Vector4(768,256,0,0));
+            Debug.Log("[Unleashed] " + level + " terrain profile " + style.name + ": " + string.Join(", ", layers.Select(l=>l.albedo)));
+        }
+
+        void BuildMtxSurface(Material mat, TerrainMaterialBuild result, TerrainInfo ti, byte[] surface)
+        {
+            if (UnleashedLevels.Style != null) { BuildUnleashedSurface(mat, result, ti, surface, UnleashedLevels.Style); return; }
+            const int n=2048;
+            bool unleashed = UnleashedLevels.Bound != null;
+            var authored=unleashed ? null : ExperimentalTerrain.Colour(ExperimentalTerrain.Path);
             mat.SetFloat("_MtxSourceColour",authored!=null?1:0);
             mat.SetVector("_MtxDetail",new Vector4(.22f,.32f,240f,4f)); // normalize grain around dark soil luminance
             // MTX lighting (ExperimentalMtxLighting.cs): the authored colour is MTX's display colour (texture x prelit vertex colour). Like
@@ -443,7 +561,7 @@ namespace Reflex.Port.Content
                 Warn($"[MTX] ground colour raw, gain {groundGain:F3} (flat ground light {flat:F2})");
             }
             var mask=new Color32[n*n];var soft=new Color32[n*n];var far=new Color32[n*n];var chroma=new Color32[n*n];
-            for(int z=0;z<n;z++)for(int x=0;x<n;x++)
+            void Texel(int x,int z)
             {
                 int src=(z*n+x)*4,dst=(n-1-z)*n+x;
                 float grass=surface[src]/255f,rough=surface[src+1]/255f,rock=surface[src+2]/255f;
@@ -460,7 +578,7 @@ namespace Reflex.Port.Content
                 // Calibrate soil reflectance, not global exposure: grass and rock keep their response.
                 // MTX lighting (ExperimentalMtxLighting.cs; bright scenery, the venue's own sun, Concord's exposure): .75 keeps the soil dark
                 // brown without the near-black it showed at .42 (.6: still nearly black in the shade) under the new rig
-                tone*=Mathf.Lerp(1f,ExperimentalMtxLighting.Current!=null?.75f:.42f,dirt);
+                tone*=Mathf.Lerp(1f,unleashed ? 1f : ExperimentalMtxLighting.Current!=null?.75f:.42f,dirt);
                 if(authored!=null)tone=1f;
                 chroma[dst]=new Color32(0,0,0,(byte)(127.5f*tone));
                 // Sequential lerps: rough soil, then rock, then grass (which has final priority).
@@ -483,10 +601,12 @@ namespace Reflex.Port.Content
                     else far[dst]=new Color32(authored[src],authored[src+1],authored[src+2],255);
                 }
             }
+            for(int z=0;z<n;z++)for(int x=0;x<n;x++)Texel(x,z);
             Texture2D Own(string name,Color32[] pixels,int size,bool linear=true)
             {
                 var t=new Texture2D(size,size,TextureFormat.RGBA32,true,linear){name=name,wrapMode=TextureWrapMode.Clamp,filterMode=FilterMode.Trilinear};
-                t.SetPixels32(pixels);t.Apply(true,true);Track(t);return t;
+                t.SetPixels32(pixels);t.Apply(true,true);Track(t);
+                return Rendering.ReflexTextureFiltering.Register(t);   // TEXTURE FILTERING (ORIGINAL: this isotropic state)
             }
             mat.SetTexture("_DetailMask",Own("MTX authored ground materials",mask,n));
             // Source RGB is display-encoded, like the imported scenery textures: raw (above, the Reflex pipeline's convention), or with
@@ -501,8 +621,27 @@ namespace Reflex.Port.Content
                 var tex=TerrainTexture(names[i],ti.material.samplerStates[1],DetailAniso);
                 if(tex)mat.SetTexture(TerrainSlotProperties[i+1],tex);
             }
+            // The package's own picture for the hard layer (an imported Untamed venue: Untamed's asphalt / concrete instead of Reflex's slate).
+            float hardTile=128;
+            if(!unleashed && TrackMods.Bound!=null)
+            {
+                try
+                {
+                    var info=ExperimentalTerrain.Info(ExperimentalTerrain.Path);
+                    var own=info.groundHardTexture>0 ? ExperimentalTerrain.SceneryTexture(ExperimentalTerrain.Path,(uint)info.groundHardTexture) : null;
+                    if(own!=null && (own.Value.w&(own.Value.w-1))==0 && (own.Value.h&(own.Value.h-1))==0)
+                    {
+                        var hard=new Texture2D(own.Value.w,own.Value.h,TextureFormat.RGBA32,true,true){name="package hard ground",wrapMode=TextureWrapMode.Repeat,filterMode=FilterMode.Trilinear,anisoLevel=DetailAniso};
+                        hard.SetPixelData(own.Value.px,0);hard.Apply(true,true);Track(hard);Rendering.ReflexTextureFiltering.Register(hard);
+                        mat.SetTexture(TerrainSlotProperties[3],hard);
+                        if(info.groundHardTile>=8 && info.groundHardTile<=1024)hardTile=info.groundHardTile;
+                        Debug.Log("[MTX] hard ground layer: the package's own picture ("+own.Value.w+" x "+own.Value.h+")");
+                    }
+                }
+                catch(Exception ex){Debug.LogWarning("[MTX] hard ground picture: "+ex.Message);}
+            }
             // Donor terrain has one-foot cells. Retain its physical texture size when this two-foot grid is enlarged.
-            mat.SetVector("_DetailTile",new Vector4(128,128,128,50)*(2*Reflex.Port.RxCore.RxMapScale.Current));
+            mat.SetVector("_DetailTile",new Vector4(128,128,hardTile,50)*(ti.spacing*Reflex.Port.RxCore.RxMapScale.Current));
             mat.SetVector("_DetailFade",new Vector4(768,256,0,0));
             Debug.Log(authored!=null ? "[MTX] Authored venue colours and surface placement, Reflex soil/grass/rock detail, native relief and tire marks" : "[MTX] Paradise dark soil, native relief and tire marks");
         }

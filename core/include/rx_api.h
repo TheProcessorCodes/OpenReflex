@@ -54,6 +54,7 @@
  * option that leaves out the original's in-air helpers for the local players (off by default); no struct changed, a player built
  * before it still runs.
  * Also in version 2 (additive, freeair2, 2026-10-29): rx_session_set_free_air_looseness / rx_session_free_air_looseness (AIR LOOSENESS).
+ * Also in version 2 (additive, w-lippull, 2026-11-09): rx_session_set_lip_pull / rx_session_lip_pull (LIP PULL).
  * Also in version 2 (additive, frnowalls, 2026-10-30): rx_session_set_free_ride_borders / rx_session_free_ride_borders (FREE RIDE WITHOUT
  * BORDERS, the OPEN REFLEX option; the core's default is the original); no struct changed.
  * Also in version 2 (additive, weather grip, 2026-11-07): rx_session_set_weather_grip / rx_session_weather_grip (rain / snow traction;
@@ -65,6 +66,8 @@
  * size: a host built for the older record sees a different size and reads no lap log); rx_session_spawn_at also works in PRACTICE.
  * Also in version 2 (additive, w-alivegates, 2026-11-03): rx_session_set_map_scale_base / rx_session_map_scale_base /
  * rx_session_map_scale_records (BASE SCALE: a track's default MAP SCALE, at which its records are kept); no struct changed.
+ * Also in version 2 (additive, 2026-11-16; core/plan/ANY_VEHICLE.md): rx_session_set_any_vehicle / rx_session_any_vehicle (ANY VEHICLE: an
+ * event on a vehicle or class its type never offered keeps no records; rx_lap_record.mods bit 32); no struct changed.
  * rx_session_version(s) returns the version recorded in
  * the handle; a session created by a different library version is rejected by every call (they return an error and set
  * last_error). The structs below must not change without a version bump.
@@ -107,6 +110,33 @@ typedef struct rx_session rx_session;
 RX_API int rx_session_max_riders(void);
 RX_API int rx_session_set_field_size(struct rx_session* s, int32_t riders);
 RX_API int rx_session_field_size(const struct rx_session* s);   /* the setting (0 = the tables) */
+
+/* SPLIT SCREEN (port addition, w-split; the original's console path, unreachable on PC): the local human players of the next event.
+ *   SPLIT SCREEN RULE: player 2's laps are NEVER saved. The lap log (rx_session_lap_log) is player 1's only, and player 2's records and
+ *   statistics go to player database 1, a session-only copy that no export reads (practice_session.inc, rx_session_finalize_records).
+ *   rx_session_set_local_players  1 (the default) or 2, before rx_session_event_load (exhibition only, not online, not a career). With 2,
+ *                                 the event load runs EnsureLocalPlayers for controller 1 as well (the original's split-screen setup: a
+ *                                 second human Player List row from the controller-1 profile's PlayerRider / vehicle rows, viewport 1).
+ *                                 The controller-1 profile is a copy of controller 0's, made at that load (player database 0 over
+ *                                 database 1: the same rider, gear, vehicle, parts and tuning; the same plate name / number), and
+ *                                 controller 1 starts on controller 0's driving camera;
+ *                                 SetupEvent then fills EventRiders less the two humans with AI. Controller 1 is rx_pad 1 (the keyboard
+ *                                 drives controller 0 only). 0 ok, 1 bad session, 2 out of range / wrong state (last_error).
+ *   rx_session_local_players      the local human riders of the loaded event (0 before the load).
+ *   rx_session_set_view_player    which local human the "the local player" getters read: rx_session_bike, _camera, _hud, _race,
+ *                                 _rider_pose, _bike_pose, the HUD-state getters (0 the first, 1 the second; any other value or a
+ *                                 player that does not exist reads the first). Set it, read, set it back to 0: a getter's view only, the
+ *                                 game's state is not changed. Between frames on the session owner thread. 0 ok, 1 bad session.
+ *                                 The HUD copies the core keeps per player follow it too: rx_session_stunt_hud's ring, rx_session_race_hud's
+ *                                 judge bars / final scores / discovery events, rx_session_reflex_hud's shown / lit_mask / event counts
+ *                                 (each local human's are updated every frame, whichever player is viewed).
+ *   rx_session_set_driving_camera_player  rx_session_set_driving_camera for local human `player` (0 the first, 1 the second), without
+ *                                 the view player: a write names its player. 0 ok, 1 bad session, 2 no such player / preset / refused.
+ *   The ambient and podium draw distances (rx_session_ambient*, lod_divisor) are not divided for two local players. */
+RX_API int rx_session_set_local_players(struct rx_session* s, int32_t players);
+RX_API int rx_session_local_players(struct rx_session* s);
+RX_API int rx_session_set_view_player(struct rx_session* s, int32_t player);
+RX_API int rx_session_set_driving_camera_player(struct rx_session* s, int32_t player, int32_t preset);
 
 /* ---- lifecycle ------------------------------------------------------------------------------------------------------ */
 
@@ -205,6 +235,16 @@ RX_API int rx_session_set_map_scale_base(struct rx_session* s, float base);
 RX_API float rx_session_map_scale_base(const struct rx_session* s);
 RX_API int32_t rx_session_map_scale_records(const struct rx_session* s);
 
+/* ANY VEHICLE (port addition, additive in version 2, 2026-11-16; core/plan/ANY_VEHICLE.md): the client's race setup may put the player on a
+ * vehicle type, or the field in a vehicle class, that the event type's own tables (EventTypeVehicleClasses / VehicleClassType) never offer
+ * (a truck at a Supercross). The core needs nothing to run it: the player's vehicle is the Vehicle List row and the AI field is drawn from
+ * rx_event_spec.vehicle_class, as always. This flag only says that the event is such a combination, so that, like a scaled or a custom
+ * track, it keeps no offline records, best laps or highlight progress, and every lap of its lap log carries mods bit 32. Call after create,
+ * before rx_session_event_load; exhibition only. Off (the default) is the original bit for bit. 0 ok, 1 invalid session, 2 wrong state
+ * (last_error). rx_session_any_vehicle: the flag. */
+RX_API int rx_session_set_any_vehicle(struct rx_session* s, int32_t on);
+RX_API int32_t rx_session_any_vehicle(const struct rx_session* s);
+
 /* MODS/TRACKS (port addition, additive in version 2): a custom track (Mods/Tracks/<name>/ of the client) bound to its level name for this
  * session only: `level` ("Beta_Track_Slot_1", the stem of the track's files) is read from `folder` (UTF-8) - its .dx9.level, .database,
  * .package and .scene, any case - instead of the install, which is never modified; two tracks shipped as the same slot coexist because
@@ -243,6 +283,13 @@ RX_API float rx_session_air_snap(const struct rx_session* s);
  * FREER AIR on). Any time between frames. 0 ok, 1 invalid session, 2 outside 0 .. 1. */
 RX_API int rx_session_set_free_air_looseness(struct rx_session* s, float looseness);
 RX_API float rx_session_free_air_looseness(const struct rx_session* s);
+/* LIP PULL (port addition, additive in version 2, w-lippull; game/free_air.h): 0 .. 1 scales the original's rear-wheel-only wheelie limiter
+ * (it cuts a nose-up pitch rate to 0.85 .. 0.95 per step and caps it at 1.5 rad/s) for the local players' vehicles (MX and ATV) where the
+ * ground under the rear wheel rises steeply along the heading (from 10 deg none to 25 deg all of the setting): it is what holds the bike down
+ * to a steep jump's lip once the front wheel has left the face. 1 (default) = the original bit for bit; 0 = no limiter on a steep face (a
+ * wheelie on flat ground keeps it at any setting). Computer riders untouched. Any time between frames. 0 ok, 1 invalid session, 2 outside 0 .. 1. */
+RX_API int rx_session_set_lip_pull(struct rx_session* s, float lip_pull);
+RX_API float rx_session_lip_pull(const struct rx_session* s);
 /* FREE RIDE WITHOUT BORDERS (port addition, additive in version 2, w-frnowalls; game/free_ride_borders.h): in an event world's Free Ride
  * (never the races, the career events, the challenges, the party modes or the front end's UI_Compound world: MotoSkills, the test ride)
  * a human rider is no longer reset for where he rides:
@@ -256,6 +303,11 @@ RX_API float rx_session_free_air_looseness(const struct rx_session* s);
 #define RX_FREE_RIDE_BORDERS_OPEN     1
 RX_API int rx_session_set_free_ride_borders(struct rx_session* s, int32_t mode);
 RX_API int32_t rx_session_free_ride_borders(const struct rx_session* s);
+/* AI TIER (port addition, B.R.A.A.P. 2026-11-16; additive): one computer rider's skill tier, the game's own per-player value (0 All Time,
+ * 1 Pro, 2 Amateur, 3 Rookie: what the event's AIDifficulty buckets the field into). Once the event's riders exist, between frames.
+ * 0 ok, 1 invalid session, 2 a bad slot / tier or not a computer rider's seat (last_error). rx_session_ai_tier: the tier, -1 for none. */
+RX_API int rx_session_set_ai_tier(struct rx_session* s, int32_t slot, int32_t tier);
+RX_API int32_t rx_session_ai_tier(struct rx_session* s, int32_t slot);
 
 /* WEATHER GRIP (port addition, additive in version 2, 2026-11-07; game/weather_grip.h): the client's rain / snow take grip off the tyres of
  * every vehicle of the event (MX, ATV, UTV, buggy, trucks; players and computer riders): each tyre's static rolling and cornering grip
@@ -317,6 +369,9 @@ RX_API int rx_session_spawn_at(struct rx_session* s, const float pos[3], const f
  * after a reset still runs). No white viewport fade and no PlayerReset\FadeOutTime (0.5 s) hold. The RESET key, the track resets and
  * rx_session_spawn_at keep the original timing. */
 RX_API int rx_session_spawn_at_instant(struct rx_session* s, const float pos[3], const float dir[3]);
+/* rx_session_spawn_at_air (PORT ADDITION, NOCLIP): rx_session_spawn_at_instant (the same gate, reset and answers), then the vehicle placed
+ * at exactly pos (upright, facing dir, velocity gone) instead of on the ground under it: it falls from there. */
+RX_API int rx_session_spawn_at_air(struct rx_session* s, const float pos[3], const float dir[3]);
 /* rx_session_rtbump_fit (w-rtbumpfit): the game's own RT_Bump cascade layout (RTBump_FitCascadeMatrices 007ba8d0 with 007c1010's camera
  * preparation) for a camera (position, forward, up, vertical fov in radians, aspect, near distance) on the active terrain. out: near, far,
  * the near edge's left / right x, the far edge's left / right x (the camera's horizontal frame: x along the horizontal right, z along the
@@ -528,6 +583,12 @@ typedef struct rx_slot {
 } rx_slot;
 RX_API int rx_session_slots(struct rx_session* s, rx_slot* out, uint32_t max);
 
+/* The funnel blockers of an imported MX vs ATV Unleashed race level (the bales / barrels that shape the start; port addition,
+ * core/src/fmt_modtrack.h): 0 = the start layout (the "down" set standing, the "up" set under the ground) .. 1 = raced (down sunk,
+ * up raised), moving at the source's rate once a racer has passed the source's trigger gate with the race InProgress; back to 0
+ * when the race restarts. A free ride keeps the start layout. -1: the level has none. `solid` (optional): 0 / 1 the set that collides. */
+RX_API float rx_session_funnel(struct rx_session* s, int32_t* solid);
+
 /* The actual equipped construction records for a live slot. IDs resolve through the install's asset tables;
  * no profile defaults or emulated world are needed to build the matching visual models. plate_name / plate_number are the
  * number / name plates' text as 0053f3f0 writes it (P+0x200 / P+0x210: the profile's PlayerRider Name / Number for the player,
@@ -631,7 +692,7 @@ typedef struct rx_particle {
 } rx_particle;
 
 /* The live particles of the last frame, as the original renderer draws them: the normal manager first, then the additive one,
- * each far to near (10000 view-depth buckets, at most 3000 per manager; the frame's atlas uv from the particle asset). Writes
+ * each far to near (10000 view-depth buckets, at most 10000 for the normal manager and 3000 for the additive one; the frame's atlas uv from the particle asset). Writes
  * at most max into out and fills *info (same data as rx_session_particles). Returns the count written, -1 on an invalid handle /
  * no output, -2 when out is NULL (info only) - use rx_session_particles for that. */
 RX_API int rx_session_particles_array(struct rx_session* s, rx_particle* out, uint32_t max, rx_particle_info* info);

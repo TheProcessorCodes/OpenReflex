@@ -1,13 +1,13 @@
-// MATERIALS: ENHANCED and MUD BUILDUP (OPTIONS > VIDEO; not part of the original renderer): the options, the test build's F11 A/B key and the shader globals
-// of Shaders/ReflexVehiclePBR.hlsl.
-//   MATERIALS   ORIGINAL / ENHANCED (default ENHANCED in this test build): bikes, ATVs, UTVs and riders shaded as physically based surfaces by class
-//               (Content/ReflexMaterialClasses.cs); only with LIGHTING: ENHANCED (ORIGINAL lighting always draws the original programs, exactly).
+// VEHICLE MATERIALS and MUD BUILDUP (OPTIONS > VIDEO; not part of the original renderer): the options, the CTRL+F11 A/B key and the shader
+// globals of Shaders/ReflexVehiclePBR.hlsl.
+//   VEHICLE MATERIALS   ORIGINAL / ENHANCED (default ENHANCED; "MATERIALS" before 2026-11-09, the same key): bikes, ATVs, UTVs and riders shaded
+//               as physically based surfaces by class (Content/ReflexMaterialClasses.cs). ENHANCED lighting is the only lighting, so the
+//               choice always applies (under the developers' REFLEX_LIGHTING=original the original programs are drawn, exactly).
 //   MUD BUILDUP OFF / ON (default ON): whether the vehicles and riders get muddy at all, in either look. ON with the enhanced materials: the
-//               new dirt (Content/ReflexDirt.cs), which replaces the original's own mud term; ON without them (LIGHTING or MATERIALS: ORIGINAL):
-//               the original's own mud (ReflexMud: the game's mud record through the programs' usr_mud_* constants), exactly as the game.
-//               OFF: neither - the original's term gets a zero amount and the new dirt none (w-mudoff: OFF used to fall back to the original's
-//               mud, and did nothing at all with LIGHTING: ORIGINAL, the default).
-//   F11         test build: toggles both at once (the A/B of the remastered look); a label shows the state. Not saved (OPTIONS > VIDEO is).
+//               new dirt (Content/ReflexDirt.cs), which replaces the original's own mud term; ON with VEHICLE MATERIALS: ORIGINAL: the
+//               original's own mud (ReflexMud: the game's mud record through the programs' usr_mud_* constants), exactly as the game.
+//               OFF: neither - the original's term gets a zero amount and the new dirt none.
+//   CTRL+F11    a developers' A/B key: toggles both at once; a label shows the state. Not saved (OPTIONS > VIDEO is).
 using System;
 using Reflex.Port.Options;
 using UnityEngine;
@@ -36,15 +36,12 @@ namespace Reflex.Port.Rendering
         public static bool OriginalMudOn => MudWanted && !MudOn;
         static bool LightingOn { get { try { return ReflexEnhancedLighting.Requested; } catch (Exception) { return false; } } }
 
-        /// OPTIONS > VIDEO > MATERIALS as the menu shows it: what is in effect (ENHANCED needs LIGHTING: ENHANCED; with LIGHTING: ORIGINAL the
-        /// row reads ORIGINAL whatever is stored, since that is what is drawn).
-        public static bool MaterialsShown => MaterialsSetting == 1 && LightingOn;
-        /// The menu's pick of MATERIALS: ENHANCED needs LIGHTING: ENHANCED, so picking it switches LIGHTING to ENHANCED too (w-mudoff: before, the
-        /// pick was stored and nothing changed on screen with LIGHTING: ORIGINAL, the default). Saved at once.
+        /// OPTIONS > VIDEO > VEHICLE MATERIALS as the menu shows it: the stored choice.
+        public static bool MaterialsShown => MaterialsSetting == 1;
+        /// The menu's pick of VEHICLE MATERIALS. Saved at once.
         public static void PickMaterials(bool enhanced)
         {
             MaterialsSetting = enhanced ? 1 : 0;
-            if (enhanced && ReflexSettings.Lighting != 1) ReflexSettings.Lighting = 1;
             ReflexSave.Save();
         }
         /// The menu's MUD BUILDUP pick (applies at once in either look). Saved at once.
@@ -79,7 +76,7 @@ namespace Reflex.Port.Rendering
         {
             bool m = MaterialsOn, d = MudOn;
             string state = m ? (d ? "ENHANCED  +  MUD BUILDUP" : "ENHANCED  (MUD OFF)") : MudWanted ? "ORIGINAL" : "ORIGINAL  (MUD OFF)";
-            label = "MATERIALS: " + state + (!LightingOn && (AbOverride >= 0 ? AbOverride == 1 : MaterialsSetting == 1) ? "   (needs LIGHTING: ENHANCED)" : "") + "    [CTRL+F11]";
+            label = "VEHICLE MATERIALS: " + state + (!LightingOn ? "   (REFLEX_LIGHTING=original: the original programs)" : "") + "    [CTRL+F11]";
             labelUntil = Time.unscaledTime + 3f;
         }
 

@@ -40,15 +40,37 @@ static struct {
     int32_t gate_last, gate_number, gate_total;         /* gate_last = the component's +0x3a0 */
     uint32_t leader_set, leader_events;
     char leader_names[RX_RACE_HUD_SECTIONS][RX_RACE_HUD_NAME];
-    int32_t bars[4];
     uint32_t final_events, final_shown;
-    float final_scores[5];
-    uint32_t discovery_events;                           /* MXUIHitDiscoveredComponent: the local player's "HitDiscoveryFound" events */
-    uint32_t stunt_events, stunt_count;                  /* MXUIStuntFeedbackOverlay: begin events of the local player, ring entries kept */
-    rx_stunt_hud_entry stunts[RX_STUNT_HUD_RING];        /* [0] the newest */
 } hud;
 
-void rx_race_hud_reset(void) { memset(&hud, 0, sizeof hud); rx_reflex_hud_reset(); }
+/* SPLIT SCREEN (w-split): what the components keep of their own player, per local human (the original builds the HUD layer per
+ * viewport), keyed by the player's address; one local human = the one entry the single copy was */
+struct hud_player {
+    rx_addr player;
+    int32_t bars[4];
+    float final_scores[5];
+    uint32_t discovery_events;                           /* MXUIHitDiscoveredComponent: the player's "HitDiscoveryFound" events */
+    uint32_t stunt_events, stunt_count;                  /* MXUIStuntFeedbackOverlay: begin events of the player, ring entries kept */
+    rx_stunt_hud_entry stunts[RX_STUNT_HUD_RING];        /* [0] the newest */
+};
+static struct hud_player hud_players[4];
+
+void rx_race_hud_reset(void) { memset(&hud, 0, sizeof hud); memset(hud_players, 0, sizeof hud_players); rx_reflex_hud_reset(); }
+
+/* the player's entry: made at its first event / tick (a full table gives the first entry over: never with two local humans) */
+static struct hud_player* pp_of(rx_addr player) {
+    for (int i = 0; i < 4; i++) if (hud_players[i].player == player) return &hud_players[i];
+    for (int i = 0; i < 4; i++) if (!hud_players[i].player) { hud_players[i].player = player; return &hud_players[i]; }
+    memset(&hud_players[0], 0, sizeof hud_players[0]);
+    hud_players[0].player = player;
+    return &hud_players[0];
+}
+/* the queries' read: a player with no entry yet reads the empty one */
+static const struct hud_player* pp_find(rx_addr player) {
+    static const struct hud_player none;
+    for (int i = 0; i < 4; i++) if (hud_players[i].player == player) return &hud_players[i];
+    return &none;
+}
 
 /* the player's name buffer (player + 0x54, the table's DisplayName converted to UTF-8) */
 static void copy_name(rx_addr player, char* out) {
@@ -63,16 +85,33 @@ static void copy_name(rx_addr player, char* out) {
 
 static int is_name(rx_addr name, rx_addr literal) { return name != 0 && crt_strcmp(name, literal) == 0; }
 
-/* the activity's local human player (its driver table at +0x268, count +0x26c): the one the dashboard components are bound to */
-static rx_addr local_human(rx_addr activity) {
+/* the activity's local human players (its driver table at +0x268, count +0x26c): the ones the dashboard components are bound to.
+ * w-split: whether `player` is one of them (one local human: the first of the table, as the single component's test was) */
+static int is_local_human(rx_addr activity, rx_addr player) {
     const rx_addr list = U32(activity, 0x268);
     const uint32_t n = U32(activity, 0x26c);
+    if (!player) return 0;
+    for (uint32_t i = 0; list && i < n && i < 64; i++) {
+        const rx_addr d = U32(list, 4u * i);
+        if (d && U32(d, 0x74) == player) return U32(player, 4) != 0 && U32(player, 0x10) == 0;
+    }
+    return 0;
+}
+/* w-split: the activity's local human whose vehicle (P + 0x1ac) this is; none: the first local human, whose own test (reflex_hud.c
+ * ours) then refuses the event as it did (one local human: that one, always) */
+static rx_addr local_human_of_vehicle(rx_addr activity, rx_addr vehicle) {
+    const rx_addr list = U32(activity, 0x268);
+    const uint32_t n = U32(activity, 0x26c);
+    rx_addr first = 0;
     for (uint32_t i = 0; list && i < n && i < 64; i++) {
         const rx_addr d = U32(list, 4u * i);
         const rx_addr p = d ? U32(d, 0x74) : 0;
-        if (p && U32(p, 4) != 0 && U32(p, 0x10) == 0) return p;
+        if (p && U32(p, 4) != 0 && U32(p, 0x10) == 0) {
+            if (!first) first = p;
+            if (vehicle && U32(p, 0x1ac) == vehicle) return p;
+        }
     }
-    return 0;
+    return first;
 }
 
 /* the section race driver of a player (the activity's driver table entry whose player it is) */
@@ -104,14 +143,15 @@ static void stunt_begin(rx_addr player, int physics) {
     const rx_addr K = player + 0xb58;
     const rx_addr trick = U32(K, 0x1c), stunt = U32(K, 0x68);
     if (!trick && !stunt) return;                       /* 006033d0 builds nothing */
-    memmove(&hud.stunts[1], &hud.stunts[0], sizeof hud.stunts - sizeof hud.stunts[0]);
-    memset(&hud.stunts[0], 0, sizeof hud.stunts[0]);
-    hud.stunts[0].physics = physics ? 1u : 0u;
-    copy_key(trick, hud.stunts[0].trick);
-    copy_key(stunt, hud.stunts[0].stunt);
-    hud.stunt_events++;
-    hud.stunts[0].number = hud.stunt_events;
-    if (hud.stunt_count < RX_STUNT_HUD_RING) hud.stunt_count++;
+    struct hud_player* const h = pp_of(player);
+    memmove(&h->stunts[1], &h->stunts[0], sizeof h->stunts - sizeof h->stunts[0]);
+    memset(&h->stunts[0], 0, sizeof h->stunts[0]);
+    h->stunts[0].physics = physics ? 1u : 0u;
+    copy_key(trick, h->stunts[0].trick);
+    copy_key(stunt, h->stunts[0].stunt);
+    h->stunt_events++;
+    h->stunts[0].number = h->stunt_events;
+    if (h->stunt_count < RX_STUNT_HUD_RING) h->stunt_count++;
 }
 
 void rx_race_hud_observe(rx_addr channel, rx_addr name, rx_addr payload, uint32_t bytes) {
@@ -136,13 +176,14 @@ void rx_race_hud_observe(rx_addr channel, rx_addr name, rx_addr payload, uint32_
         return;
     }
     if (channel == U32(0, EVENT_CHANNEL_STUNTS) && bytes >= 8 && (is_name(name, NAME_STUNT_BEGIN) || is_name(name, NAME_PHYSICS_STUNT_BEGIN))) {
-        /* 00603130 / 00603110: only the overlay's own (local) player; the text is built from his trick tracker as it is now (006033d0) */
+        /* 00603130 / 00603110: only the overlay's own (local) player; the text is built from his trick tracker as it is now (006033d0)
+         * (w-split: each local human's overlay keeps its own) */
         const rx_addr player = U32(payload, 0);
-        if (player && player == local_human(activity)) stunt_begin(player, is_name(name, NAME_PHYSICS_STUNT_BEGIN));
+        if (is_local_human(activity, player)) stunt_begin(player, is_name(name, NAME_PHYSICS_STUNT_BEGIN));
         return;
     }
     if (channel != U32(activity, 0x290)) return;
-    if (bytes == 8) rx_reflex_hud_event(local_human(activity), name, payload, bytes);   /* the wreck-recovery events (reflex_hud.c) */
+    if (bytes == 8) rx_reflex_hud_event(local_human_of_vehicle(activity, U32(payload, 4)), name, payload, bytes);   /* the wreck-recovery events (reflex_hud.c) */
     if (bytes == 12 && is_name(name, NAME_PLAYER_ELIMINATED) && U32(payload, 0) == activity) {
         /* 00605de0: payload {activity, driver, next}: "<next's name>\n<STR_ELIMINATED>\n<driver's name>!" */
         const rx_addr driver = U32(payload, 4), next = U32(payload, 8);
@@ -164,7 +205,7 @@ void rx_race_hud_observe(rx_addr channel, rx_addr name, rx_addr payload, uint32_
         /* 006046f0 (the component's handler of 006045b0): payload {player, found, total}: the text "found/total" for the component's own
          * driver's player; the counts themselves are read from the tracker (rx_race_hud_fill) */
         const rx_addr player = U32(payload, 0);
-        if (player && player == local_human(activity)) hud.discovery_events++;
+        if (is_local_human(activity, player)) pp_of(player)->discovery_events++;
     } else if (bytes == 4 && is_name(name, NAME_RESTART) && U32(payload, 0) == activity) {
         /* the components' "Restart" handlers: the section labels cleared (00606820), the gate counter's last number 0 (00605280),
          * the judge bars hidden (00607660), the final score card hidden (006036d0) */
@@ -172,9 +213,11 @@ void rx_race_hud_observe(rx_addr channel, rx_addr name, rx_addr payload, uint32_
         hud.leader_set = 0;
         memset(hud.leader_names, 0, sizeof hud.leader_names);
         hud.gate_last = 0;
-        memset(hud.bars, 0, sizeof hud.bars);
         hud.final_shown = 0;
-        hud.stunt_count = 0;   /* 006030e0: the stunt overlay hides and empties its slots */
+        for (int i = 0; i < 4; i++) {
+            memset(hud_players[i].bars, 0, sizeof hud_players[i].bars);
+            hud_players[i].stunt_count = 0;   /* 006030e0: the stunt overlay hides and empties its slots */
+        }
     }
 }
 
@@ -184,14 +227,20 @@ void rx_race_hud_observe(rx_addr channel, rx_addr name, rx_addr payload, uint32_
 void rx_race_hud_state_entered(rx_addr activity, uint32_t state) {
     if (activity == 0 || activity != hud.activity) return;
     if (state == 3 /* WindDown */) {
-        const rx_addr player = local_human(activity);
-        if (player) {
+        /* w-split: every local human's card copies its own driver's scorer */
+        const rx_addr list = U32(activity, 0x268);
+        const uint32_t n = U32(activity, 0x26c);
+        for (uint32_t i = 0; list && i < n && i < 64; i++) {
+            const rx_addr d = U32(list, 4u * i);
+            const rx_addr player = d ? U32(d, 0x74) : 0;
+            if (!player || U32(player, 4) == 0 || U32(player, 0x10) != 0) continue;
+            struct hud_player* const h = pp_of(player);
             const rx_addr judge = player + 0xc70;
-            hud.final_scores[0] = F32(judge, 0x14);   /* Overall */
-            hud.final_scores[1] = F32(judge, 0x18);   /* Difficulty */
-            hud.final_scores[2] = F32(judge, 0x1c);   /* Execution */
-            hud.final_scores[3] = F32(judge, 0x24);   /* Flow */
-            hud.final_scores[4] = F32(judge, 0x20);   /* Variety */
+            h->final_scores[0] = F32(judge, 0x14);   /* Overall */
+            h->final_scores[1] = F32(judge, 0x18);   /* Difficulty */
+            h->final_scores[2] = F32(judge, 0x1c);   /* Execution */
+            h->final_scores[3] = F32(judge, 0x24);   /* Flow */
+            h->final_scores[4] = F32(judge, 0x20);   /* Variety */
         }
         hud.final_shown = 1;
         hud.final_events++;
@@ -204,11 +253,12 @@ void rx_race_hud_tick(rx_addr player) {
     const rx_addr activity = hud.activity;
     rx_reflex_hud_tick(activity, player);   /* MXUIReflexComponent::vf11 (reflex_hud.c) */
     if (!activity || !player || U32(player, 0x94) != activity || rx_restored_champ_base_type(I32(activity, 0x23c)) != 5) return;   /* (RESTORED CONTENT: a Freestyle championship stage too) */
+    struct hud_player* const h = pp_of(player);
     const rx_addr judge = player + 0xc70;
     const float value[4] = {F32(judge, 4) - F32(judge, 0x38), F32(judge, 8), F32(judge, 0x10) - F32(judge, 0x34), F32(judge, 0xc) - F32(judge, 0x30)};
     for (int i = 0; i < 4; i++) {
         const int32_t n = (value[i] > -2147483648.0f && value[i] < 2147483648.0f) ? (int32_t)value[i] : INT_MIN;
-        if (n > hud.bars[i]) hud.bars[i] = n > 10 ? 10 : n;
+        if (n > h->bars[i]) h->bars[i] = n > 10 ? 10 : n;
     }
 }
 
@@ -255,17 +305,18 @@ int rx_race_hud_fill(rx_addr game, rx_addr player, rx_race_hud_state* v) {
         v->leader_events = hud.leader_events;
         memcpy(v->leader_names, hud.leader_names, sizeof v->leader_names);
     }
-    v->discovery_events = hud.discovery_events;
+    const struct hud_player* const h = pp_find(player);
+    v->discovery_events = h->discovery_events;
     if (v->activity_type == 8 && I32(A, 0xff180) == 1) {   /* MXActivityFreeRide in discovery mode (vf37): the tracker's counts */
         const rx_addr tracker = A + 0xff080;
         const int32_t total = I32(tracker, 0), found = I32(tracker, 0x84);
         if (total > 0 && total <= 0x20 && found >= 0 && found <= total) { v->discovery_total = total; v->discovery_found = found; }
     }
     if (v->activity_type == 5) {   /* MXActivityFreestyle */
-        for (int i = 0; i < 4; i++) v->judge_bars[i] = hud.bars[i];
+        for (int i = 0; i < 4; i++) v->judge_bars[i] = h->bars[i];
         v->final_events = hud.final_events;
         v->final_shown = hud.final_shown;
-        memcpy(v->final_scores, hud.final_scores, sizeof v->final_scores);
+        memcpy(v->final_scores, h->final_scores, sizeof v->final_scores);
     }
     return 1;
 }
@@ -275,10 +326,11 @@ int rx_stunt_hud_fill(rx_addr player, rx_stunt_hud_state* v) {
     if (!A) return 0;
     v->valid = 1;
     if (hud.activity != A) return 1;
-    v->events = hud.stunt_events;
+    const struct hud_player* const h = pp_find(player);
+    v->events = h->stunt_events;
     v->restart_events = hud.restarts;
-    v->count = hud.stunt_count;
-    memcpy(v->entries, hud.stunts, sizeof v->entries);
+    v->count = h->stunt_count;
+    memcpy(v->entries, h->stunts, sizeof v->entries);
     return 1;
 }
 #else

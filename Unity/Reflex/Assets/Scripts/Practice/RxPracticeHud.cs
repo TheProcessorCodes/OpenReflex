@@ -99,9 +99,10 @@ namespace Reflex.Port.Practice
             var laps = RxPractice.Session;
             var t = RxPractice.Summary();
             float clock = rt ? rt.Race.lap_time : 0f;
-            title.text = "PRACTICE  ·  LAP " + t.lap + "  ·  " + (RxPractice.OutLap ? "OUT LAP" : Clock(clock));   // (w-lb-markers: after a ride back to the marker)
+            title.text = (Reflex.Port.RxCore.RxSplitScreen.TwoViews ? "P1  ·  " : "") + "PRACTICE  ·  LAP " + t.lap + "  ·  " + (RxPractice.OutLap ? "OUT LAP" : Clock(clock));   // (w-lb-markers: after a ride back to the marker)
             var list = new List<HudRow>();
-            for (int i = laps.Length - 1; i >= 0 && list.Count < ListedLaps; i--) list.Add(Row(laps[i], t.best));
+            int listed = Reflex.Port.RxCore.RxSplitScreen.TwoViews ? 3 : ListedLaps;   // (SPLIT SCREEN: the list keeps to player 1's top half)
+            for (int i = laps.Length - 1; i >= 0 && list.Count < listed; i--) list.Add(Row(laps[i], t.best));
             if (list.Count == 0) list.Add(new HudRow { name = "THE FIRST LAP RUNS FROM THE GATE", dim = true });
             rows.Set(list);
             best.text = t.best != null ? "SESSION BEST  " + RxPractice.LapText(t.best.ms) + "  ·  " + t.clean + " CLEAN OF " + t.timed : t.timed > 0 ? "NO CLEAN LAP YET  ·  " + t.timed + " TIMED" : "";

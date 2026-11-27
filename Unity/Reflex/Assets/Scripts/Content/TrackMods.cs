@@ -48,6 +48,10 @@ namespace Reflex.Port.Content
         /// The track files' stem, the level name the track is bound to while it is ridden ("Beta_Nat_Track_Slot_4").
         public string level;
         public bool experimentalTerrain, experimentalRacing;
+        /// Where it is, as the menus say it: "Mods/Tracks/<id>", or "Mods/<path>" for a track found elsewhere in Mods (MODS ANYWHERE: ReflexMods.cs).
+        public string Where => ReflexMods.Shown(ReflexMods.TracksName, id);
+        /// A terrain package's own MAP SCALE default in percent (its metadata's defaultScale: 100 for a 1:1 import), 0 when it names none.
+        public int defaultScale;
         /// A packed track (a .rxtrack version 5): folder is the archive file, its files are paths inside it (RxFiles).
         public bool packed;
         /// Where the dress files are (mod.ini's thumbnail is relative to it): the folder, or a packed track's Mod/.
@@ -93,6 +97,9 @@ namespace Reflex.Port.Content
         /// The scanned folder (<client root>/Mods/Tracks), null without a client root.
         public static string Folder => ReflexMods.Folder(ReflexMods.TracksName);
 
+        /// What a rescan watches: the whole Mods folder (a track may lie anywhere in it), Mods/Tracks alone while there is no Mods folder.
+        static string SignatureRoot { get { string m = ReflexMods.ModsRoot; return m != null && Directory.Exists(m) ? m : Folder; } }
+
         /// Every track found, broken ones and archive notes included (cached; Refresh rescans).
         public static List<TrackMod> All
         {
@@ -104,9 +111,9 @@ namespace Reflex.Port.Content
                     Rfx.Install.TrackRouter = Route;
                     string folder = Folder;
                     s_archiveGen = TrackArchives.Generation;
-                    try { s_mods = Scan(folder); }
+                    try { s_mods = Scan(folder, ReflexMods.ModsRoot); SavePackageChecks(); }
                     catch (Exception e) { Debug.LogWarning("[TrackMods] scan: " + e.Message); s_mods = new List<TrackMod>(); }
-                    s_signature = Signature(folder);
+                    s_signature = Signature(SignatureRoot);
                     try { Install(s_mods, folder); } catch (Exception e) { Debug.LogWarning("[TrackMods] archives: " + e.Message); }
                     s_events = null;
                     foreach (var m in s_mods)
@@ -120,13 +127,30 @@ namespace Reflex.Port.Content
         {
             lock (s_lock)
             {
-                if (s_mods != null && Signature(Folder) == s_signature && TrackArchives.Generation == s_archiveGen) return false;
+                if (s_mods != null && Signature(SignatureRoot) == s_signature && TrackArchives.Generation == s_archiveGen) return false;
                 s_mods = null; s_events = null; Version++;
             }
             _ = All;
             return true;
         }
         static int s_archiveGen;
+
+        /// Closes the package files that the tracks under a folder of Mods/Tracks hold open ("Untamed/": a track ridden since the start
+        /// keeps its .dx9.package open, and on Windows an open file cannot be replaced): an importer calls it before it replaces such a
+        /// track (OpenShell.UntamedImport.cs). The next read of a track opens its files again.
+        public static void Release(string idPrefix)
+        {
+            if (string.IsNullOrEmpty(idPrefix)) return;
+            var mods = new List<TrackMod>();
+            lock (s_lock) { if (s_mods != null) mods.AddRange(s_mods); }
+            var bound = s_bound;
+            if (bound != null && !mods.Contains(bound)) mods.Add(bound);
+            foreach (var m in mods)
+            {
+                if (m.id == null || !m.id.StartsWith(idPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+                lock (m.files) { m.install?.Close(); m.install = null; }
+            }
+        }
 
         /// The archives of a scan: each one's install started (TrackArchives.Ensure; once per file), its note says how it is going.
         static void Install(List<TrackMod> mods, string root)
@@ -192,6 +216,9 @@ namespace Reflex.Port.Content
         /// custom track's level gets its kind's prefix ("Beta_Sx_Track_Slot_1" -> "SX_Beta_Sx_Track_Slot_1"); any other name as it is.
         public static string Style(string level)
         {
+            var imported=UnleashedLevels.Bound;
+            if(imported?.level==level)
+                return (imported.source_id.StartsWith("SX",StringComparison.Ordinal)||imported.environment_mode=="indoor"||imported.environment_mode=="stadium_night"?"SX_":"NAT_")+level;
             var b = s_bound;
             if (b == null || level == null || !string.Equals(level, b.level, StringComparison.OrdinalIgnoreCase)) return level;
             switch (b.kind)
@@ -285,10 +312,13 @@ namespace Reflex.Port.Content
 
         /// The tracks under root (pure file system, no Unity): every folder's <stem>.dx9.* sets (any depth, junk ignored), ordered by name;
         /// loose archives as notes.
-        public static List<TrackMod> Scan(string root)
+        /// modsRoot (MODS ANYWHERE, ReflexMods.cs): the Mods folder; the rest of it is searched too, for .rxtrack files and for the folders
+        /// that hold a <stem>.dx9.level (ids "../<path from Mods>"). Archives are installed in Mods/Tracks only.
+        public static List<TrackMod> Scan(string root, string modsRoot = null)
         {
             var mods = new List<TrackMod>();
-            if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return mods;
+            bool home = !string.IsNullOrEmpty(root) && Directory.Exists(root), rest = !string.IsNullOrEmpty(modsRoot) && Directory.Exists(modsRoot) && !ReflexMods.SameFolder(modsRoot, root);
+            if (!home && !rest) return mods;
             void Walk(string dir, int depth)
             {
                 string[] files, dirs;
@@ -298,37 +328,64 @@ namespace Reflex.Port.Content
                 if (depth >= MaxDepth) return;
                 foreach (var d in dirs.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)) if (!ReflexMods.IsJunk(Path.GetFileName(d))) Walk(d, depth + 1);
             }
-            Walk(root, 0);
+            if (home) Walk(root, 0);
+            void WalkRest(string dir, int depth)
+            {
+                if (ReflexMods.SameFolder(dir, root)) return;   // (Mods/Tracks: walked above)
+                string[] files, dirs;
+                try { files = Directory.GetFiles(dir); dirs = Directory.GetDirectories(dir); }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { return; }
+                mods.AddRange(Probe(root, dir, files, modsRoot));
+                if (depth >= MaxDepth) return;
+                foreach (var d in dirs.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)) if (!ReflexMods.IsJunk(Path.GetFileName(d))) WalkRest(d, depth + 1);
+            }
+            if (rest) WalkRest(modsRoot, 0);
             // two tracks of the same name: the parent folder (or the stem) tells them apart
             foreach (var g in mods.GroupBy(m => m.name, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1))
-                foreach (var m in g) { int s = m.id.LastIndexOf('/'); m.name += " (" + (s > 0 ? m.id.Substring(0, s) : m.archive ? "archive" : m.level) + ")"; }
+                foreach (var m in g)
+                {
+                    int s = m.id.LastIndexOf('/'); string parent = s > 0 ? m.id.Substring(0, s) : null;
+                    if (parent != null && parent.StartsWith(ReflexMods.OutsideMark, StringComparison.Ordinal)) parent = parent.Substring(ReflexMods.OutsideMark.Length);
+                    else if (parent == "..") parent = ReflexMods.ModsName;
+                    m.name += " (" + (parent ?? (m.archive ? "archive" : m.level)) + ")";
+                }
             mods.Sort((a, b) => a.archive != b.archive ? (a.archive ? 1 : -1) : string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
             return mods;
         }
 
         /// The tracks of one folder.
-        static IEnumerable<TrackMod> Probe(string root, string dir, string[] paths)
+        /// outside (MODS ANYWHERE): the Mods folder when dir is not under Mods/Tracks; then only what is a track by its files counts (a
+        /// .rxtrack, a stem with its .dx9.level: a bike mod's or a kit pack's databases are not a broken track) and no archive is listed.
+        static IEnumerable<TrackMod> Probe(string root, string dir, string[] paths, string outside = null)
         {
             var byLower = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var f in paths) { string n = Path.GetFileName(f); if (!ReflexMods.IsJunk(n)) byLower[n.ToLowerInvariant()] = f; }
-            bool top = string.Equals(Path.GetFullPath(dir).TrimEnd('/', '\\'), Path.GetFullPath(root).TrimEnd('/', '\\'), StringComparison.Ordinal);   // (files right in Mods/Tracks)
-            string rel = top ? "" : ReflexMods.RelativeId(root, dir) ?? Path.GetFileName(dir);
+            bool top = outside == null && string.Equals(Path.GetFullPath(dir).TrimEnd('/', '\\'), Path.GetFullPath(root).TrimEnd('/', '\\'), StringComparison.Ordinal);   // (files right in Mods/Tracks)
+            bool loose = top || outside != null && ReflexMods.SameFolder(dir, outside);   // (or right in Mods: named by the file, not by a folder)
+            string rel = outside != null ? ReflexMods.OutsideId(outside, dir) : top ? "" : ReflexMods.RelativeId(root, dir) ?? Path.GetFileName(dir);
+            string pre = top ? "" : rel + "/";
             foreach (var package in byLower.Where(kv => kv.Key.EndsWith(".rxtrack", StringComparison.Ordinal)))
             {
                 if (RxFiles.IsArchive(package.Value)) { foreach (var p in ProbePacked(rel, top, package.Value)) yield return p; continue; }
                 var m = new TrackMod
                 {
-                    id = (top ? "" : rel + "/") + Path.GetFileNameWithoutExtension(package.Value),
+                    id = pre + Path.GetFileNameWithoutExtension(package.Value),
                     folder = package.Value, level = "NAT_Concord", name = Path.GetFileNameWithoutExtension(package.Value),
                     kind = "National", kindLabel = "NATIONAL · EXPERIMENTAL", experimentalTerrain = true,
                 };
+                // its own picture beside the package: one named as the package; in a folder of its own (the folder's only track), any the
+                // folder tracks' rules take (preview.png ...). Without one the game draws it (TrackPictures.cs).
+                string own = Path.GetFileNameWithoutExtension(package.Value).ToLowerInvariant();
+                bool alone = !loose && byLower.Keys.Count(k => k.EndsWith(".rxtrack", StringComparison.Ordinal)) == 1 && !byLower.Keys.Any(k => k.EndsWith(LevelExt, StringComparison.Ordinal));
+                m.thumbnail = alone ? Thumbnail(byLower, own) : byLower.Where(kv => IsImage(kv.Key) && Path.GetFileNameWithoutExtension(kv.Key) == own).Select(kv => kv.Value).FirstOrDefault();
                 try
                 {
                     var info = ExperimentalTerrain.Info(m.folder);
-                    ExperimentalTerrain.Read(m.folder);
+                    CheckPackage(m.folder);
                     m.kind = info.kind == "Supercross" ? "Supercross" : "National";
                     m.kindLabel = m.kind.ToUpperInvariant()+" · EXPERIMENTAL";
                     m.experimentalRacing = info.raceVersion == 1; m.name = info.name; m.bytes = new FileInfo(m.folder).Length;
+                    m.defaultScale = info.defaultScale >= 50 && info.defaultScale <= 200 ? info.defaultScale : 0;
                 }
                 catch (Exception e) { m.problem = e.Message; }
                 yield return m;
@@ -343,12 +400,15 @@ namespace Reflex.Port.Content
                         string stem = disk.Substring(0, disk.Length - ext.Length);
                         if (!stems.ContainsKey(stem.ToLowerInvariant()) || kv.Key.EndsWith(LevelExt, StringComparison.Ordinal)) stems[stem.ToLowerInvariant()] = stem;
                     }
+            // a track is a stem with its .dx9.level or .dx9.scene (one of them missing: a broken track). Databases and packages alone are
+            // another kind of mod (a bike mod, a kit pack: MODS ANYWHERE), wherever they lie; outside Mods/Tracks only a .dx9.level counts.
+            foreach (var k in stems.Keys.Where(k => !byLower.ContainsKey(k + LevelExt) && (outside != null || !byLower.ContainsKey(k + SceneExt))).ToList()) stems.Remove(k);
             foreach (var stem in stems.Values)
             {
-                string folderName = top ? null : Path.GetFileName(dir.TrimEnd('/', '\\'));
+                string folderName = loose ? null : Path.GetFileName(dir.TrimEnd('/', '\\'));
                 var m = new TrackMod
                 {
-                    id = (top ? "" : rel) + (stems.Count > 1 || top ? (top ? "" : "+") + stem : ""), folder = dir, level = stem,
+                    id = loose ? pre + stem : rel + (stems.Count > 1 ? "+" + stem : ""), folder = dir, level = stem,
                     name = folderName != null ? Pretty(folderName) + (stems.Count > 1 ? " (" + Pretty(stem) + ")" : "") : Pretty(stem),
                 };
                 foreach (var kv in byLower) if (kv.Key.StartsWith(stem.ToLowerInvariant() + ".", StringComparison.Ordinal)) m.files[kv.Key] = kv.Value;
@@ -360,6 +420,7 @@ namespace Reflex.Port.Content
                 try { foreach (var ext in Parts) { var f = m.File(ext); if (f != null) m.bytes += new FileInfo(f).Length; } } catch (Exception) { }
                 yield return m;
             }
+            if (outside != null) yield break;
             foreach (var kv in byLower)
             {
                 // an archive by its first bytes (a RAR named .zip is a RAR) or by its name; one already installed (TrackArchives' marker in
@@ -368,6 +429,7 @@ namespace Reflex.Port.Content
                 bool part = Parts.Any(p => kv.Key.EndsWith(p, StringComparison.Ordinal)) || IsImage(kv.Key) || kv.Key == "mod.ini" || kv.Key == "mod.json" || ext == ".txt";
                 var kind = part ? TrackArchives.Kind.None : TrackArchives.Sniff(kv.Value);
                 if (kind == TrackArchives.Kind.None && !Archives.Contains(ext)) continue;
+                if (kind == TrackArchives.Kind.RxMod || ext == ".rxmod") continue;   // (a .rxmod is never a track: BikeMods / KitPacks / RxGear read it wherever it lies)
                 if (TrackArchives.InstalledFolder(kv.Value) != null) continue;
                 string file = Path.GetFileName(kv.Value), stem = TrackArchives.SafeName(Path.GetFileNameWithoutExtension(file));
                 yield return new TrackMod
@@ -429,6 +491,59 @@ namespace Reflex.Port.Content
         static bool IsImage(string lower) => lower.EndsWith(".png", StringComparison.Ordinal) || lower.EndsWith(".jpg", StringComparison.Ordinal) || lower.EndsWith(".jpeg", StringComparison.Ordinal);
 
         /// A picture of the folder named like a thumbnail (preview.png, <stem>.jpg ...), else the folder's only picture.
+        // ---- a terrain package's check, kept between starts ----
+        // Reading a package to its end (ExperimentalTerrain.Read: 16 MB of heights and every section behind them, gunzipped) proves it is
+        // whole, and takes about half a second: with dozens of packages the scan held the start for half a minute. A package is read once;
+        // the answer (fine, or what is wrong) is kept by its path, size and time in <save folder>/track-packages.txt and asked again only
+        // when the file changes. A run that writes no save (batch mode without a save folder of its own) keeps it for the run only.
+        static Dictionary<string, string> s_packageChecks; static bool s_packageChecksDirty;
+        static string PackageChecksFile { get { try { return Path.Combine(Reflex.Port.Options.ReflexSave.Folder, "track-packages.txt"); } catch (Exception) { return null; } } }
+        static void CheckPackage(string path)
+        {
+            var f = new FileInfo(path);
+            string key = f.Length + "|" + f.LastWriteTimeUtc.Ticks + "|" + path;
+            if (s_packageChecks == null)
+            {
+                s_packageChecks = new Dictionary<string, string>(StringComparer.Ordinal);
+                try
+                {
+                    string file = PackageChecksFile;
+                    if (file != null && File.Exists(file))
+                        foreach (var line in File.ReadAllLines(file))
+                        { int tab = line.IndexOf('\t'); if (tab > 0) s_packageChecks[line.Substring(0, tab)] = line.Substring(tab + 1); }
+                }
+                catch (Exception e) { Debug.LogWarning("[TrackMods] the package checks do not read (" + e.Message + "): every package is read again"); }
+            }
+            if (!s_packageChecks.TryGetValue(key, out string problem))
+            {
+                try { ExperimentalTerrain.Read(path); problem = ""; }
+                catch (Exception e) { problem = e.Message.Replace('\t', ' ').Replace('\n', ' ').Replace('\r', ' '); if (problem.Length == 0) problem = "the package does not read"; }
+                s_packageChecks[key] = problem; s_packageChecksDirty = true;
+            }
+            if (problem.Length > 0) throw new InvalidDataException(problem);
+        }
+        /// Writes the checks a scan added (only those of files that still exist: a removed package's line goes).
+        static void SavePackageChecks()
+        {
+            if (!s_packageChecksDirty || s_packageChecks == null) return;
+            s_packageChecksDirty = false;
+            try
+            {
+                if (Reflex.Port.Options.ReflexSave.Sandboxed) return;
+                string file = PackageChecksFile; if (file == null) return;
+                var sb = new StringBuilder();
+                foreach (var kv in s_packageChecks.OrderBy(k => k.Key, StringComparer.Ordinal))
+                {
+                    int a = kv.Key.IndexOf('|'), b = a < 0 ? -1 : kv.Key.IndexOf('|', a + 1);
+                    if (b < 0 || !File.Exists(kv.Key.Substring(b + 1))) continue;
+                    sb.Append(kv.Key).Append('\t').Append(kv.Value).Append('\n');
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(file));
+                File.WriteAllText(file, sb.ToString());
+            }
+            catch (Exception e) { Debug.LogWarning("[TrackMods] the package checks were not kept (" + e.Message + ")"); }
+        }
+
         static string Thumbnail(Dictionary<string, string> byLower, string stem)
         {
             var images = byLower.Where(kv => IsImage(kv.Key)).ToList();

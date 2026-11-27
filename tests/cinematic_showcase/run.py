@@ -22,6 +22,7 @@ ap.add_argument("--height", type=int, default=1080)
 ap.add_argument("--out", type=Path)
 ap.add_argument("--name", default="run")
 ap.add_argument("--game", default=G)
+ap.add_argument("--batch", action="store_true", help="-batchmode: no window at all (the replay probe's shots are drawn offscreen)")
 a = ap.parse_args()
 A = a.out.resolve() if a.out else R / "builds/cine/runs" / datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 A.mkdir(parents=True, exist_ok=True)
@@ -48,9 +49,12 @@ for n in ["Reflex", "OpenReflex", "Reflex Core Garage Bench"]:
 subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)
 shots = A / "screenshots"; shots.mkdir(exist_ok=True)
 save = A / f"save-{a.name}"; save.mkdir(exist_ok=True); (save / "ReflexCache").mkdir(exist_ok=True)
+if not (save / "save.json").exists():   # the scratch save: muted (test players make no sound)
+    (save / "save.json").write_text(json.dumps({"format": "reflex-client-save", "version": 1, "ints": {}, "floats": {"Options.MasterVolume": 0.0}, "strings": {}}, indent=1))
 log = A / f"player-{a.name}.log"
 args = ["/usr/bin/sandbox-exec", "-f", str(A / "protection.sb"), str(exe), "-reflexTestWindow", "-screen-fullscreen", "0",
         "-screen-width", str(a.width), "-screen-height", str(a.height), "-logFile", str(log)]
+if a.batch: args.insert(args.index("-reflexTestWindow") + 1, "-batchmode")
 env = {k: v for k, v in os.environ.items() if not k.startswith(("REFLEX_", "RX_", "DYLD_"))}
 env.update(REFLEX_SIM="open", REFLEX_FRONTEND="open", REFLEX_SAVE_DIR=str(save), REFLEX_GAME_DIR=a.game, REFLEX_SKIP_INTRO="1",
            REFLEX_PREVIEW_SHOTS=str(shots), REFLEX_REPLAY_SHOTS=str(shots), REFLEX_PHOTO_DIR=str(shots), REFLEX_FPS_CAP="240")

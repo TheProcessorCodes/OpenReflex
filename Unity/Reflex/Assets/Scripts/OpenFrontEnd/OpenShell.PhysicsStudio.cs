@@ -164,6 +164,23 @@ namespace Reflex.Port.OpenFrontEnd
             return b;
         }
 
+        /// (issue #22) A RESET row asks first, as DELETE does: the first press arms it ("PRESS AGAIN TO RESET"), the second resets the config in
+        /// the editor (SAVE keeps it, as every other change here).
+        VisualElement PsResetButton(string label, string name, Action reset, string help = null)
+        {
+            string key = "reset:" + name;
+            VisualElement b = null;
+            b = PsButton(label, name, () =>
+            {
+                var l = b.Q<Label>() ?? b as Label;
+                if (_psArmed != key) { _psArmed = key; if (l != null) l.text = "PRESS AGAIN TO " + label; PsStatus("PRESS AGAIN TO " + label + " TO THE ORIGINAL VALUES"); return; }
+                _psArmed = null; if (l != null) l.text = label;
+                reset();
+            }, help);
+            b.RegisterCallback<FocusOutEvent>(_ => { if (_psArmed == key) { _psArmed = null; var l = b.Q<Label>() ?? b as Label; if (l != null) l.text = label; } });
+            return b;
+        }
+
         // ------------------------------------------------------------------------------------------- CONFIGS
 
         void PsConfigsPage()
@@ -343,9 +360,9 @@ namespace Reflex.Port.OpenFrontEnd
             if (n == 0) OuUi.Text("NO VALUES MATCH", "mxa-note", _psRows);
             OuTheme.Section(_psRows, "RESET");
             if (_psGroup >= 0 && q.Length == 0)
-                PsButton("RESET " + PhysicsCatalog.Groups[_psGroup] + " (" + cls.label + ")", "ps-reset-group", () => { PsResetWhere(k => k[0] == cls.id && cls.parms.Any(p => p.name == k[1] && p.group == PhysicsCatalog.Groups[_psGroup])); PsStatus("GROUP RESET TO THE ORIGINAL VALUES"); });
-            PsButton("RESET " + cls.label, "ps-reset-class", () => { PsResetWhere(k => k[0] == cls.id); PsStatus(cls.label + " RESET TO THE ORIGINAL VALUES"); });
-            PsButton("RESET EVERYTHING", "ps-reset-all", () => { _psWork.values.Clear(); _psWork.grip.Clear(); _psWork.drag.Clear(); PsChanged(); PsStatus("EVERY VALUE IS THE ORIGINAL'S"); },
+                PsResetButton("RESET " + PhysicsCatalog.Groups[_psGroup] + " (" + cls.label + ")", "ps-reset-group", () => { PsResetWhere(k => k[0] == cls.id && cls.parms.Any(p => p.name == k[1] && p.group == PhysicsCatalog.Groups[_psGroup])); PsStatus("GROUP RESET TO THE ORIGINAL VALUES"); });
+            PsResetButton("RESET " + cls.label, "ps-reset-class", () => { PsResetWhere(k => k[0] == cls.id); PsStatus(cls.label + " RESET TO THE ORIGINAL VALUES"); });
+            PsResetButton("RESET EVERYTHING", "ps-reset-all", () => { _psWork.values.Clear(); _psWork.grip.Clear(); _psWork.drag.Clear(); PsChanged(); PsStatus("EVERY VALUE IS THE ORIGINAL'S"); },
                      "Every vehicle value and the terrain table back to the original's (the config then changes nothing).");
         }
 
@@ -492,7 +509,7 @@ namespace Reflex.Port.OpenFrontEnd
                          mat.label, $"The drag factor of terrain material layer 1. FILE VALUE {Num(mat.def)}. It is global: every rider on that ground.");
             }
             OuTheme.Section(_psRows, "RESET");
-            PsButton("RESET THE TERRAIN TABLES", "ps-reset-terrain", () => { _psWork.grip.Clear(); _psWork.drag.Clear(); PsChanged(); PsStatus("TERRAIN TABLES RESET"); });
+            PsResetButton("RESET THE TERRAIN TABLES", "ps-reset-terrain", () => { _psWork.grip.Clear(); _psWork.drag.Clear(); PsChanged(); PsStatus("TERRAIN TABLES RESET"); });
         }
     }
 }

@@ -17,14 +17,13 @@ namespace Reflex.Port.Options
                 int i = Mathf.Max(0, System.Array.IndexOf(choices, Reflex.Port.Replay.ReflexReplay.LengthSeconds));
                 Reflex.Port.Replay.ReflexReplay.LengthSeconds = choices[(i + d + choices.Length) % choices.Length];
             }, panel), "replay-length");
+            Help(panel, "How much of every ride is kept for REPLAY and PHOTO MODE (the pause menu). A full 12-rider race takes about 70 MB a minute; a length that would not fit your memory records 30 frames a second.", When.NextEvent);
             Named(OptUi.Toggle("REPLAY EFFECTS", () => Reflex.Port.Replay.ReflexReplay.RecordEffects, v => Reflex.Port.Replay.ReflexReplay.RecordEffects = v, panel), "replay-effects");
+            Help(panel, "Also records the dust, roost and splashes, the ruts as they were and the riders' mud. Up to about 300 MB more.", When.NextEvent);
             Named(OptUi.Toggle("REPLAY SOUND", () => Reflex.Port.Replay.ReflexReplay.RecordSound, v => Reflex.Port.Replay.ReflexReplay.RecordSound = v, panel), "replay-sound");
+            Help(panel, "Plays the engines, landings, crashes, the gate and the crowd again in a replay, at 0.75x to 1.5x speed.", When.NextEvent);
             Named(OptUi.Toggle("CINEMATIC EFFECTS", () => Reflex.Port.Replay.ReflexReplay.CinematicEffects, v => Reflex.Port.Replay.ReflexReplay.CinematicEffects = v, panel), "replay-cinematic");
-            Note(panel, "CINEMATIC EFFECTS (replays only, never while riding; PHOTO MODE has its own settings): depth of field that follows the rider, motion blur on the bikes, wheels and background, and subtle lens effects (chromatic aberration, vignette, film grain, lens flare and dirt on the sun and the lamps), set per camera. Ours.");
-            Note(panel, "Every ride is recorded for REPLAY and PHOTO MODE (the pause menu; R / P while riding when the game's keys leave them free). " +
-                        "A full 12-rider race takes about 70 MB a minute at 60 frames a second; a length that would not fit in an eighth of your memory keeps 30 frames a second. " +
-                        "REPLAY EFFECTS keeps the dust, roost and splashes, the ruts as they were and the riders' mud too (up to ~300 MB more on a big machine). " +
-                        "REPLAY SOUND plays the engines, landings, crashes, the gate and the crowd again at normal speed (0.75x to 1.5x; silent otherwise). Photos go to Pictures/Open Reflex. Applies from the next race start. Ours.");
+            Help(panel, "In replays only: depth of field that follows the rider, motion blur and subtle lens effects, set per camera. PHOTO MODE has its own settings; photos go to Pictures/Open Reflex.");
         }
     }
 }

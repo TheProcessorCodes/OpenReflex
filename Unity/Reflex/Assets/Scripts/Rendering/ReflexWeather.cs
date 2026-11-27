@@ -61,13 +61,11 @@ namespace Reflex.Port.Rendering
         }
         public static int DefaultSetting { get { MigrateVideoSetting(); return Mathf.Clamp(ReflexSave.GetInt(KDefault, 0), 0, 3); } }
         public static int DefaultIntensity { get { MigrateVideoSetting(); return Mathf.Clamp(ReflexSave.GetInt(KDefaultIntensity, 1), 0, 2); } }
-        /// A setup row's pick: becomes the default for setups that never chose; anything but CLEAR needs LIGHTING: ENHANCED, so it switches
-        /// LIGHTING to ENHANCED too. Saved at once.
+        /// A setup row's pick: becomes the default for setups that never chose. Saved at once.
         public static void PickDefault(int weather)
         {
             MigrateVideoSetting();
             ReflexSave.SetInt(KDefault, Mathf.Clamp(weather, 0, 3));
-            if (weather != 0 && ReflexSettings.Lighting != 1) ReflexSettings.Lighting = 1;
             ReflexSave.Save();
         }
         public static void PickDefaultIntensity(int i) { MigrateVideoSetting(); ReflexSave.SetInt(KDefaultIntensity, Mathf.Clamp(i, 0, 2)); ReflexSave.Save(); }
@@ -76,7 +74,7 @@ namespace Reflex.Port.Rendering
         // Rain and snow take grip off every vehicle's tyres (MX, ATV, UTV, trucks, buggies; the player's and the computer riders'): the core
         // multiplies the static rolling and cornering grip of every tyre by GripFactor (core/game/weather_grip.h, rx_session_set_weather_grip).
         // The loss follows the ground the weather leaves, not the falling rain: wetness for rain, snow cover for snow (DYNAMIC: as they build
-        // up and dry / melt), times the intensity's strength (LIGHT 0.38, MEDIUM 0.68, HEAVY 1). CLEAR, LIGHTING: ORIGINAL, the stadiums and
+        // up and dry / melt), times the intensity's strength (LIGHT 0.38, MEDIUM 0.68, HEAVY 1). CLEAR, the stadiums and
         // everything without drawn weather: 1, the core untouched (bit for bit the original's physics).
         // TUNING: the two losses below (a share of the grip at full wetness / cover, HEAVY). Built in only: no launch option changes them
         // (REFLEX_WEATHER_GRIP was removed: a player could have set its own grip).
@@ -92,11 +90,13 @@ namespace Reflex.Port.Rendering
         public static float ForceWet = -1, ForcePuddles = -1, ForceCover = -1;
         /// Tests: the terrain's masks instead of the picture (1 puddles, 2 snow / trail, 3 deformation, 4 tyre tracks).
         public static int DebugView;
+        /// Tests: weather in the supercross stadiums too (the showcase's wxindoor; players keep them dry).
+        public static bool AllowIndoor;
 
         public static int Mode => Override >= 0 ? Override : RideMode;
         public static int Intensity => IntensityOverride >= 0 ? IntensityOverride : RideIntensity;
         static bool LightingOn { get { try { return ReflexEnhancedLighting.Requested; } catch (Exception) { return false; } } }
-        /// The weather would be drawn (an option other than CLEAR and LIGHTING: ENHANCED).
+        /// The weather would be drawn (an option other than CLEAR; not under the developers' REFLEX_LIGHTING=original).
         public static bool Requested => Mode != 0 && LightingOn;
 
         // ------------------------------------------------------------------------------------------------ the live state (read by others)
@@ -128,6 +128,8 @@ namespace Reflex.Port.Rendering
             Settle = dev && Environment.GetEnvironmentVariable("REFLEX_WEATHER_SETTLE") == "1";
             if (int.TryParse(Environment.GetEnvironmentVariable("REFLEX_WEATHER_DEBUG"), out int dbg)) DebugView = dbg;
             Shader.SetGlobalVector(WeatherId, Vector4.zero);
+            Shader.SetGlobalVector(MistApplyId, Vector4.zero);
+            Shader.SetGlobalVector(LightId, Vector4.one);
         }
 
         static ReflexWeather instance;
@@ -149,7 +151,13 @@ namespace Reflex.Port.Rendering
         static readonly int WeatherId = Shader.PropertyToID("_RfxWeather"), Weather2Id = Shader.PropertyToID("_RfxWeather2"),
             SkyId = Shader.PropertyToID("_RfxWeatherSky"), FogId = Shader.PropertyToID("_RfxWeatherFog"), WindId = Shader.PropertyToID("_RfxWeatherWind"),
             DebugId = Shader.PropertyToID("_RfxWeatherDebug"), RfxSunColorId = Shader.PropertyToID("_RfxSunColor"), SunColorId = Shader.PropertyToID("_SunColor");
-        static readonly int PBox = Shader.PropertyToID("_PBox"), PFall = Shader.PropertyToID("_PFall"), PCamVel = Shader.PropertyToID("_PCamVel"),
+        // the surfaces without a light of their own (ReflexWeather.hlsl "unlit / prelit surfaces") and the mist on what draws after the mist pass
+        // (ReflexVolumetricApply.hlsl RfxVolApply)
+        static readonly int LightId = Shader.PropertyToID("_RfxWeatherLight"), SnowSunId = Shader.PropertyToID("_RfxWeatherSnowSun"),
+            SnowAmbId = Shader.PropertyToID("_RfxWeatherSnowAmb"), MistApplyId = Shader.PropertyToID("_RfxMistApply"), RfxSunDirId = Shader.PropertyToID("_RfxSunDir");
+        static readonly int[] FillDirIds = { Shader.PropertyToID("_RfxLightDir0"), Shader.PropertyToID("_RfxLightDir1"), Shader.PropertyToID("_RfxLightDir2"), Shader.PropertyToID("_RfxLightDir3") },
+            FillColorIds = { Shader.PropertyToID("_RfxLightColor0"), Shader.PropertyToID("_RfxLightColor1"), Shader.PropertyToID("_RfxLightColor2"), Shader.PropertyToID("_RfxLightColor3") };
+        static readonly int PBox = Shader.PropertyToID("_PBox"), PFall = Shader.PropertyToID("_PFall"), PCamVel = Shader.PropertyToID("_PCamVel"), PFollow = Shader.PropertyToID("_PFollow"),
             PLight = Shader.PropertyToID("_PLight"), PSun = Shader.PropertyToID("_PSun"), PGround = Shader.PropertyToID("_PGround"),
             PGroundRect = Shader.PropertyToID("_PGroundRect"), PMisc = Shader.PropertyToID("_PMisc");
 
@@ -157,6 +165,11 @@ namespace Reflex.Port.Rendering
         ReflexEnhancedLighting owner; Camera cam; OriginalLevel level; float findAt;
         float clock;                                     // the particles' and ripples' time (s, wrapped)
         Vector3 lastCamPos; bool hasCam; Vector3 camVel;
+        /// How far the camera has travelled over the ground (m; doubles: a long ride): the particles drift along with a share of it
+        /// (Layer's follow), so they stream past a moving camera slower than the world does.
+        double travelX, travelZ;
+        /// Tests: a camera speed (m/s, along its view) for the precipitation, as if riding (the showcase's wxmoveNN; its cameras stand still).
+        public static float TestCamSpeed;
         Vector2 wind, windTarget; float windChange, cloudScroll;
         // DYNAMIC: the phase (0 clear, 1 building, 2 falling, 3 clearing), its time left, the shower's kind (0 rain, 1 snow) and strength
         int phase; float phaseLeft, peak; int kind;
@@ -201,8 +214,8 @@ namespace Reflex.Port.Rendering
             float dt = Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (!Requested) { Deactivate(); return; }
             FindOwner();
-            if (!owner || !cam || Indoor(owner.level.level)) { Deactivate(); return; }
-            if (level != owner.level) { level = owner.level; restart = true; terrainSun.Clear(); }
+            if (!owner || !cam || (Indoor(owner.level.level) && !AllowIndoor)) { Deactivate(); return; }
+            if (level != owner.level) { level = owner.level; restart = true; terrainSun.Clear(); ReflexSnowTrails.Forget(); }
             if (restart) { StartState(); restart = false; }
             Simulate(dt);
             Active = true;
@@ -211,6 +224,7 @@ namespace Reflex.Port.Rendering
             ApplyGlobals(dt);
             ApplySun();
             UpdateGround();
+            ReflexSnowTrails.Frame(cam, SnowCover, Snow, dt, ReflexEnhancedLighting.Tier);   // SNOW: the tyre trenches (ReflexSnowTrails.cs)
             Draw();
         }
 
@@ -314,6 +328,7 @@ namespace Reflex.Port.Rendering
             Shader.SetGlobalVector(Weather2Id, new Vector4(Puddles, Rain, Snow, clock));
             Shader.SetGlobalVector(SkyId, new Vector4(zenith.x, zenith.y, zenith.z, Mathf.Lerp(0.25f, 0.45f, storm)));
             Shader.SetGlobalVector(FogId, new Vector4(horizon.x, horizon.y, horizon.z, mistDensity));
+            Shader.SetGlobalVector(MistApplyId, new Vector4(horizon.x, horizon.y, horizon.z, mistDensity));   // (the mist pass's colour and density, for the transparent queue)
             Shader.SetGlobalVector(WindId, new Vector4(wind.x, 0, wind.y, cloudScroll));
             Shader.SetGlobalVector(DebugId, new Vector4(DebugView, 0, 0, 0));
             if (hasCam && dt > 1e-4f)
@@ -321,6 +336,8 @@ namespace Reflex.Port.Rendering
                 var v = (cam.transform.position - lastCamPos) / dt;
                 if (v.sqrMagnitude > 90f * 90f) v = camVel;   // a cut / reset: keep the last velocity
                 camVel = Vector3.Lerp(camVel, v, 1f - Mathf.Exp(-dt * 12f));
+                if (TestCamSpeed > 0f) camVel = cam.transform.forward * TestCamSpeed;
+                travelX += camVel.x * dt; travelZ += camVel.z * dt;
             }
             lastCamPos = cam.transform.position; hasCam = true;
         }
@@ -332,6 +349,7 @@ namespace Reflex.Port.Rendering
             Vector4 g = Shader.GetGlobalVector(RfxSunColorId);
             if (!sunHeld || g != wroteSun) { baseSun = g; sunHeld = true; }
             wroteSun = baseSun * s; Shader.SetGlobalVector(RfxSunColorId, wroteSun);
+            ApplyUnlit(s);
             // the terrain's sun (per material)
             foreach (var t in Terrain.activeTerrains)
             {
@@ -352,6 +370,32 @@ namespace Reflex.Port.Rendering
             }
         }
 
+        static float Lum(Vector4 c) => 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+
+        /// The clouds' share for what has no light of its own to dim (grass, particles, the crowd, banners, prelit scenery, backdrops):
+        /// the level's light on an upward face under the clouds over the same in clear weather (the fill lights stay, the sun keeps s),
+        /// with the grey sky's tint (as RfxEnhAmbient); and the light on upward-facing snow for those surfaces (ReflexWeather.hlsl).
+        void ApplyUnlit(float s)
+        {
+            Vector4 sunDir = Shader.GetGlobalVector(RfxSunDirId);
+            Vector3 amb = Vector3.zero;
+            for (int i = 0; i < 4; i++)
+            {
+                Vector4 d = Shader.GetGlobalVector(FillDirIds[i]), c = Shader.GetGlobalVector(FillColorIds[i]);
+                amb += Mathf.Max(d.y, 0f) * new Vector3(c.x, c.y, c.z);
+            }
+            float sunLum = Lum(baseSun);
+            // (a level whose fill lights are off, as MX vs ATV Alive's with their bounce volume: a plain share of the sun stands for its ambient)
+            if (Lum(amb) < 0.08f * sunLum) amb = Vector3.one * (0.35f * sunLum);
+            float ambLum = Lum(amb), direct = sunLum * Mathf.Max(sunDir.y, 0f);
+            float keep = ambLum + direct > 1e-4f ? Mathf.Clamp((ambLum + direct * s) / (ambLum + direct), 0.4f, 1f) : 1f;
+            Vector3 tint = Vector3.Lerp(Vector3.one, new Vector3(0.97f, 0.99f, 1.03f), Overcast * 0.8f) * keep;
+            Shader.SetGlobalVector(LightId, new Vector4(tint.x, tint.y, tint.z, s));
+            float wrap = Mathf.Clamp01((sunDir.y + 0.45f) / 1.45f);
+            Shader.SetGlobalVector(SnowSunId, new Vector4(wroteSun.x * wrap, wroteSun.y * wrap, wroteSun.z * wrap, 0));
+            Shader.SetGlobalVector(SnowAmbId, new Vector4(amb.x * 0.80f * 1.12f, amb.y * 0.93f * 1.12f, amb.z * 1.20f * 1.12f, 0));
+        }
+
         void RestoreShadow()
         {
             if (sunLight && shadowHeld && Mathf.Approximately(sunLight.shadowStrength, wroteShadow)) sunLight.shadowStrength = baseShadow;
@@ -361,10 +405,13 @@ namespace Reflex.Port.Rendering
         void Deactivate()
         {
             GripFactor = 1f;   // (no weather drawn: the tyres' own grip)
+            ReflexSnowTrails.Release();
             Reflex.Port.RxCore.OpenReflexSimulation.GameWeatherGrip = 1f;
             if (!Active && !sunHeld && terrainSun.Count == 0 && !shadowHeld) return;
             Active = false;
             Shader.SetGlobalVector(WeatherId, Vector4.zero);
+            Shader.SetGlobalVector(MistApplyId, Vector4.zero);
+            Shader.SetGlobalVector(LightId, Vector4.one);
             if (sunHeld && Shader.GetGlobalVector(RfxSunColorId) == wroteSun) Shader.SetGlobalVector(RfxSunColorId, baseSun);
             sunHeld = false;
             foreach (var kv in terrainSun) if (kv.Key && kv.Key.GetVector(SunColorId) == kv.Value.wrote) kv.Key.SetVector(SunColorId, kv.Value.base_);
@@ -439,24 +486,28 @@ namespace Reflex.Port.Rendering
             if (Rain > 0.01f)
             {
                 // near: dense thin streaks; far: fewer, larger, fainter (the rain's depth)
-                Layer(ref b, 0, (int)(16000 * q * Rain), new Vector4(34, 22, 34, 4), new Vector4(Mathf.Lerp(6.5f, 9.5f, Rain), 0.0075f, 0.04f, 0.6f), camV, sky, 1.45f, sunC, 0, 0);
-                Layer(ref b, 0, (int)(7000 * q * Rain), new Vector4(110, 46, 110, 10), new Vector4(Mathf.Lerp(6.5f, 9.5f, Rain), 0.02f, 0.05f, 0.22f), camV, sky, 1.4f, sunC, 0, 200000);
+                Layer(ref b, 0, (int)(16000 * q * Rain), new Vector4(34, 22, 34, 4), new Vector4(Mathf.Lerp(6.5f, 9.5f, Rain), 0.0075f, 0.04f, 0.6f), camV, sky, 1.45f, sunC, 0, 0, 0.4f, 0.18f);
+                Layer(ref b, 0, (int)(7000 * q * Rain), new Vector4(110, 46, 110, 10), new Vector4(Mathf.Lerp(6.5f, 9.5f, Rain), 0.02f, 0.05f, 0.22f), camV, sky, 1.4f, sunC, 0, 200000, 0.4f, 0.18f);
                 if (Wetness > 0.2f) Layer(ref b, 2, (int)(1400 * q * Rain), Vector4.zero, new Vector4(0, 0.16f, 0, 0.8f), camV, sky, 2.2f, sunC, 0, 400000);
             }
             if (Snow > 0.01f)
             {
-                Layer(ref b, 1, (int)(9000 * q * Snow), new Vector4(26, 16, 26, 3), new Vector4(1.1f, 0.022f, 0.01f, 0.9f), camV, sky, 1f, sunC, 0.35f, 600000);
-                Layer(ref b, 1, (int)(14000 * q * Snow), new Vector4(90, 40, 90, 8), new Vector4(1.3f, 0.035f, 0.01f, 0.6f), camV, sky, 1f, sunC, 0.6f, 800000);
+                Layer(ref b, 1, (int)(9000 * q * Snow), new Vector4(26, 16, 26, 3), new Vector4(1.1f, 0.022f, 0.01f, 0.9f), camV, sky, 1f, sunC, 0.35f, 600000, 0.55f, 0f);
+                Layer(ref b, 1, (int)(14000 * q * Snow), new Vector4(90, 40, 90, 8), new Vector4(1.3f, 0.035f, 0.01f, 0.6f), camV, sky, 1f, sunC, 0.6f, 800000, 0.55f, 0f);
             }
         }
 
-        void Layer(ref int b, int mode, int count, Vector4 box, Vector4 fall, Vector4 camV, Vector3 sky, float bright, Vector4 sun, float sway, int first)
+        /// follow: the share of the camera's travel the particles drift along with (0: fixed in the world); streak: the share of the
+        /// camera's velocity in a particle's streak (0: its own fall and the wind only).
+        void Layer(ref int b, int mode, int count, Vector4 box, Vector4 fall, Vector4 camV, Vector3 sky, float bright, Vector4 sun, float sway, int first, float follow = 0f, float streak = 0f)
         {
             if (count < 1 || b >= blocks.Length) return;
             var mpb = blocks[b] ??= new MaterialPropertyBlock();
             b++;
             mpb.Clear();
             mpb.SetVector(PBox, box); mpb.SetVector(PFall, fall); mpb.SetVector(PCamVel, camV);
+            // (wrapped to the box here, in doubles: the shader's floats keep their precision however far the ride goes)
+            mpb.SetVector(PFollow, box.x > 0f && box.z > 0f ? new Vector4((float)Math.IEEERemainder(travelX * follow, box.x), 0f, (float)Math.IEEERemainder(travelZ * follow, box.z), streak) : new Vector4(0, 0, 0, streak));
             mpb.SetVector(PLight, new Vector4(sky.x, sky.y, sky.z, bright));
             mpb.SetVector(PSun, new Vector4(sun.x, sun.y, sun.z, sway));
             mpb.SetVector(PMisc, new Vector4(mode, 0.32f, 17f, first));
@@ -468,7 +519,7 @@ namespace Reflex.Port.Rendering
         // ------------------------------------------------------------------------------------------------ the mist
         void OnBegin(ScriptableRenderContext ctx, Camera c)
         {
-            if (!Active || c != cam || !c) return;
+            if (!Active || !ReflexWorldViews.Is(cam, c)) return;   // (SPLIT SCREEN, w-split: the second view too; the particles keep the first camera's streak and ground)
             var data = c.GetUniversalAdditionalCameraData();
             if (!data || data.scriptableRenderer == null) return;
             mist ??= new ReflexWeatherMistPass();

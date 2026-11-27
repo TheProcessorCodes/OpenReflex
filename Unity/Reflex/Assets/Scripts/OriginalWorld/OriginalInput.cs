@@ -84,7 +84,7 @@ namespace Reflex.Port.OriginalWorld
             var sim = runtime.Running ? runtime.Simulation : null;
             if (sim != bound)
             {   // a new world (or none): push the settings, forget the old world
-                bound = sim; world = IntPtr.Zero; Array.Clear(calls, 0, 4); MouseMessages = 0; drivingCamera = -1; cameraWasHeld = true;
+                bound = sim; world = IntPtr.Zero; Array.Clear(calls, 0, 4); MouseMessages = 0; drivingCamera = -1; cameraWasHeld = true; camera2WasHeld = true;
                 Interlocked.Exchange(ref pendingDx, 0); Interlocked.Exchange(ref pendingDy, 0); Interlocked.Exchange(ref pendingWheel, 0); Interlocked.Exchange(ref pendingFlags, 0);
                 StopMotors();
                 if (sim != null && available) PushSettings(sim);
@@ -163,10 +163,12 @@ namespace Reflex.Port.OriginalWorld
         static readonly HashSet<Key> cameraKeys = new HashSet<Key>();
         static int cameraPadInput, lookBackPadInput;
         public static bool LookBackHeld => CameraPadHeld(LocalGamepadRouting.ActiveLocalPad, lookBackPadInput);
+        /// SPLIT SCREEN (w-split): the look-back input on one pad (the second local rider's: ReflexPlayerView).
+        public static bool PadLookBackHeld(Gamepad pad) => CameraPadHeld(pad, lookBackPadInput);
         static readonly int[] CameraButtonMasks = { 0x1000, 0x2000, 0x4000, 0x8000, 0x100, 0x200, 0x10, 0x20, 0x40, 0x80 };
         static readonly int[] CameraDpadMasks = { 1, 8, 2, 4 };
         public static bool RightStickRides { get; private set; } = true;
-        bool cameraWasHeld;
+        bool cameraWasHeld, camera2WasHeld;
         public static bool IsCameraKey(Key key) { lock (cameraKeys) return cameraKeys.Contains(key); }
         static bool CameraPadHeld(Gamepad g, int id)
         {
@@ -196,6 +198,10 @@ namespace Reflex.Port.OriginalWorld
             held |= CameraPadHeld(runtime.PadRouting.Pad(0), cameraPadInput);
             if (driving && held && !cameraWasHeld) Reflex.Port.Options.ReflexClientLive.CycleCamera();
             cameraWasHeld = held;
+            // SPLIT SCREEN (w-split): the second pad's Camera input cycles the second rider's own camera (ReadPads keeps it from the core)
+            bool held2 = Reflex.Port.RxCore.RxSplitScreen.Active && CameraPadHeld(runtime.PadRouting.Pad(1), cameraPadInput);
+            if (driving && held2 && !camera2WasHeld) runtime.CycleSecondCamera();
+            camera2WasHeld = held2;
         }
         // Consume only the mapped local camera action. The native game must not
         // also advance its four-view camera cycle on the same button press.
@@ -294,6 +300,9 @@ namespace Reflex.Port.OriginalWorld
             }
             // Unity's pointer delta (+y up) as Raw Input relative counts (+y down); the fraction carries to the next frame.
             Vector2 d = m.delta.ReadValue();
+            // INVERT LEAN (Options/ReflexLeanInvert.cs): the mouse's motion only leans the rider, so the rows turn it around here
+            if (Reflex.Port.Options.ReflexSettings.InvertLeanX) d.x = -d.x;
+            if (Reflex.Port.Options.ReflexSettings.InvertLeanY) d.y = -d.y;
             carryX += d.x; carryY -= d.y;
             int dx = (int)carryX, dy = (int)carryY; carryX -= dx; carryY -= dy;
             // Wheel: WHEEL_DELTA (120) per notch; the Input System reports a notch as 1 (its uniform scroll delta), macOS fractional.

@@ -16,7 +16,12 @@ namespace Reflex.Port.Content
 {
     public sealed class RiderSpec
     {
-        public sealed class Part { public string key, modelDb, modelPkg, asset, matsDb, matsPkg; }
+        public sealed class Part
+        {
+            public string key, modelDb, modelPkg, asset, matsDb, matsPkg;
+            /// A "gear" .rxmod piece (Content/RxGear.cs: the MX vs ATV Alive gear) drawn in this part's place (a suit: the stock model's gloves and skin stay); null: none.
+            public RxGearPiece rx;
+        }
         public string hierarchyDb = "Rider", hierarchyPkg = "Rider", hierarchyAsset = "MXRider_Hierarchy";
         public string skinDb = "Rider_Skin_Materials", skinPkg = "Rider_Skin_White";
         public List<Part> parts = new List<Part>();
@@ -27,7 +32,7 @@ namespace Reflex.Port.Content
         public int plateRider = -1;
         /// Equal keys build equal riders.
         public string Key => string.Join("|", hierarchyDb, hierarchyPkg, hierarchyAsset, skinDb, skinPkg,
-            string.Join(",", parts.Select(p => $"{p.key}:{p.modelDb}/{p.modelPkg}/{p.asset}:{p.matsDb}/{p.matsPkg}")), string.Join(",", extraMaterials.Select(p => p.db + "/" + p.pkg)));
+            string.Join(",", parts.Select(p => $"{p.key}:{p.modelDb}/{p.modelPkg}/{p.asset}:{p.matsDb}/{p.matsPkg}" + (p.rx == null ? "" : ":rx=" + p.rx.Key))), string.Join(",", extraMaterials.Select(p => p.db + "/" + p.pkg)));
 
         /// The Answer red outfit with white skin (RIDER_FORMAT.md section 1).
         public static RiderSpec AnswerRed()
@@ -43,7 +48,7 @@ namespace Reflex.Port.Content
         }
     }
 
-    public sealed class ReflexRiderModel
+    public sealed partial class ReflexRiderModel
     {
         public GameObject root;
         public OriginalRider rider;
@@ -82,10 +87,60 @@ namespace Reflex.Port.Content
             return r;
         }
 
+        /// The rider's high-res twins (the garage's: "HR_<db>/HR_<pkg>", the skin tones "HR_<db>/<pkg>"; the hierarchy stays Rider/Rider), its
+        /// parts parallel to rs's. Null: no gear model of the rider has a twin installed. (From FrontEnd/FeGarage, 2026-11-16: a race takes
+        /// them too with BIKE AND RIDER DETAIL HIGH.)
+        public static RiderSpec HighRes(RiderSpec rs)
+        {
+            if (rs == null) return null;
+            var install = VehicleCatalog.Shared.install;
+            (string db, string pkg) Twin(string db, string pkg)
+            {
+                // (a pack's package keeps its namespace: "mod:kit/<hash>>RiderDLC010_graphicskit" -> "mod:kit/<hash>>HR_RiderDLC010_graphicskit", KitPacks)
+                string ns = BikeMods.NamespaceOf(db), bare = BikeMods.BaseDb(db);
+                if (db == null || pkg == null || bare.StartsWith("HR_", StringComparison.Ordinal)) return (db, pkg);
+                if (install.Pkg(ns + "HR_" + bare, "HR_" + pkg) != null) return (ns + "HR_" + bare, "HR_" + pkg);
+                if (install.Pkg(ns + "HR_" + bare, pkg) != null) return (ns + "HR_" + bare, pkg);
+                return (db, pkg);
+            }
+            var o = new RiderSpec { hierarchyDb = rs.hierarchyDb, hierarchyPkg = rs.hierarchyPkg, hierarchyAsset = rs.hierarchyAsset, gearIds = rs.gearIds };
+            (o.skinDb, o.skinPkg) = Twin(rs.skinDb, rs.skinPkg);
+            bool any = false;
+            foreach (var p in rs.parts)
+            {
+                var m = Twin(p.modelDb, p.modelPkg); var t = Twin(p.matsDb, p.matsPkg);
+                any |= m.db != p.modelDb;
+                string asset = p.asset != null && m.db != p.modelDb && install.Pkg(m.db, m.pkg)?.Find("HR_" + p.asset, "model") != null ? "HR_" + p.asset : m.db != p.modelDb ? null : p.asset;
+                o.parts.Add(new RiderSpec.Part { key = p.key, modelDb = m.db, modelPkg = m.pkg, asset = asset, matsDb = t.db, matsPkg = t.pkg, rx = p.rx });   // (rx: a "gear" .rxmod piece stays on the high-res rider: the copy dropped it, so an Alive suit worn with the game's helmet showed the game's jersey)
+            }
+            foreach (var e in rs.extraMaterials) o.extraMaterials.Add(Twin(e.db, e.pkg));
+            return any ? o : null;
+        }
+
         /// The skeleton and the gear, unparented at the origin in the bind pose. proxy: shown by OriginalRider until a pose arrives.
-        public static ReflexRiderModel Build(RiderSpec spec = null, GameObject proxy = null)
+        /// lods (the other riders of a race, OriginalOpponents): the gear models' further LOD records are kept, built and switched by distance (SelectLods).
+        /// highRes (a race with BIKE AND RIDER DETAIL HIGH; the garage passes HighRes's spec itself): the gear's high-res twins, on the same
+        /// 69-node skeleton the core poses. highRes + lods: a twin is LOD 0 and its race model's further LOD records follow at their own
+        /// distances, with the twin's materials (the mud and the name / number plates reach them).
+        public static ReflexRiderModel Build(RiderSpec spec = null, GameObject proxy = null, bool lods = false, bool highRes = false)
         {
             spec ??= RiderSpec.AnswerRed();
+            var far = spec;   // (the race gear: the further LODs of a twin)
+            if (highRes)
+            {
+                RiderSpec hr = null;
+                try { hr = HighRes(spec); } catch (Exception e) when (e is IOException || e is InvalidDataException) { Debug.LogWarning("Reflex rider: high-res gear: " + e.Message); }
+                if (hr != null && hr.parts.Count == spec.parts.Count)
+                    try { var r = Build(hr, far, proxy, lods); r.highRes = true; return r; }
+                    catch (Exception e) when (e is IOException || e is InvalidDataException) { Debug.LogWarning("Reflex rider: high-res gear: " + e.Message + " (the race gear)"); }
+            }
+            return Build(spec, spec, proxy, lods);
+        }
+        /// The gear drawn is the high-res twins' (Build's highRes found them).
+        public bool highRes;
+
+        static ReflexRiderModel Build(RiderSpec spec, RiderSpec far, GameObject proxy, bool lods)
+        {
             var cat = VehicleCatalog.Shared; var install = cat.install;
             var result = new ReflexRiderModel();
 
@@ -119,8 +174,16 @@ namespace Reflex.Port.Content
             var chosen = spec.parts.Where(p => p.matsPkg != null).Select(p => (p.matsDb, p.matsPkg)).Concat(spec.extraMaterials).Append((spec.skinDb, spec.skinPkg)).ToList();
             var materials = new Dictionary<string, UnityEngine.Material>();
             var skinned = new List<SkinnedMeshRenderer>(); var rigid2 = new List<Renderer>();
-            foreach (var part in spec.parts)
+            var byDef = new Dictionary<VehicleMaterialDef, UnityEngine.Material>();   // (a twin's far LODs take the twin's material of the same definition)
+            for (int pi = 0; pi < spec.parts.Count; pi++)
             {
+                var part = spec.parts[pi];
+                if (part.rx != null)
+                {   // a "gear" .rxmod piece (ReflexRiderModel.RxGear.cs); a suit keeps Reflex's own gloves and skin of the stock model below
+                    try { BuildRxGear(result, spec, part, hier, bones, bindposes, root, cat, install, chosen, skinned, rigid2); }
+                    catch (Exception e) when (e is IOException || e is InvalidDataException) { Debug.LogWarning($"Reflex rider: {part.rx.name}: {e.Message} (the stock piece)"); part.rx = null; }
+                    if (part.rx != null && (part.rx.slot != "jersey" || part.modelPkg == null)) continue;
+                }
                 var pk = install.Pkg(part.modelDb, part.modelPkg); Rfx.Check(pk != null, part.modelDb + "/" + part.modelPkg);
                 // a gear package holds one model (the tables name the package): the spec's asset, else that model
                 string asset = part.asset ?? pk.OfType("model").Select(a => a.name).FirstOrDefault(n => n.IndexOf("Hierarchy", StringComparison.OrdinalIgnoreCase) < 0)
@@ -129,17 +192,49 @@ namespace Reflex.Port.Content
                 // the model's own nodes -> the rider hierarchy's, by name (skinned weights index the model's nodes)
                 var map = model.nodes.Select(n => hier.NodeIndex(n.name)).ToArray();
                 bool identity = map.Length <= count && map.Select((h, i) => h == i).All(x => x);
-                foreach (var b in model.Lod(0))
+                // a twin's further LODs: the race gear's model of this part (its LOD records 1 ..), null: the model's own
+                var hrModel = model; var hrSurfaces = surfaces; var hrMap = map; bool hrIdentity = identity; string hrAsset = asset;
+                Rfx.Model farModel = null; Rfx.Surface[] farSurfaces = null; int[] farMap = null; bool farIdentity = false; string farAsset = null;
+                var farPart = !ReferenceEquals(far, spec) && pi < far.parts.Count ? far.parts[pi] : null;
+                if (lods && farPart != null && farPart.rx == null && farPart.modelPkg != null && (farPart.modelDb != part.modelDb || farPart.modelPkg != part.modelPkg))
+                    try
+                    {
+                        var fpk = install.Pkg(farPart.modelDb, farPart.modelPkg);
+                        farAsset = farPart.asset ?? fpk?.OfType("model").Select(a => a.name).FirstOrDefault(n => n.IndexOf("Hierarchy", StringComparison.OrdinalIgnoreCase) < 0);
+                        if (fpk != null && farAsset != null)
+                        {
+                            (farModel, farSurfaces) = LoadGear(install, fpk, farAsset);
+                            farMap = farModel.nodes.Select(n => hier.NodeIndex(n.name)).ToArray();
+                            farIdentity = farMap.Length <= count && farMap.Select((h, i) => h == i).All(x => x);
+                            if (farModel.lods.Length < 2) farModel = null;
+                        }
+                    }
+                    catch (Exception e) when (e is IOException || e is InvalidDataException) { farModel = null; }
+                Renderer[] GearParts(int lod)
                 {
+                  bool farLod = lod != 0 && farModel != null;
+                  var model = farLod ? farModel : hrModel; var surfaces = farLod ? farSurfaces : hrSurfaces; var map = farLod ? farMap : hrMap; bool identity = farLod ? farIdentity : hrIdentity; string asset = farLod ? farAsset : hrAsset;
+                  var made = new List<Renderer>();
+                  foreach (var b in model.Lod(lod))
+                  {
+                    // (under a .rxmod suit only the stock model's gloves and skin are drawn)
+                    if (part.rx != null && !(string.Equals(model.nodes[b.node].name, "Gloves", StringComparison.OrdinalIgnoreCase) || b.material.IndexOf("Skin", StringComparison.OrdinalIgnoreCase) >= 0)) continue;
                     var s = surfaces[b.surface];
-                    string name = $"{asset}_lod0_s{b.surface}_{b.material}";
+                    string name = $"{asset}_lod{lod}_s{b.surface}_{b.material}";
                     string key = $"{part.key}:{b.material}";
                     if (!materials.TryGetValue(key, out var mat))
                     {
+                        // (cat.Resolve ignores "HR_": a race LOD's binding under a twin resolves over the twin's packages, to the twin's material)
                         var def = cat.Resolve(b.material, (part.modelDb, part.modelPkg), chosen);
                         if (def == null) Debug.LogWarning("Reflex rider: no material for binding " + b.material);
-                        materials[key] = mat = cat.Build(def, key + (def != null ? " -> " + def.name : ""));
-                        result.parts.Add((name, b.material, def?.Key));
+                        if (farLod && def != null && byDef.TryGetValue(def, out var shared)) materials[key] = mat = shared;
+                        else
+                        {
+                            materials[key] = mat = cat.Build(def, key + (def != null ? " -> " + def.name : ""));
+                            if (def != null && !byDef.ContainsKey(def)) byDef[def] = mat;
+                            if (farLod) result.farOwnMaterials++;
+                            result.parts.Add((name, b.material, def?.Key));
+                        }
                     }
                     var go = new GameObject(name);
                     if (s.skinned)
@@ -148,8 +243,13 @@ namespace Reflex.Port.Content
                         var smr = go.AddComponent<SkinnedMeshRenderer>();
                         smr.sharedMesh = ReflexMeshes.Build(name, s, Matrix4x4.identity, true, bindposes, identity ? null : map);
                         smr.sharedMaterial = mat; smr.bones = bones; smr.rootBone = bones[0];
-                        smr.updateWhenOffscreen = true;   // native world coordinates are far from the origin; keep bounds honest
-                        skinned.Add(smr);
+                        // fixed bounds about the root bone (a whole rider, arms and legs out), as the big fields have drawn since RIDER CAP: with
+                        // updateWhenOffscreen every surface of every rider walked its 69 bones twice a frame (bounds, then skinning), in view
+                        // or not: about a third of the main thread in a 12-rider race. A rider out of view (and out of every shadow) is not skinned.
+                        smr.updateWhenOffscreen = false;
+                        smr.localBounds = new Bounds(Vector3.zero, Vector3.one * RiderBoundsFeet);
+                        if (lod == 0) skinned.Add(smr);
+                        made.Add(smr);
                     }
                     else
                     {
@@ -164,8 +264,18 @@ namespace Reflex.Port.Content
                         // two turned it a second time, beside the shoulder. The other differences are leftovers the game ignores
                         // (Goggles_Thor_Ally's node is mirrored, Goggles_Spy's scaled 0.886, Helmet_One_Trooper's 0.963, Helmet_Fox_V2's tilted 2 deg)
                         go.AddComponent<MeshFilter>().sharedMesh = ReflexMeshes.Build(name, s, Matrix4x4.identity, false);
-                        var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = mat; rigid2.Add(mr);
+                        var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = mat; if (lod == 0) rigid2.Add(mr);
+                        made.Add(mr);
                     }
+                  }
+                  return made.ToArray();
+                }
+                var lod0 = GearParts(0);
+                var lodModel = farModel ?? model;
+                if (lods && lodModel.lods.Length > 1 && lod0.Length > 0)
+                {
+                    var sets = new Renderer[lodModel.lods.Length][]; sets[0] = lod0;
+                    result.lodGear.Add(new LodGear { name = asset, distances = lodModel.lods.Select(l => l.distance).ToArray(), sets = sets, build = GearParts });
                 }
             }
             var rider = root.AddComponent<OriginalRider>();
@@ -177,9 +287,56 @@ namespace Reflex.Port.Content
             return result;
         }
 
+        // ---- distance LODs (the other riders of a race): each gear model's further LOD records (Rfx.Model.lods; the stock gear: 0 / 40 / 80 or
+        // 120 ft, the same bindings with about 1/2 and 1/5 of LOD 0's vertices), built the first time their distance is reached on the same
+        // bones and with LOD 0's materials (the mud and the name / number plates written to them reach every LOD). A set not drawn has its
+        // objects switched off (OriginalRider owns the renderers' `enabled`: the gear hidden until a pose arrives; the replay and the tests
+        // own forceRenderingOff): it is neither skinned nor drawn.
+        /// Diagnostics: the materials a twin's far LODs did not share with the twin (made for them).
+        public int farOwnMaterials;
+        sealed class LodGear { public string name; public int[] distances; public Renderer[][] sets; public Func<int, Renderer[]> build; public int current; }
+        readonly List<LodGear> lodGear = new List<LodGear>();
+        public bool HasLods => lodGear.Count > 0;
+        /// Diagnostics: each gear model's LOD now drawn.
+        public string LodState => string.Join(", ", lodGear.Select(m => m.name + " " + m.current));
+        public int MaxLod { get { int k = 0; foreach (var m in lodGear) if (m.current > k) k = m.current; return k; } }
+
+        /// Each gear model's LOD for a camera at `distance` (feet), as ReflexBikeModel.SelectLods. True: something changed.
+        public bool SelectLods(float distance, float scale, float hysteresis)
+        {
+            bool changed = false;
+            if (!root) return false;
+            foreach (var m in lodGear)
+            {
+                int target = 0;
+                for (int k = 1; k < m.distances.Length; k++)
+                    if (m.distances[k] > 0 && distance >= m.distances[k] * scale * (k <= m.current ? 1f - hysteresis : 1f)) target = k;
+                if (target == m.current) continue;
+                if (m.sets[target] == null)
+                {
+                    try { m.sets[target] = m.build(target); }
+                    catch (Exception e) when (e is InvalidDataException || e is IOException || e is ArgumentException || e is IndexOutOfRangeException)
+                    {
+                        Debug.LogWarning($"Reflex rider LOD: {m.name} LOD {target}: {e.Message}");
+                        m.distances = m.distances.Take(target).ToArray();   // (the model keeps the LODs before it)
+                        continue;
+                    }
+                    // (OriginalRider.SetProxyVisible's state: the gear is hidden until the game's pose arrives)
+                    bool shown = m.sets[0].Length > 0 && m.sets[0][0] && m.sets[0][0].enabled;
+                    foreach (var r in m.sets[target]) if (r) { r.enabled = shown; if (rider) rider.lodMeshes.Add(r); }   // (and from now on with the gear: OriginalRider.SetProxyVisible)
+                }
+                foreach (var r in m.sets[m.current]) if (r) r.gameObject.SetActive(false);
+                foreach (var r in m.sets[target]) if (r) r.gameObject.SetActive(true);
+                m.current = target; changed = true;
+            }
+            return changed;
+        }
+
+        /// The side of a rider's fixed skinned bounds, about the root bone (feet).
+        public const float RiderBoundsFeet = 16f;
         static readonly Dictionary<string, (Rfx.Model, Rfx.Surface[])> parsed = new Dictionary<string, (Rfx.Model, Rfx.Surface[])>(StringComparer.OrdinalIgnoreCase);
         /// Frees the parsed gear models kept for further riders (a field of AI riders shares most of them).
-        public static void ReleaseParsed() { lock (parsed) parsed.Clear(); }
+        public static void ReleaseParsed() { lock (parsed) parsed.Clear(); lock (s_shaped) s_shaped.Clear(); }
         static (Rfx.Model, Rfx.Surface[]) LoadGear(Rfx.Install install, Rfx.Package pk, string asset)
         {
             string key = pk.database.name + "/" + pk.name + "/" + asset;

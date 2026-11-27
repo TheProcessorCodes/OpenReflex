@@ -24,6 +24,12 @@ namespace Reflex.Port.Hud
         OriginalWorldRuntime rt; OriginalLiveUi live;
         public readonly ReflexHudModel Model = new ReflexHudModel();
         ReflexHudView view;
+        // SPLIT SCREEN (w-split): the second rider's HUD, the same model + view in the bottom half (HudSafeRoot's half 1), filled from the
+        // runtime's SplitHud; shown only while the screen is cut in two (RxSplitScreen.TwoViews)
+        readonly ReflexHudModel model2 = new ReflexHudModel(); ReflexHudView view2; float optionsAt2 = -1f; string fillError2;
+        /// The second rider's model and view (tests; the view is null until first shown).
+        public ReflexHudModel Model2 => model2;
+        public ReflexHudView View2 => view2;
         OriginalFreeRideHud originalFreeRide;   // HUD STYLE ORIGINAL: the install's Free Ride / challenge layers (compass, timer, Hit Discovery ...; the open core has no page of the game's there)
         Canvas canvas;   // the view's canvas (the career flow's probe reads this field)
 
@@ -77,7 +83,7 @@ namespace Reflex.Port.Hud
             if (!live) live = rt.GetComponent<OriginalLiveUi>();
             float real = Time.unscaledDeltaTime;
             FillModel(real);
-            bool modern = ReflexSettings.HudStyle == HudStyle.Modern;
+            bool modern = ReflexSettings.HudStyle == HudStyle.Modern || Reflex.Port.RxCore.RxSplitScreen.Active;   // (SPLIT SCREEN: both riders the MODERN HUD, the classic one cannot be made twice)
             bool liveHud = live && live.enabled && live.Running && !(live.race && live.Unavailable);
             LiveHudPage = liveHud && HudPageShown();
             // The modes the MODERN HUD lays out. The legacy plugin's live Free Ride page carries the game's own Hit Discovery component and stays the game's
@@ -104,6 +110,7 @@ namespace Reflex.Port.Hud
                     if (!show && view.GroupsShown == 0) view.Visible = false;
                 }
             }
+            SecondHud(unobstructed, real);
             // Gauge-only mode preserves the classic HUD, except its duplicate
             // authored numeric speed. Use actual canvas visibility, not just a preference.
             if (rt.originalHud) rt.originalHud.SetLegacySpeedometerHidden(SpeedometerShown);
@@ -119,6 +126,32 @@ namespace Reflex.Port.Hud
             catch (System.Exception e)
             {
                 if (e.Message != fillError) { fillError = e.Message; Debug.LogException(e); }
+            }
+        }
+
+        // SPLIT SCREEN (w-split): the second rider's HUD. The model is filled whenever the world has a second rider (its event baselines stay
+        // in step through a one-view spell); the view is on only while two views are shown, and goes at once when they collapse (its safe
+        // root is the whole screen then: no fade there). unobstructed is the first rider's (the menus, the intro card, H, Post: the same for both).
+        void SecondHud(bool unobstructed, float real)
+        {
+            var src = Reflex.Port.RxCore.RxSplitScreen.Active ? rt.SplitHud : null;
+            bool have = src != null && src.Valid;
+            if (have)
+            {
+                try { model2.Fill(src, rt.paused ? 0f : real); }
+                catch (System.Exception e) { if (e.Message != fillError2) { fillError2 = e.Message; Debug.LogException(e); } }
+            }
+            bool two = have && Reflex.Port.RxCore.RxSplitScreen.TwoViews;
+            int p2 = two && unobstructed && model2.Covered ? 2 : 0;
+            if (p2 != 0 && view2 == null) { view2 = ReflexHudView.Create(transform, "Modern HUD (player 2)", 11, 1); view2.Options.FromSettings(); }
+            if (view2 == null) return;
+            if (!two) { if (view2.Visible) { view2.Visible = false; view2.Snap(); } return; }
+            if (p2 != 0 && !view2.Visible) view2.Visible = true;
+            if (Time.unscaledTime >= optionsAt2) { optionsAt2 = Time.unscaledTime + 0.25f; view2.Options.FromSettings(); }
+            if (view2.Visible)
+            {
+                view2.Apply(model2, real, p2);
+                if (p2 == 0 && view2.GroupsShown == 0) view2.Visible = false;
             }
         }
 
@@ -209,6 +242,7 @@ namespace Reflex.Port.Hud
             if (rt && rt.originalHud) rt.originalHud.SetLegacySpeedometerHidden(false);
             if (LiveHudHidden) HideLiveHud(false);
             if (view != null) view.Visible = false;
+            if (view2 != null) view2.Visible = false;
             originalFreeRide?.Hide();
         }
 

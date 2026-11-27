@@ -64,6 +64,13 @@ namespace Reflex.Port.Rendering
         /// LIGHTING: ENHANCED (OPTIONS > VIDEO; ReflexEnhancedLighting sets it, null = ORIGINAL): the modern post chain and the
         /// screen-space occlusion pass (Scripts/Rendering/ReflexEnhancedPasses.cs) instead of the original chain. Not part of the original.
         [NonSerialized] public ReflexEnhancedSettings enhanced;
+        /// SPLIT SCREEN (w-split): the second rider's pipeline (OriginalWorld/ReflexSplitScreenView.cs) draws with the first rider's settings: the
+        /// level's HDR settings, ENHANCED's settings (its world shaders' keyword is global: an ORIGINAL chain would tonemap an ENHANCED world), the
+        /// frame source and graphics.cfg's flags, copied before every render. Its own per camera: the adaptation, the TAA and volumetric
+        /// histories. It never touches the camera rect, the letterbox or the shared URP asset (the first pipeline's; the split view cuts the rects).
+        [NonSerialized] public ReflexRenderPipeline mirror;
+        void Mirror() { hdr = mirror.hdr; enhanced = mirror.enhanced; originalFrame = mirror.originalFrame; postProcess = mirror.postProcess; motionBlur = mirror.motionBlur; convergeAdaptation = mirror.convergeAdaptation; }
+        ReflexSpeedBlur speedBlur;   // (a mirrored pipeline: its own view's shutter, ReflexSpeedBlur.Own)
         ReflexOcclusionPass occlusionPass;
         ReflexShadowRangePass shadowRangePass;   // the shadow receivers' early out (both modes; changes no pixel)
 
@@ -134,6 +141,7 @@ namespace Reflex.Port.Rendering
             shadowRangePass = new ReflexShadowRangePass();
             RenderPipelineManager.beginCameraRendering += OnBegin;
             RenderPipelineManager.endCameraRendering += OnEnd;
+            if (mirror) Mirror();
             ApplyLaunchSettings();
             if (Application.isPlaying && !GetComponent<ReflexTemporalAA>()) gameObject.AddComponent<ReflexTemporalAA>();   // ANTI-ALIASING TAA (ENHANCED only)
             if (Application.isPlaying && !GetComponent<ReflexSpeedBlur>()) gameObject.AddComponent<ReflexSpeedBlur>();     // SPEED BLUR (ENHANCED only)
@@ -153,6 +161,7 @@ namespace Reflex.Port.Rendering
             motionBlur = ls.motionBlur;
             shadowSizes = ls.ShadowSizes;
             viewport = ls.ViewportRect;
+            if (mirror) return;                                              // SPLIT SCREEN (w-split): the first pipeline's (the shadow map size, the rect, the letterbox)
             if (Application.isEditor || !Application.isPlaying) return;      // project settings / the editor's game view stay as they are
             if (GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset urp)
                 urp.mainLightShadowmapResolution = Mathf.Clamp(Mathf.NextPowerOfTwo(Mathf.Max(Mathf.Max(shadowSizes[0], shadowSizes[1]), Mathf.Max(shadowSizes[2], shadowSizes[3]))), 256, 8192);
@@ -195,6 +204,7 @@ namespace Reflex.Port.Rendering
             // receives the same event and must not undo the owning pipeline's raw-HDR setup because it subscribed later.
             // OnEnd restores the preview path after the owning camera finishes rendering.
             if (c != cam) return;
+            if (mirror) Mirror();
             Check();
             // the scene target is cleared to 0x808080 before the world pass (Clear(..., 7, 0xff808080, 1, 0) from 007af749): levels
             // without a sky (supercross stadiums) show it. Unity converts the clear colour to linear: give the sRGB of the raw value.
@@ -207,7 +217,12 @@ namespace Reflex.Port.Rendering
             ReflexShadowRangePass.Off();   // (on again from the pass, when this frame has a shadow atlas)
             if (ReflexShadowRangePass.Enabled) data.scriptableRenderer.EnqueuePass(shadowRangePass);
             data.scriptableRenderer.EnqueuePass(pass);
-            ReflexCinematic.BeginCamera(data.scriptableRenderer, c);   // REPLAY / PHOTO MODE's lens and camera effects, and SPEED BLUR while riding (Rendering/ReflexCinematic.cs, ReflexSpeedBlur.cs)
+            if (mirror)
+            {   // SPLIT SCREEN (w-split): this view's own SPEED BLUR shutter (ReflexCinematic.Current is the first view's)
+                if (!speedBlur) speedBlur = GetComponent<ReflexSpeedBlur>();
+                ReflexCinematic.BeginCamera(data.scriptableRenderer, c, true, speedBlur ? speedBlur.Own : null);
+            }
+            else ReflexCinematic.BeginCamera(data.scriptableRenderer, c);   // REPLAY / PHOTO MODE's lens and camera effects, and SPEED BLUR while riding (Rendering/ReflexCinematic.cs, ReflexSpeedBlur.cs)
         }
 
         void OnEnd(ScriptableRenderContext context, Camera c)

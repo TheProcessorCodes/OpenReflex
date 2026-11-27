@@ -235,7 +235,7 @@ namespace Reflex.Port.OriginalWorld
             Texture2D r = null;
             try { if (content.HasAsset(name, "texture")) r = ReflexTex.ToTexture(ReflexTex.Parse(name, content.ReadAsset(name, "texture")), wrap, wrap, FilterMode.Trilinear); }
             catch (Exception e) { Debug.LogWarning($"OriginalWater: texture {name}: {e.Message}"); }
-            if (r) created.Add(r);
+            if (r) { created.Add(r); Reflex.Port.Rendering.ReflexTextureFiltering.Register(r); }   // TEXTURE FILTERING
             textureCache[name] = r; return r;
         }
         Cubemap LoadCube(ReflexLevelContent content, string name)
@@ -476,13 +476,18 @@ namespace Reflex.Port.OriginalWorld
 
         void OnBegin(ScriptableRenderContext context, Camera cam)
         {
-            if (states.Count == 0 || cam != Target) return;
+            // SPLIT SCREEN (w-split): the grid is placed again for the second rider's camera before it renders (culling runs after this
+            // event). The wake stays one simulation around the first camera, stepped once per frame there; the second view reads it through
+            // the first camera's projection (wakes show within the wake square around the first rider only).
+            var primary = Target;
+            if (states.Count == 0 || !ReflexWorldViews.Is(primary, cam)) return;
+            bool first = cam == primary;
             long wakeWatch = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (pendingSteps > 0) { StepWake(context, cam, Math.Min(pendingSteps, 4)); pendingSteps = 0; frameAdvanced = false; }
-            wakeMilliseconds = wakeMilliseconds * 0.95 + Ms(wakeWatch) * 0.05;
+            if (first && pendingSteps > 0) { StepWake(context, cam, Math.Min(pendingSteps, 4)); pendingSteps = 0; frameAdvanced = false; }
+            if (first) wakeMilliseconds = wakeMilliseconds * 0.95 + Ms(wakeWatch) * 0.05;
             var screen = new Vector2(cam.pixelWidth, cam.pixelHeight);
             Vector3 cp = cam.transform.position;
-            var rotation = ReflexWater.WakeProjection(cp, WakeSize);
+            var rotation = ReflexWater.WakeProjection(first || !primary ? cp : primary.transform.position, WakeSize);
             int used = 0;
             foreach (var st in states)
             {

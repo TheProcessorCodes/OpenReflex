@@ -30,17 +30,18 @@ namespace Reflex.Port.Options
             string dir = null; try { dir = ReflexInstall.Dir; } catch (Exception) { }
             var gf = Named(OptUi.Spinner("GAME FOLDER", () => ShortPath(dir), _ => { }, panel, () => OpenLibrary()), "game-folder");   // (Enter / A / a click open it; the arrows do not: a stick brushing left must not leave the page)
             if (ReflexOptionsHooks.OpenGameLibrary == null || ReflexClientLive.Runtime) gf.SetEnabled(false);
-            Note(panel, ReflexClientLive.Runtime ? "The MX vs ATV Reflex install the client reads everything from. To change it, go back to the front end's GAME LIBRARY."
-                                                 : "The MX vs ATV Reflex install the client reads everything from. Enter opens the GAME LIBRARY to choose another.");
+            Help(panel, "The MX vs ATV Reflex install everything is read from. SELECT opens the GAME LIBRARY to choose another.", When.None);
+            if (!gf.enabledSelf) Needs(gf, () => false, ReflexClientLive.Runtime ? "CHANGE IT FROM THE MAIN MENU" : "NOT AVAILABLE");
             var first = gf.enabledSelf ? gf : null;
             if (!Reflex.Port.RxCore.Bridge.OpenReflexSelector.UseOpenReflex)
             {
                 Named(OptUi.Spinner("FRONT END", () => Reflex.Port.OpenFrontEnd.FrontEndSwitch.Saved == Reflex.Port.OpenFrontEnd.FrontEndStyle.Open ? Reflex.Port.OpenFrontEnd.OpenReflex.Name : "ORIGINAL",
                     _ => Reflex.Port.OpenFrontEnd.FrontEndSwitch.Set(Reflex.Port.OpenFrontEnd.FrontEndSwitch.Saved == Reflex.Port.OpenFrontEnd.FrontEndStyle.Open ? Reflex.Port.OpenFrontEnd.FrontEndStyle.Original : Reflex.Port.OpenFrontEnd.FrontEndStyle.Open, false), panel), "front-end");
+                Help(panel, "Which menus the game starts with: these, or the original game's own.", When.NextStart);
             }
 
             Section(panel, "SAVE DATA");
-            Note(panel, "Your options and the game's own save (the profile, the career, the garage, the controls) are backed up once a day automatically.");
+            Keep(panel, "Your options and the game's own save are backed up once a day; the last ten daily backups are kept.");
             var buttons = OptUi.Div("mxa-install-buttons", panel);
             buttons.style.flexDirection = FlexDirection.Row;
             Label status = null;
@@ -51,7 +52,7 @@ namespace Reflex.Port.Options
                 catch (Exception e) { Say("Could not back up: " + e.Message); Debug.LogWarning("[Save] backup: " + e); }
             }, buttons), "save-backup");
             Named(OptUi.Button("OPEN SAVE FOLDER", "mxa-secondary", () => ReflexSave.Reveal(File.Exists(ReflexSave.FilePath) ? ReflexSave.FilePath : ReflexSave.Folder), buttons), "save-open-folder");
-            Note(panel, "BACK UP NOW makes a dated ZIP in the Save folder's Backups (your options, the game's own save, your graphics.cfg); the last ten daily ones are kept. You can also copy the Save folder anywhere you like.");
+            Help(panel, "BACK UP NOW makes a dated ZIP of your options, the game's save and your graphics.cfg in the save folder's Backups. OPEN SAVE FOLDER shows it in the file browser.", When.None);
             Named(OptUi.Spinner("RESTORE", () =>
             {
                 var l = ReflexSave.Backups();
@@ -73,7 +74,7 @@ namespace Reflex.Port.Options
                 }
                 catch (Exception e) { Say("Could not restore: " + e.Message); Debug.LogWarning("[Save] restore: " + e); }
             }), "save-restore");
-            Note(panel, "Press Enter on a backup twice to restore it: your current save is backed up first, the game closes and starts with the backup next time.");
+            Help(panel, "Choose a backup and press SELECT twice. Your current save is backed up first, then the game closes and starts with the backup.", When.None);
             status = Keep(panel, s_saveStatus);
             Keep(panel, "Save folder: " + ReflexSave.Redact(ReflexSave.Folder) + (ReflexSave.Writable ? "" : "  (this run only reads it)"));
             if (ReflexSave.Origin == "migrated")
@@ -81,7 +82,7 @@ namespace Reflex.Port.Options
             if (ReflexSave.RestoredThisStart != null) Keep(panel, "A backup was restored at this start.");
 
             Section(panel, "SUPPORT");
-            Note(panel, "Game crashing or misbehaving? CREATE REPORT puts the logs and system details into one ZIP to send with a short description.");
+            Keep(panel, "Game crashing or misbehaving? Send a report with a short description of what happened.");
             var sb = OptUi.Div("mxa-install-buttons", panel);
             sb.style.flexDirection = FlexDirection.Row;
             Label sstatus = null;
@@ -100,7 +101,7 @@ namespace Reflex.Port.Options
                 if (ReflexOptionsHooks.OpenLogFolder != null) ReflexOptionsHooks.OpenLogFolder();
                 else Reflex.Port.Platform.ReflexSupport.OpenLogFolder();
             }, sb), "support-open-folder");
-            Note(panel, "The report holds the session logs, crash reports and a system summary (your home folder shown as ~, passwords and tokens removed). Nothing is uploaded: you choose where to send it.");
+            Help(panel, "CREATE REPORT puts the logs, crash reports and a system summary into one ZIP, with your home folder shown as ~ and passwords removed. Nothing is uploaded: you choose where to send it.", When.None);
             sstatus = Keep(panel, s_supportStatus);
             try
             {
@@ -111,8 +112,8 @@ namespace Reflex.Port.Options
             }
             catch (Exception e) { Debug.LogWarning("[Options] support info: " + e.Message); }
             Section(panel, "ABOUT");
-            Note(panel, "Who made " + ShellName() + " and the notice that it is not affiliated with the owners of MX vs ATV Reflex.");
             var about = Named(OptUi.Button("CREDITS", "mxa-start", () => { if (ReflexOptionsHooks.OpenCredits != null && !ReflexClientLive.Runtime) { var open = ReflexOptionsHooks.OpenCredits; _back(); open(); } }, panel), "about-credits");
+            Help(panel, "Who made " + ShellName() + ", and the notice that it is not affiliated with the owners of MX vs ATV Reflex.", When.None);
             if (ReflexOptionsHooks.OpenCredits == null || ReflexClientLive.Runtime) about.SetEnabled(false);
             return first ?? backup;
         }

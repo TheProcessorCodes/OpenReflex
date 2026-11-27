@@ -5,7 +5,9 @@
 //   1. checks the local bike is the .rxmod bike (ReflexBikeModel.rxFit) and logs its fit, parts and the original it rides as
 //   2. takes shots: the chase camera on the gate, riding, close-ups of the bike from the right / left / front / rear-right (wheels on the ground,
 //      the forks and swingarm against the frame), in the air when it jumps, at the finish
-//   3. logs the suspension's travel the pose gave the mod's parts (the front wheel along the forks, the rear wheel's height under the frame), min .. max
+//   3. logs the suspension's travel the pose gave the mod's parts (the front wheel along the forks, the rear wheel's height under the frame), min .. max,
+//      each airtime's drawn tyres (their height in the bike frame: range, largest step) and the riding frames (no wreck) the rider's elbows /
+//      knees bent the wrong way
 // Result lines "[RxModRide] ..." with "[RxModRide] PASS" / "FAIL"; the player quits at the end.
 using System;
 using System.Collections;
@@ -32,7 +34,9 @@ namespace Reflex.Port.Showcase
         float frontMin = float.MaxValue, frontMax = float.MinValue, rearMin = float.MaxValue, rearMax = float.MinValue;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-        static void Guest() { if (Environment.GetEnvironmentVariable("REFLEX_RXMOD_PROBE") == "1") ReflexProfile.Disabled = true; }
+        static void Guest() { if (Environment.GetEnvironmentVariable("REFLEX_RXMOD_PROBE") == "1" && !Own) ReflexProfile.Disabled = true; }
+        /// REFLEX_RXMOD_OWN=1: the player's own rider and vehicle (the profile's: the chosen "gear" .rxmod pieces are worn, Content/RxGear.cs) instead of a pro's.
+        static bool Own => Environment.GetEnvironmentVariable("REFLEX_RXMOD_OWN") == "1";
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Boot()
@@ -83,8 +87,59 @@ namespace Reflex.Port.Showcase
                 }
             }
             bool air = v.onboardState.valid != 0 && v.onboardState.front_grounded == 0 && v.onboardState.rear_grounded == 0;
+            if (drive && bm != null && v.bikeNodes > 0) Watch(bm, v, air);
             airFrames = air ? airFrames + 1 : 0;
             if (drive && airFrames == 20 && airShots < 2) { airShots++; StartCoroutine(Shot("air-" + airShots)); }
+        }
+
+        // the drawn rider's limbs (MXRider_Hierarchy upper / lower / end: right arm, left arm, right leg, left leg) and the side each joint
+        // bends to in the bike frame (elbows out and back, knees forward): a joint on the other side by over 0.03 ft is "inverted"
+        static readonly int[] LimbBones = { 10, 11, 12, 39, 40, 41, 60, 61, 62, 63, 64, 65 };
+        static readonly Vector3[] LimbSide = { new Vector3(0.6f, 0f, -0.8f), new Vector3(-0.6f, 0f, -0.8f), Vector3.forward, Vector3.forward };
+        readonly int[] inverted = new int[4]; int limbFrames, wreckFrames, remount;
+        // the drawn wheels (their tyres' renderers' centres in the bike frame) through each airtime: their range and largest step
+        Renderer[] frontTyres, rearTyres; int airs; float airFrontMin, airFrontMax, airRearMin, airRearMax, airStep; Vector3 lastFront; int airLen;
+        void Watch(ReflexBikeModel bm, OriginalSimulation.Results v, bool air)
+        {
+            var inv = OriginalBikePose.FromRows(v.bikePose, 0).inverse;
+            var bones = rt.rider ? rt.rider.bones : null;
+            bool wreck = v.onboardState.valid != 0 && v.onboardState.wrecked != 0;
+            if (wreck) { wreckFrames++; remount = 90; } else if (remount > 0) remount--;   // (a wreck's ragdoll and the remount after it: not riding)
+            if (bones != null && bones.Length > 65 && rt.rider.HasOriginalPose && !wreck && remount == 0)
+            {
+                limbFrames++;
+                for (int k = 0; k < 4; k++)
+                {
+                    Transform a = bones[LimbBones[3 * k]], b = bones[LimbBones[3 * k + 1]], c = bones[LimbBones[3 * k + 2]];
+                    if (!a || !b || !c) continue;
+                    Vector3 A = inv.MultiplyPoint3x4(a.position), B = inv.MultiplyPoint3x4(b.position), C = inv.MultiplyPoint3x4(c.position);
+                    Vector3 dir = (C - A).normalized, off = (B - A) - dir * Vector3.Dot(B - A, dir);
+                    if (Vector3.Dot(off, LimbSide[k].normalized) < -0.03f) inverted[k]++;
+                }
+            }
+            if (frontTyres == null)
+            {
+                Renderer[] Of(string node) => bm.parts.Where(p => p.part && p.name.EndsWith("_" + node, StringComparison.Ordinal)).Select(p => p.part.GetComponent<Renderer>()).Where(r => r).ToArray();
+                frontTyres = Of("OBJ_FRT_Tire"); rearTyres = Of("OBJ_BCK_Tire");
+            }
+            Vector3 Centre(Renderer[] rs) { if (rs.Length == 0) return Vector3.zero; var bb = rs[0].bounds; foreach (var r in rs) bb.Encapsulate(r.bounds); return inv.MultiplyPoint3x4(bb.center); }
+            if (air && frontTyres.Length > 0 && rearTyres.Length > 0)
+            {
+                Vector3 f = Centre(frontTyres), r = Centre(rearTyres);
+                if (airLen == 0) { airFrontMin = airFrontMax = f.y; airRearMin = airRearMax = r.y; airStep = 0f; }
+                else airStep = Mathf.Max(airStep, (f - lastFront).magnitude);
+                airFrontMin = Mathf.Min(airFrontMin, f.y); airFrontMax = Mathf.Max(airFrontMax, f.y); airRearMin = Mathf.Min(airRearMin, r.y); airRearMax = Mathf.Max(airRearMax, r.y);
+                lastFront = f; airLen++;
+            }
+            else if (airLen > 0)
+            {
+                if (airLen >= 20 && airs < 12)
+                {   // (the first frames after take-off: the suspension still extending)
+                    airs++;
+                    Log($"airtime {airs}: {airLen} frames, the drawn front tyre's height in the frame {F(airFrontMin)} .. {F(airFrontMax)} ft (largest step {F(airStep)}), rear {F(airRearMin)} .. {F(airRearMax)}");
+                }
+                airLen = 0;
+            }
         }
 
         IEnumerator Run()
@@ -118,9 +173,19 @@ namespace Reflex.Port.Showcase
                 break;
             }
             if (garage == null) { Fail("no pro rides model " + model); Quit(); yield break; }
+            // REFLEX_RXMOD_KITS=3,1,4: a gear / kit pack piece (Mods/Gear: a custom gear skin) chosen for each of these gear types before the race
+            // (the first piece of the type of the installed packs), as GARAGE > RIDER chooses it: the Alive gear of the save is worn over it
+            foreach (string ks in (Environment.GetEnvironmentVariable("REFLEX_RXMOD_KITS") ?? "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                int kt = int.Parse(ks, Inv);
+                var kit = Reflex.Port.Content.KitPacks.Current.byId.Values.Where(k => !k.bike && k.type == kt && !k.hidden).OrderBy(k => k.pack.name).ThenBy(k => k.rowId).FirstOrDefault();
+                if (kit == null) { Fail("no gear pack piece of gear type " + kt + " is installed (Mods/Gear)"); continue; }
+                Reflex.Port.Content.KitPacks.SetGear(kt, kit);
+                Log($"custom gear chosen for type {kt}: {kit.lineTitle} {kit.title} ({kit.pack.name}, {kit.Token}), model {kit.model?.pkg}, materials {kit.material?.pkg}");
+            }
             int ai = Env("REFLEX_RXMOD_AI", 5), laps = Env("REFLEX_RXMOD_LAPS", 1);
             Log($"launching {ev.key} with {ai} AI, {laps} lap(s), garage {garage}");
-            ReflexEventSelect.Launch(ev.key, ai, false, "Reflex", laps, garage);
+            ReflexEventSelect.Launch(ev.key, ai, false, "Reflex", laps, Own ? null : garage);
             for (float t = 0; t < 400f; t += Time.unscaledDeltaTime)
             {
                 rt = FindAnyObjectByType<OriginalWorldRuntime>();
@@ -132,11 +197,31 @@ namespace Reflex.Port.Showcase
             if (rt.IntroCardShown) { yield return Seconds(1f); yield return Tap(GamepadButton.South); }
             for (float t = 0; t < 30f && !(rt.BikeModel != null); t += Time.unscaledDeltaTime) yield return null;
             var bm = rt.BikeModel;
+            {   // the local rider's gear: the Alive pieces worn and Reflex's body (skin, gloves) under them
+                var lr = rt.Roster?.Local?.rider;
+                Log("the local rider's kit pieces: " + string.Join(", ", rt.Roster?.Local?.kits ?? new string[0]) + "; materials offered: " + string.Join(", ", lr?.parts.Select(p => p.key + ":" + p.matsPkg) ?? new string[0]));
+                Log("the local rider: owner " + rt.Roster?.Local?.riderOwner + ", parts " + string.Join(", ", lr?.parts.Select(p => p.key + "=" + p.modelPkg + (p.rx != null ? " + ALIVE " + p.rx.line + " " + p.rx.name : "")) ?? new string[0]));
+                var wantGear = Reflex.Port.Content.RxGear.Chosen();
+                if (Own && wantGear.Count > 0)
+                {
+                    foreach (var w in wantGear) if (!(lr?.parts.Any(p => p.rx == w) ?? false)) Fail("the race's rider does not wear the chosen Alive " + w.slot + " " + w.name);
+                    var rs = FindObjectsByType<Renderer>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+                    foreach (var riderRoot in rs.Where(r => r.name.StartsWith("rxgear_")).Select(r => r.transform.root).Distinct())
+                    {
+                        var own = riderRoot.GetComponentsInChildren<Renderer>(true);
+                        int skinN = own.Count(r => r.name.IndexOf("MXRider_Skin", StringComparison.OrdinalIgnoreCase) >= 0), glovesN = own.Count(r => r.name.EndsWith("MXRider_Jersey", StringComparison.OrdinalIgnoreCase) && !r.name.StartsWith("rxgear_"));
+                        Log($"rider \"{riderRoot.name}\": Alive [{string.Join(", ", own.Where(r => r.name.StartsWith("rxgear_")).Select(r => r.name))}], {skinN} skin surfaces, {glovesN} glove / jersey surfaces of the game's");
+                        if (skinN < 2 || glovesN < 1) Fail("the race's rider has no body under the Alive gear (skin " + skinN + ", gloves " + glovesN + ")");
+                    }
+                    if (!rs.Any(r => r.name.StartsWith("rxgear_"))) Fail("no Alive gear is drawn in the race");
+                }
+            }
             Log($"the local bike: {(bm?.chassis ? bm.chassis.name : "none")}, {bm?.parts.Count} parts, {bm?.bones.Count} skin bones; rx fit: {bm?.rxFit ?? "(not a .rxmod bike)"}; riders {rt.Roster?.entries.Count}");
             if (bike != null && (bm == null || bm.rxFit == null)) Fail("the race's bike is not the .rxmod bike");
             if (skin != null && rt.Roster?.Local?.bike != null && BikeMods.ForPlayer(rt.Roster.Local.bike)?.rxSkin != skin) Fail("the race's bike is not painted by the chosen skin");
             if (bike == null && Environment.GetEnvironmentVariable("REFLEX_RXMOD_EXPECT") == "none" && bm?.rxFit != null) Fail("a .rxmod bike was drawn without one chosen");
             yield return Seconds(1f);
+            if (Own && Environment.GetEnvironmentVariable("REFLEX_RXMOD_TWINS") == "1") BuildTwins();
             rt.SetCameraMode(2, false);
             yield return Shot("gate-chase");
             yield return CloseUps("gate");
@@ -159,6 +244,7 @@ namespace Reflex.Port.Showcase
             drive = false; InputSystem.QueueStateEvent(pad, new GamepadState());
             Log($"suspension (the pose of the mod's parts): front wheel {F(frontMin)} .. {F(frontMax)} ft from the steering head ({F((frontMax - frontMin) * 12f)} in of travel), rear axle {F(rearMin)} .. {F(rearMax)} ft under the frame origin ({F((rearMax - rearMin) * 12f)} in)");
             if (frontMax - frontMin < 0.05f || rearMax - rearMin < 0.05f) Fail("the suspension did not move the mod's wheels");
+            Log($"rider limbs over {limbFrames} riding frames ({wreckFrames} wrecked frames and the remounts after them left out): inverted (the joint on the wrong side) right arm {inverted[0]}, left arm {inverted[1]}, right leg {inverted[2]}, left leg {inverted[3]}");
             if (finished) { Log($"FINISHED {rt.Race.laps_completed}/{rt.Race.num_laps} laps, position {rt.Race.place}, time {rt.Race.race_time:0.00}"); yield return Seconds(2f); yield return Shot("finish"); }
             else Fail($"not finished in {timeout} s (laps {rt.Race.laps_completed}/{rt.Race.num_laps})");
             Log(fails == 0 ? "PASS" : "FAIL " + fails + " check(s)");
@@ -175,6 +261,10 @@ namespace Reflex.Port.Showcase
                 if (when == "gate" && name == "left") continue;   // (on the gate the left side is the next rider's)
                 camOffset = off; camFov = fov; yield return Frames(3); yield return Shot(when + "-" + name);
             }
+            if (Own)   // the whole rider from four sides (the gear: REFLEX_RXMOD_OWN)
+                foreach (var (name, off, fov) in new[] { ("rider-front", new Vector3(3.5f, 4.5f, 7.5f), 40f), ("rider-front-left", new Vector3(-3.5f, 4.5f, 7.5f), 40f),
+                                                         ("rider-back", new Vector3(3.0f, 5.0f, -7.5f), 40f), ("rider-back-left", new Vector3(-3.0f, 5.0f, -7.5f), 40f), ("rider-above", new Vector3(2.5f, 9f, 0.5f), 40f) })
+                { camOffset = off; camFov = fov; yield return Frames(when == "gate" ? 40 : 3); yield return Shot(when + "-" + name); }   // (at the gate: the cut's motion blur and the TAA settle)
             overrideCam = false;
         }
 
@@ -206,7 +296,84 @@ namespace Reflex.Port.Showcase
                 cam.transform.rotation = Quaternion.LookRotation(aim - cam.transform.position, Vector3.up);
                 cam.fieldOfView = camFov; cam.nearClipPlane = 0.05f;
             }
-            if (pendingShot != null) { OffscreenShot(rt ? rt.chaseCamera : Camera.main, pendingShot); pendingShot = null; }
+            Follow();
+            if (pendingShot != null)
+            {
+                OffscreenShot(rt ? rt.chaseCamera : Camera.main, pendingShot);
+                string n = Path.GetFileNameWithoutExtension(pendingShot);
+                if (twins.Count > 0 && rt && Src() && (n.Contains("rider-") || n.EndsWith("-right") || n.EndsWith("-chase") || n.EndsWith("-rear-right")))
+                {   // the same frame again with each twin in the rider's place, and with no rider at all (".none": what a rider covers)
+                    foreach (var (tag, m) in twins) { ShowTwin(m); OffscreenShot(rt.chaseCamera, pendingShot.Substring(0, pendingShot.Length - 4) + "." + tag + ".png"); }
+                    ShowTwin(null);
+                    var own = Src().GetComponentsInChildren<Renderer>(true); var st = own.Select(r => r.forceRenderingOff).ToArray();
+                    foreach (var r in own) r.forceRenderingOff = true;
+                    OffscreenShot(rt.chaseCamera, pendingShot.Substring(0, pendingShot.Length - 4) + ".none.png");
+                    for (int i = 0; i < own.Length; i++) own[i].forceRenderingOff = st[i];
+                }
+                pendingShot = null;
+            }
+        }
+
+        // REFLEX_RXMOD_TWINS=1 (with REFLEX_RXMOD_OWN and Alive gear worn): the same frame shot again with the rider's gear swapped, on the
+        // same pose, bike and camera: "<shot>.stock" (the profile's own Reflex gear, no Alive piece) and "<shot>.unshaped" (the Alive gear
+        // as it was fitted before the pieces were shaped to Reflex's rider: RxGearRig.ShapeToReflex off).
+        readonly List<(string tag, ReflexRiderModel model)> twins = new List<(string, ReflexRiderModel)>();
+        void BuildTwins()
+        {
+            var lr = rt.Roster?.Local?.rider; if (lr == null || !lr.parts.Any(p => p.rx != null)) { Log("twins: the local rider wears no Alive gear"); return; }
+            RiderSpec Copy(bool alive)
+            {
+                var o = new RiderSpec { hierarchyDb = lr.hierarchyDb, hierarchyPkg = lr.hierarchyPkg, hierarchyAsset = lr.hierarchyAsset, skinDb = lr.skinDb, skinPkg = lr.skinPkg, gearIds = lr.gearIds, plateRider = lr.plateRider };
+                foreach (var p in lr.parts) { if (!alive && p.modelPkg == null) continue; o.parts.Add(new RiderSpec.Part { key = p.key, modelDb = p.modelDb, modelPkg = p.modelPkg, asset = p.asset, matsDb = p.matsDb, matsPkg = p.matsPkg, rx = alive ? p.rx : null }); }
+                o.extraMaterials.AddRange(lr.extraMaterials);
+                return o;
+            }
+            foreach (var (tag, alive) in new[] { ("stock", false), ("unshaped", true) })
+            {
+                bool was = RxGearRig.ShapeToReflex;
+                try
+                {
+                    if (alive) RxGearRig.ShapeToReflex = false;
+                    var m = ReflexRiderModel.Build(Copy(alive), null, false, true);
+                    m.rider.enabled = false;
+                    foreach (var r in m.root.GetComponentsInChildren<Renderer>(true)) { r.enabled = true; r.forceRenderingOff = true; }
+                    twins.Add((tag, m));
+                    Log($"twin {tag}: {m.root.GetComponentsInChildren<Renderer>(true).Length} renderers");
+                }
+                catch (Exception e) { Log("twin " + tag + " failed: " + e.Message); }
+                finally { RxGearRig.ShapeToReflex = was; }
+            }
+        }
+        /// Every frame: the twins take the rider's pose (they are skinned by the frame like any rider); the one shown takes the rider's place.
+        ReflexRiderModel shownTwin; Renderer[] ownRenderers; bool[] ownState;
+        /// The rider now drawn as the local one: the runtime's own, or (on the gate, where its object is off) the field's rider that wears the Alive gear.
+        OriginalRider fieldRider;
+        OriginalRider Src()
+        {
+            if (rt && rt.rider && rt.rider.gameObject.activeInHierarchy) return rt.rider;
+            if (!fieldRider || !fieldRider.gameObject.activeInHierarchy)
+                fieldRider = FindObjectsByType<SkinnedMeshRenderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None).Where(r => r.name.StartsWith("rxgear_") && !twins.Any(t => r.transform.IsChildOf(t.model.root.transform)))
+                             .Select(r => r.GetComponentInParent<OriginalRider>()).FirstOrDefault(r => r && r != rt.rider);
+            return fieldRider ? fieldRider : rt ? rt.rider : null;
+        }
+        void Follow()
+        {
+            if (twins.Count == 0 || !rt || !rt.rider) return;
+            var src = Src(); if (!src) return;
+            foreach (var (tag, m) in twins)
+            {
+                if (!m.root) continue;
+                m.root.transform.SetPositionAndRotation(src.transform.position, src.transform.rotation);
+                for (int i = 0; i < src.bones.Length && i < m.rider.bones.Length; i++) m.rider.bones[i].SetPositionAndRotation(src.bones[i].position, src.bones[i].rotation);
+            }
+        }
+        void ShowTwin(ReflexRiderModel m)
+        {
+            if (shownTwin != null) foreach (var r in shownTwin.root.GetComponentsInChildren<Renderer>(true)) r.forceRenderingOff = true;
+            if (shownTwin == null && m != null) { ownRenderers = Src().GetComponentsInChildren<Renderer>(true); ownState = ownRenderers.Select(r => r.forceRenderingOff).ToArray(); foreach (var r in ownRenderers) r.forceRenderingOff = true; }
+            if (m == null && ownRenderers != null) { for (int i = 0; i < ownRenderers.Length; i++) if (ownRenderers[i]) ownRenderers[i].forceRenderingOff = ownState[i]; ownRenderers = null; }
+            if (m != null) foreach (var r in m.root.GetComponentsInChildren<Renderer>(true)) r.forceRenderingOff = false;
+            shownTwin = m;
         }
 
         static void OffscreenShot(Camera cam, string file)

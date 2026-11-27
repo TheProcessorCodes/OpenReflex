@@ -5,6 +5,7 @@
  * sticks onto squares (00440c40: steering into S+8bbc / 8bc0, reflex into S+8bc4 / 8bc8), the reflex stick's magnitude by
  * its direction S+8bcc, and the take-off reference axis S+8bf0. Last it copies the wheel anchor points S+8dc0 / 8dd0 to
  * S+8de0 / 8df0. This thread's x87 precision: 53 bits (CW 027f). */
+#include "free_air.h"
 #include "bike_slot12.h"
 #include "bike_curve.h"
 #include "phys_math.h"
@@ -71,9 +72,11 @@ RX_FUNCTION(0x00440c40, s12_stick)
  *     else (spin S+920.x not below -N) the angular velocity's part along S+88c0 / S+8a10 / up is kept by a factor f from the
  *     speed, the alignment s18 = v . dn and the steering;
  *     not upright or tilted: only C+64 = asin(c).
- *  2. the wheelie / stoppie limits: with only the front wheel down (S+8890, not S+89e0) the pitch rate S+740.x is scaled down
- *     by the nose angle (timer S+8da8, flag S+2eb8); with only the rear wheel down (S+89e0, not S+8890) by the wheelie angle
- *     (timer S+8dac, flag S+2eb4). */
+ *  2. the wheelie / stoppie limits: with only the rear wheel down (S+8890, not S+89e0; w-lippull: this file's "front" / "rear" names
+ *     are swapped against bike_tire.c / bike_slot13.c: W S+8790 = rear, body 3 at S+2d0; its "rear" anchor is body 2's, so dn points
+ *     forward) a nose-up pitch rate S+740.x (negative) is scaled down by the bike's angle to world up and capped at 1.5 rad/s (timer
+ *     S+8da8, flag S+2eb8; LIP PULL eases it on a steep face, free_air.h); with only the front wheel down (S+89e0, not S+8890) a
+ *     nose-down rate by its angle (timer S+8dac, flag S+2eb4). */
 #define K_9AC  F32(0, 0x009cd9ac)
 #define K_958  F32(0, 0x009cd958)
 #define K_970  F32(0, 0x009cd970)
@@ -198,7 +201,7 @@ void bike_ground_correction(rx_addr S, float dt) {
     const float r = phys_div(phys_sub(F32(S, 0x52ac), F32(S, 0x8ab8)), F32(S, 0x52ac));
     const float L6 = bike_lerp_clamped(bike_clamp01(r), 1.0f, L5);
     SU32(S, 0x2eb8, 0);
-    if (U32(S, 0x8890) != 0 && U32(S, 0x89e0) == 0) {           /* front wheel only: nose down */
+    if (U32(S, 0x8890) != 0 && U32(S, 0x89e0) == 0) {           /* rear wheel only (S+8890 = rear W S+8790 +0x100): the nose-up (wheelie) limiter */
         const float b = g_angle_from(g_signed_asin(bike_dot3(dn, up)));
         const rx_v4 w = rx_ld4(S + 0x740);
         const int pitching = bike_all3(v4_cmplt(v4_lane(w, 0), G));
@@ -215,6 +218,8 @@ void bike_ground_correction(rx_addr S, float dt) {
         }
         float wx = phys_mul(f, w.v[0]);
         if (pitching) wx = wx > -1.5f ? wx : -1.5f;             /* maxps with 00977850 splat */
+        if (pitching && (rx_fa_for(S) & RX_FA_LIP))             /* LIP PULL (port addition, free_air.h): eased on a steep face */
+            wx = rx_fa_lip_blend(w.v[0], wx, rx_ld4(S + 0x88c0) /* the rear contact normal */, dn);
         rx_st4(S + 0x740, v4(wx, w.v[1], w.v[2], w.v[3]));
         SF32(S, 0x8da8, phys_add(F32(S, 0x8da8), dt));
         if (F32(S, 0x8da8) > 0.25f) SU32(S, 0x2eb8, 1);
@@ -227,7 +232,7 @@ void bike_ground_correction(rx_addr S, float dt) {
     const float M4 = bike_lerp_clamped(steer, bike_lerp_clamped(t_wheelie, 1.0f, 0.75f /* 00935aa8 */), 1.0f);
     SU32(S, 0x2eb4, 0);
     if (spinning) SF32(S, 0x8dac, 0.0f);
-    if (U32(S, 0x89e0) != 0 && U32(S, 0x8890) == 0) {           /* rear wheel only: wheelie */
+    if (U32(S, 0x89e0) != 0 && U32(S, 0x8890) == 0) {           /* front wheel only (S+89e0 = front W S+88e0 +0x100): the nose-down limiter */
         const float b = phys_sub(-0.0f, g_angle_from(g_signed_asin(bike_dot3(dn, up))));
         const rx_v4 w = rx_ld4(S + 0x740);
         const int pitching = bike_all3(v4_cmplt(G, v4_lane(w, 0)));

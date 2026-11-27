@@ -17,12 +17,31 @@
 #define NAME_WRECK_RESET    0x009416e8u   /* "WreckRecoveryReset" */
 #define PAD_BLOCKS          0x009c52c4u   /* the input blocks of the controllers (world_misc.c) */
 
-static struct {
+/* SPLIT SCREEN (w-split): one component per local human (the original builds the HUD layer per viewport), keyed by the player's address */
+struct rh_player {
+    rx_addr player;
     uint32_t shown, lit, armed;                        /* the component's visibility, its arrows' visibility, +0x114 */
-    uint32_t begin, success, fail, fail_any, reset, last_result;
-} rh;
+    uint32_t begin, success, fail, reset, last_result;
+};
+static struct rh_player rh_players[4];
+static uint32_t rh_fail_any;
 
-void rx_reflex_hud_reset(void) { memset(&rh, 0, sizeof rh); }
+void rx_reflex_hud_reset(void) { memset(rh_players, 0, sizeof rh_players); rh_fail_any = 0; }
+
+/* the player's component: made at its first tick / event (a full table gives the first entry over: never with two local humans) */
+static struct rh_player* rh_of(rx_addr player) {
+    for (int i = 0; i < 4; i++) if (rh_players[i].player == player) return &rh_players[i];
+    for (int i = 0; i < 4; i++) if (!rh_players[i].player) { rh_players[i].player = player; return &rh_players[i]; }
+    memset(&rh_players[0], 0, sizeof rh_players[0]);
+    rh_players[0].player = player;
+    return &rh_players[0];
+}
+/* the query's read: a player with no component yet reads the empty one */
+static const struct rh_player* rh_find(rx_addr player) {
+    static const struct rh_player none;
+    for (int i = 0; i < 4; i++) if (rh_players[i].player == player) return &rh_players[i];
+    return &none;
+}
 
 static int is_name(rx_addr name, rx_addr literal) { return name != 0 && crt_strcmp(name, literal) == 0; }
 
@@ -54,34 +73,36 @@ void rx_reflex_hud_event(rx_addr local, rx_addr name, rx_addr payload, uint32_t 
     if (bytes != 8 || !name || !payload) return;
     /* payload {arg, sender}: rx_world_raise_event 00554da0 (arg: the activity for Begin / Failed / Reset, the driver for Success; sender: the vehicle) */
     const rx_addr vehicle = U32(payload, 4);
-    if (is_name(name, NAME_WRECK_BEGIN)) { if (ours(local, vehicle)) rh.begin++; }
-    else if (is_name(name, NAME_WRECK_SUCCESS)) { if (ours(local, vehicle)) { rh.success++; rh.last_result = 1; } }
+    if (is_name(name, NAME_WRECK_BEGIN)) { if (ours(local, vehicle)) rh_of(local)->begin++; }
+    else if (is_name(name, NAME_WRECK_SUCCESS)) { if (ours(local, vehicle)) { struct rh_player* r = rh_of(local); r->success++; r->last_result = 1; } }
     else if (is_name(name, NAME_WRECK_FAILED)) {
         /* 005f7b00: ArrowTop / ArrowRight / ArrowBottom get the colour (1, 0, 0, 0): invisible until "ReflexIn" plays again (ArrowLeft is
          * not in the handler's loop of three); the handler does not look at whose vehicle fell - the presenter reads fail_any_events */
-        rh.fail_any++;
-        if (ours(local, vehicle)) { rh.fail++; rh.last_result = 2; }
-    } else if (is_name(name, NAME_WRECK_RESET)) { if (ours(local, vehicle)) rh.reset++; }
+        rh_fail_any++;
+        if (ours(local, vehicle)) { struct rh_player* r = rh_of(local); r->fail++; r->last_result = 2; }
+    } else if (is_name(name, NAME_WRECK_RESET)) { if (ours(local, vehicle)) rh_of(local)->reset++; }
 }
 
 /* MXUIReflexComponent::vf11 005f7b80 */
 void rx_reflex_hud_tick(rx_addr activity, rx_addr player) {
-    if (!activity || !player || U32(player, 0x94) != activity) { rh.shown = 0; return; }
+    if (!player) { for (int i = 0; i < 4; i++) rh_players[i].shown = 0; return; }   /* no local player: every component hides */
+    struct rh_player* const r = rh_of(player);
+    if (!activity || U32(player, 0x94) != activity) { r->shown = 0; return; }
     const rx_addr vehicle = U32(player, 0x1ac);
     const uint32_t kind = vehicle ? U32(vehicle, 0x194) : 2u;
-    if (!vehicle || kind > 1u) { rh.shown = 0; return; }   /* the outer else: SetVisible(false), nothing else */
+    if (!vehicle || kind > 1u) { r->shown = 0; return; }   /* the outer else: SetVisible(false), nothing else */
     const uint32_t mode = U32(player, 0xb44);
-    if (mode == 0) { rh.lit = 0; rh.shown = 0; }
+    if (mode == 0) { r->lit = 0; r->shown = 0; }
     else {
         const int32_t dir = direction_of(mode);
-        if (dir != RX_REFLEX_DIR_NONE) { rh.shown = 1; rh.lit |= bit_of(dir); }
+        if (dir != RX_REFLEX_DIR_NONE) { r->shown = 1; r->lit |= bit_of(dir); }
     }
-    if (rh.shown && !rh.armed) {
-        rh.armed = 1;
+    if (r->shown && !r->armed) {
+        r->armed = 1;
         rx_sound_rider_sound(vehicle, 0);   /* 006817c0 (0): WreckRecoveryBegin, FX/WRECK_AVOIDANCE_WARN */
         rx_sound_rider_sound(vehicle, 5);   /* 006817c0 (5): WreckAvoidanceLoop (an empty event in the install) */
-    } else if (!rh.shown && rh.armed) {
-        rh.armed = 0;                       /* 00681840 (5): the loop stops (the sound ring has no stop; the event is empty) */
+    } else if (!r->shown && r->armed) {
+        r->armed = 0;                       /* 00681840 (5): the loop stops (the sound ring has no stop; the event is empty) */
     }
 }
 
@@ -114,14 +135,15 @@ int rx_reflex_hud_fill(rx_addr player, rx_reflex_hud_state* v) {
             v->input_source = motion == 1 ? (right ? 1u : 3u) : motion == 2 ? (right ? 3u : 2u) : (right ? 0u : 2u);
         }
     }
-    v->shown = rh.shown;
-    v->lit_mask = rh.lit;
-    v->begin_events = rh.begin;
-    v->success_events = rh.success;
-    v->fail_events = rh.fail;
-    v->fail_any_events = rh.fail_any;
-    v->reset_events = rh.reset;
-    v->last_result = rh.last_result;
+    const struct rh_player* const r = rh_find(player);
+    v->shown = r->shown;
+    v->lit_mask = r->lit;
+    v->begin_events = r->begin;
+    v->success_events = r->success;
+    v->fail_events = r->fail;
+    v->fail_any_events = rh_fail_any;
+    v->reset_events = r->reset;
+    v->last_result = r->last_result;
     return 1;
 }
 #else

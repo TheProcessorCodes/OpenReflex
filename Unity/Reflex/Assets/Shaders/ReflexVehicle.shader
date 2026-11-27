@@ -72,7 +72,8 @@ Shader "Reflex/Vehicle"
         [HideInInspector] usr_wheel_color("usr_wheel_color", Vector) = (0, 0, 0, 0)
         [HideInInspector] gTextureOffset("gTextureOffset", Vector) = (0, 0, 0, 0)
         // MATERIALS: ENHANCED / MUD BUILDUP (ReflexVehiclePBR.hlsl; Content/ReflexMaterialClasses.cs, ReflexDirt.cs): the material's class and the vehicle's dirt
-        [HideInInspector] _RfxMat("class, roughness bias", Vector) = (0, 0, 0, 0)
+        [HideInInspector] _RfxMat("class, roughness bias, the diffuse map is the albedo", Vector) = (0, 0, 0, 0)
+        [HideInInspector] _RfxMatMap("SFX slot + 1, its shine channel, ENHANCED normal slot + 1, diffuse slot + 1", Vector) = (0, 0, 0, 0)
         [HideInInspector] _RfxDirt("amount, wetness, model units per metre, seed", Vector) = (0, 0, 1, 0)
         [HideInInspector] _RfxDirtColor("mud colour", Vector) = (0.25, 0.2, 0.15, 1)
         [HideInInspector] _RfxDirtF("the vehicle's forward (world)", Vector) = (0, 0, 1, 0)
@@ -139,7 +140,7 @@ Shader "Reflex/Vehicle"
             float4 usr_frame_tint;
             float4 usr_wheel_color;
             float4 gTextureOffset;
-            float4 _RfxMat, _RfxDirt, _RfxDirtColor, _RfxDirtF;
+            float4 _RfxMat, _RfxMatMap, _RfxDirt, _RfxDirtColor, _RfxDirtF;
             float _AlphaTest, _AlphaRef, _AlphaFunc, _SrcBlend, _DstBlend;
         CBUFFER_END
         TEXTURE2D(_Tex0); SAMPLER(sampler_Tex0); TEXTURE2D(_Tex1); SAMPLER(sampler_Tex1); TEXTURE2D(_Tex2); SAMPLER(sampler_Tex2);
@@ -163,9 +164,10 @@ Shader "Reflex/Vehicle"
             v.color = 1;
             RfxV2F o = (RfxV2F)0;
             RfxObjectVS((int)_Program, v, o);
-            // MATERIALS: ENHANCED: the world normal and the rest-pose position (uv3: the mesh as built; skinning leaves it alone)
-            o.t9 = float4(normalize(mul(a.normalOS, (float3x3)unity_WorldToObject)), 0);
-            o.t10 = float4(a.restPos, 0);
+            // MATERIALS: ENHANCED: the world normal and the rest-pose position (uv3: the mesh as built; skinning leaves it alone); in their w
+            // the mesh's first UV set (what the programs sample their maps with: the material's own maps, ReflexVehiclePBR.hlsl)
+            o.t9 = float4(normalize(mul(a.normalOS, (float3x3)unity_WorldToObject)), a.uv0.x);
+            o.t10 = float4(a.restPos, a.uv0.y);
             return o;
         }
 
@@ -210,8 +212,9 @@ Shader "Reflex/Vehicle"
             float4 _RfxMenuSpotDir;    // xyz: its direction (unit), w: cos of the cone's outer half angle
             float4 _RfxMenuSpotCone;   // x: cos of the inner half angle, y: range (ft), z: wrap, w: the rim's gain
             float4 _RfxMenuRimColor;   // rgb: the rim (raw scene values)
-            // n: the interpolated vertex normal (t9, world): the models' own smoothing groups (w-fb-models: the face normal of the screen-space
-            // derivatives it used before lit every triangle flat - the exhausts, tanks and helmets showed their polygons under the key and the rim)
+            // n: the surface's normal (world): the interpolated vertex normal (t9: the models' own smoothing groups; w-fb-models: the face normal
+            // of the screen-space derivatives it used before lit every triangle flat - the exhausts, tanks and helmets showed their polygons under
+            // the key and the rim), or with the enhanced materials their shading normal (the program's normal map, the mud's relief)
             float3 RfxMenuLight(float3 col, float3 p, float3 n, bool front)
             {
                 float3 toP = p - _RfxMenuSpotPos.xyz; float d = length(toP); float3 l = toP / max(d, 1e-3);
@@ -234,6 +237,8 @@ Shader "Reflex/Vehicle"
                 // is replaced by the GGX terms of ReflexVehiclePBR.hlsl
                 int rfxMatClass = _RfxMatOn > 0.5 ? (int)(_RfxMat.x + 0.5) : 0;
                 rfxReflScale = rfxMatClass > 0 ? RfxMatOrigReflection(rfxMatClass) : 1.0;
+                rfxSunSpecKeep = rfxMatClass > 0 ? RfxMatSunSpecKeep(rfxMatClass) : 1.0;   // (a clear-coat class: the coat's GGX highlight alone)
+                rfxExpNOn = 0; rfxExpAlbOn = 0;
                 if (_RfxVsmOn < 0.5)
                 {
                 #if defined(_MAIN_LIGHT_SHADOWS) || defined(_MAIN_LIGHT_SHADOWS_CASCADE) || defined(_MAIN_LIGHT_SHADOWS_SCREEN)
@@ -255,8 +260,30 @@ Shader "Reflex/Vehicle"
             #if defined(_RFX_ENHANCED)
                 c.rgb *= lerp(1.0, rfxOcc.r, _RfxEnhParams.z);
             #endif
-                if (rfxMatClass > 0) c = RfxVehicleMaterial(c, rfxMatClass, i.t0.xyz, i.t9.xyz, i.t10.xyz, rfxOcc2, _RfxVsmOn < 0.5 ? rfxSunShadow : 1.0, face);
-                if (_RfxMenuSpotPos.w > 0) c.rgb = RfxMenuLight(c.rgb, i.t0.xyz, i.t9.xyz, face);
+                // the normal of what is seen at the pixel: the vertex normal (a two-sided material's back face turned), or with the enhanced materials
+                // the program's own shading normal (rfxExpN: its normal map) and the mud's relief, facing the eye
+                float3 rfxNv = i.t9.xyz / max(length(i.t9.xyz), 1e-6);
+                float3 rfxNs = rfxExpNOn > 0.5 && dot(rfxExpN, rfxExpN) > 0.25 ? normalize(rfxExpN) : rfxNv;
+                float3 rfxNseen = face ? rfxNv : -rfxNv;
+                if (rfxMatClass > 0) c = RfxVehicleMaterial(c, rfxMatClass, i.t0.xyz, rfxNv, rfxNs, i.t10.xyz, float2(i.t9.w, i.t10.w), rfxOcc2, _RfxVsmOn < 0.5 ? rfxSunShadow : 1.0, face, rfxNseen);
+            #if defined(_RFX_ENHANCED)
+                // WEATHER (Scripts/Rendering/ReflexWeather.cs; nothing without it): rain wets the vehicle and the rider (a film of water that
+                // mirrors the sky), snow dusts their upward faces (they move: far less than on the scenery)
+                [branch] if (RfxWeatherOn() && _SrcBlend == 1.0 && _DstBlend == 0.0)
+                {
+                    float3 Pw = i.t0.xyz, Nw = rfxNseen;
+                    float3 Vw = normalize(Pw - _WorldSpaceCameraPos);
+                    float3 ambW, sunKW;
+                    RfxObjRig(Pw, Nw, ambW, sunKW);
+                    ambW = RfxEnhAmbient(ambW, Nw, rfxOcc2.x);
+                    float3 sunRawW = _RfxSunColor.rgb * sunKW * ((_RfxVsmOn < 0.5 ? rfxSunShadow : 1.0) * rfxOcc2.y);
+                    // (the level's reflection cube through the materials' sampler: the programs and ENHANCED use all 16 sampler registers)
+                    float3 Rw = reflect(Vw, Nw); Rw.y = abs(Rw.y);
+                    float3 rfxSkyW = lerp(RfxMatEnv(Rw, 0.25), RfxWeatherSkyColour(Rw, 0.0), _RfxWeather.z);
+                    c.rgb = RfxWeatherObject(c.rgb, RfxFog(Pw, _WorldSpaceCameraPos), Pw, Nw, Vw, ambW, sunRawW, rfxSkyW, 0.4, 1.0);
+                }
+            #endif
+                if (_RfxMenuSpotPos.w > 0) c.rgb = RfxMenuLight(c.rgb, i.t0.xyz, rfxNseen, true);
                 if (_AlphaTest > 0.5 && !AlphaPasses(c.a)) discard;
                 // VOLUMETRIC LIGHT: a blended material (the Transparent queue: lenses, glass, the crowds' blended cards) draws after the medium's
                 // composite and takes the medium in front of it here (ReflexVolumetricApply.hlsl)

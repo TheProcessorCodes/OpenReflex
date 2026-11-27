@@ -456,7 +456,7 @@ void rx_hfterrain_entity_load(rx_addr e, const struct fmt_entity* rs) {
     uint32_t w = 0, h = 0;
     texture_size(asset_texture(asset), &w, &h);
     int32_t grid = rx_rs_enum(rs, "GridResolution");
-    int32_t spacing = fmt_modtrack_active() ? 2 : 1 << (grid & 0x1f);
+    int32_t spacing = fmt_modtrack_active() ? fmt_modtrack_spacing() : 1 << (grid & 0x1f);
     RX_FRAME_ENTER(F, 8);   /* the world size pair passed by address */
     SF32(F, 0, (float)(int32_t)w * (float)spacing);
     SF32(F, 4, (float)(int32_t)h * (float)spacing);

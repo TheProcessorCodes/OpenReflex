@@ -2,7 +2,7 @@
 // MxaMainMenu.Browser.cs, over Reflex's events (OpenContent: ReflexEvents with the original's names and pictures):
 //   header    the screen title, the RACE / FREE RIDE switch and the search field (/ or Tab, Square / X): every word typed must appear in
 //             the location's name or file name, the event type, the event key or "dlc"
-//   filters   (left) ALL EVENTS, FAVORITES (the starred locations' events), RECENT (the events started last), CUSTOM TRACKS (Mods/Tracks:
+//   filters   (left) ALL EVENTS, FAVORITES (the starred locations' events), RECENT (the events started last), MX vs ATV Untamed (the imported tracks: Mods/Tracks/Untamed), CUSTOM TRACKS (Mods/Tracks:
 //             Content/TrackMods.cs; always listed, empty it says how to install one, OPEN MODS FOLDER), DLC (when the install
 //             has DLC events), then the event types in the original's order (EventSelect.lua) with their counts. L1 / R1 (Q / E)
 //             step through the event types.
@@ -29,7 +29,7 @@ namespace Reflex.Port.OpenFrontEnd
 
     public sealed partial class OpenShell
     {
-        const string BrowseAll = "*all", BrowseFavourites = "*fav", BrowseRecent = "*recent", BrowseDlc = "*dlc", BrowseAlive = "*alive", BrowseRestored = "*restored", BrowseCustom = OpenContent.CustomGroup;
+        const string BrowseAll = "*all", BrowseFavourites = "*fav", BrowseRecent = "*recent", BrowseDlc = "*dlc", BrowseAlive = "*alive", BrowseUnleashed = "*unleashed", BrowseRestored = "*restored", BrowseCustom = OpenContent.CustomGroup, BrowseUntamed = OpenContent.UntamedGroup;
         static readonly string[] SortNames = { "GAME ORDER", "A – Z", "FAVORITES FIRST" };
 
         sealed class BrowserCard
@@ -262,7 +262,9 @@ namespace Reflex.Port.OpenFrontEnd
             FilterItem(BrowseFavourites, "FAVORITES");
             FilterItem(BrowseRecent, "RECENT");
             if (ModeEvents.Any(e => e.dlc)) FilterItem(BrowseDlc, "DOWNLOADED");
+            if (ModeEvents.Any(e => e.Unleashed)) FilterItem(BrowseUnleashed, "MX vs ATV Unleashed");
             if (ModeEvents.Any(e => e.Alive)) FilterItem(BrowseAlive, "MX vs ATV Alive");   // Free Ride: the Alive maps; race: their AI races (w-aliveai)
+            if (ModeEvents.Any(e => e.Untamed)) FilterItem(BrowseUntamed, "MX vs ATV Untamed");   // the tracks the Untamed importer made (Mods/Tracks/Untamed), a section of their own
             if (ModeEvents.Any(e => e.Restored)) FilterItem(BrowseRestored, "RESTORED");   // the levels cut from the original game (w-fresnob)
             FilterItem(BrowseCustom, "CUSTOM TRACKS");   // MODS/TRACKS: always there (empty: how to install one)
             var types = ModeTypes().Select(t => (code: t.activity, t.name)).ToList();
@@ -293,7 +295,7 @@ namespace Reflex.Port.OpenFrontEnd
         /// A filter (tests too).
         public void SelectBrowse(string code)
         {
-            if (code == BrowseCustom && TrackMods.Refresh()) { _browse = code; BuildFilters(); }   // a rescan of Mods/Tracks (cheap: only a change re-reads)
+            if ((code == BrowseCustom || code == BrowseUntamed) && TrackMods.Refresh()) { _browse = code; BuildFilters(); }   // a rescan of Mods/Tracks (cheap: only a change re-reads)
             _browse = code;
             HighlightFilter();
             FillCards();
@@ -311,6 +313,7 @@ namespace Reflex.Port.OpenFrontEnd
                 case BrowseAll: return mode;
                 case BrowseFavourites: return mode.Where(e => OpenHistory.IsFavourite(e.Location)).ToList();
                 case BrowseDlc: return mode.Where(e => e.dlc).ToList();
+                case BrowseUnleashed: return mode.Where(e => e.Unleashed).ToList();
                 case BrowseAlive: return mode.Where(e => e.Alive).ToList();
                 case BrowseRestored: return mode.Where(e => e.Restored).ToList();
                 case BrowseRecent:
@@ -368,7 +371,7 @@ namespace Reflex.Port.OpenFrontEnd
             if (mixed) OuUi.Text(e.typeName, "ou-badge ou-card-badge", thumb);
             if (e.dlc) OuUi.Text("DLC", "ou-badge ou-card-badge ou-card-dlc", thumb);
             else if (e.Restored) OuUi.Text("RESTORED", "ou-badge ou-card-badge ou-card-dlc", thumb);
-            if (e.Custom) OuUi.Text(e.Broken ? (e.mod.archive ? OpenEvent.ArchiveBadge(e.mod) : "BROKEN") : "CUSTOM", "ou-badge ou-card-badge ou-card-dlc", thumb);
+            if (e.Custom) OuUi.Text(e.Broken ? (e.mod.archive ? OpenEvent.ArchiveBadge(e.mod) : "BROKEN") : e.Untamed ? "UNTAMED" : "CUSTOM", "ou-badge ou-card-badge ou-card-dlc", thumb);
             var star = new OuStar(); star.AddToClassList("ou-card-star"); thumb.Add(star);
             c.row = row; c.thumb = thumb; c.star = star;
             star.style.display = OpenHistory.IsFavourite(e.Location) ? DisplayStyle.Flex : DisplayStyle.None;
@@ -414,8 +417,8 @@ namespace Reflex.Port.OpenFrontEnd
             if (_browseEvent.Custom)
             {   // MODS/TRACKS: where the track lives, and the way to its folder
                 var m = _browseEvent.mod;
-                if (m.Ok) OuUi.Text("CUSTOM TRACK  ·  " + m.kindLabel + (string.IsNullOrEmpty(m.author) ? "" : "  ·  BY " + m.author.ToUpperInvariant()), "mxa-note ou-detail-text", _previewBody);   // (a broken one: its description says why)
-                OuUi.Text("Mods/Tracks/" + m.id + (m.Ok ? "  ·  " + m.level + "  ·  " + OpenWorldCache.SizeText(m.bytes) : "") + "  ·  offline only, no records", "mxa-note ou-detail-text ou-faint", _previewBody);
+                if (m.Ok) OuUi.Text(_browseEvent.Untamed ? "MX vs ATV UNTAMED  ·  " + m.kindLabel + "  ·  IMPORTED FROM YOUR DISC" : "CUSTOM TRACK  ·  " + m.kindLabel + (string.IsNullOrEmpty(m.author) ? "" : "  ·  BY " + m.author.ToUpperInvariant()), "mxa-note ou-detail-text", _previewBody);   // (a broken one: its description says why)
+                OuUi.Text(m.Where + (m.Ok ? "  ·  " + m.level + "  ·  " + OpenWorldCache.SizeText(m.bytes) : "") + "  ·  offline only, no records", "mxa-note ou-detail-text ou-faint", _previewBody);
                 var open = OuUi.Button("OPEN MODS FOLDER", "ou-chip", OpenTracksFolder, _previewBody); open.name = "ou-open-mods-detail";
                 if (_browseEvent.Broken) return;
             }
@@ -534,7 +537,7 @@ namespace Reflex.Port.OpenFrontEnd
                 {
                     string key = _browseEvent?.key;
                     _browseEvent = key != null ? OpenContent.Find(key) : null;
-                    if (_browseEvent == null && _browse == BrowseCustom) _browseEvent = ModeEvents.FirstOrDefault(e => e.Custom && !e.Broken);
+                    if (_browseEvent == null && (_browse == BrowseCustom || _browse == BrowseUntamed)) _browseEvent = ModeEvents.FirstOrDefault(e => e.Group == _browse && !e.Broken);
                     BuildFilters(); FillCards();
                 }
             }
@@ -653,6 +656,7 @@ namespace Reflex.Port.OpenFrontEnd
             int cls = s.Class(e); if (cls >= 0 && s.Rules(e)) OuTheme.Chip(sum, "CLASS", OpenContent.ClassName(cls));
             int rider = s.Rider(e);
             OuTheme.Chip(sum, "RIDER", OpenSetup.Riders(e, s.Type(e)).FirstOrDefault(r => r.id == rider).name ?? "YOUR RIDER");
+            if (s.OffEvent(e)) OuTheme.Chip(sum, "ANY VEHICLE", "NOT THE EVENT'S OWN  ·  NO RECORDS", true);   // (core/plan/ANY_VEHICLE.md)
             int ms = OpenSetup.MapScalePercent(e);
             if (ms != Reflex.Port.RxCore.RxMapScale.DefaultPercent) OuTheme.Chip(sum, "MAP SCALE", Reflex.Port.RxCore.RxMapScale.Label(ms) + "  ·  NO RECORDS", true);
             int wx = s.Weather; if (wx != 0) OuTheme.Chip(sum, "WEATHER", Reflex.Port.Rendering.ReflexWeather.Names[wx] + "  ·  " + Reflex.Port.Rendering.ReflexWeather.IntensityNames[s.WeatherIntensity], true);

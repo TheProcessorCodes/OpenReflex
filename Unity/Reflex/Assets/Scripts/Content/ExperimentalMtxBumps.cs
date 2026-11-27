@@ -10,13 +10,43 @@ namespace Reflex.Port.Content
     {
         Material mtxTerrainMaterial;
 
+        [Serializable] sealed class UnleashedRutData { public float[] segments; }
+        Mesh BuildUnleashedRuts(float scale)
+        {
+            string path=System.IO.Path.Combine(ExperimentalTerrain.Path,"ruts.json");
+            if(!RxFiles.Exists(path)) return null;
+            var data=JsonUtility.FromJson<UnleashedRutData>(System.Text.Encoding.UTF8.GetString(RxFiles.ReadAllBytes(path))).segments;
+            Rfx.Check(data!=null && data.Length%6==0 && data.Length<600000,"Invalid Unleashed rut segments");
+            if(data.Length==0)return null;
+            var vertices=new List<Vector3>();var uv=new List<Vector2>();var colors=new List<Color>();var indices=new List<int>();
+            float distance=0;
+            for(int s=0;s<data.Length;s+=6)
+            {
+                var a=new Vector3(data[s],0,data[s+1])*scale;var b=new Vector3(data[s+3],0,data[s+4])*scale;
+                var forward=b-a;float length=forward.magnitude;if(length<.01f)continue;
+                var side=new Vector3(forward.z,0,-forward.x)/length;
+                int start=vertices.Count;
+                for(int k=0;k<2;k++)for(int j=0;j<3;j++)
+                {
+                    float offset=(j-1)*data[s+k*3+2]*scale;
+                    vertices.Add((k==0?a:b)+side*offset);uv.Add(new Vector2(offset/24f+.5f,1-(distance+k*length)/48f));
+                    colors.Add(new Color(1,1,1,j==1?(UnleashedLevels.Style?.rut_strength ?? .65f):0));
+                }
+                for(int j=0;j<2;j++){int v=start+j;indices.AddRange(new[]{v,v+3,v+1,v+1,v+3,v+4});}
+                distance+=length;
+            }
+            var mesh=new Mesh{name="Unleashed source course rut strips",indexFormat=IndexFormat.UInt32,hideFlags=HideFlags.DontSave};
+            mesh.SetVertices(vertices);mesh.SetUVs(0,uv);mesh.SetColors(colors);mesh.SetTriangles(indices,0);mesh.RecalculateBounds();Track(mesh);return mesh;
+        }
+
         // The same three layers as a native Reflex venue: surface bump, authored rut
         // overlays, then deformation reveal. The compressed mod supplies the course.
         List<ReflexRTBump.Draw> BuildMtxBumpModels(Shader shader)
         {
             var draws=new List<ReflexRTBump.Draw>();
+            bool unleashed = UnleashedLevels.Bound != null;
             Rfx.Check(mtxTerrainMaterial,"MTX terrain must be built before its bump overlays");
-            float scale=Reflex.Port.RxCore.RxMapScale.Current,span=4094f*scale,half=span*.5f;
+            float scale=Reflex.Port.RxCore.RxMapScale.Current,span=(unleashed ? 2047f*terrainData.spacing : 4094f)*scale,half=span*.5f;
             bool paradise=TrackMods.Bound?.id!="McKennaRock";
             Texture2D Tex(string name)
             {
@@ -39,15 +69,33 @@ namespace Reflex.Port.Content
                 draws.Add(new ReflexRTBump.Draw{mesh=mesh,material=material,pass=index,matrix=Matrix4x4.identity,name=name});
             }
             var basic=Mat("HFB_4tex");
+            basic.SetFloat("_UnleashedDetail",unleashed?1:0);
             basic.SetTexture("_Bump0",Tex(paradise?"NAT_BE_Dirt01_BumpNew":"NAT_CO_B_SandBUMP"));
             basic.SetTexture("_Bump1",Tex(paradise?"NAT_BE_Dirt02_Bump":"NAT_CO_B_DirtLightBUMP"));
             basic.SetTexture("_Bump2",Tex("NAT_CO_B_SandInsideBUMP"));
             basic.SetTexture("_Bump3",Tex("NAT_CO_B_GrassBUMPS"));
+            if (unleashed && UnleashedLevels.Style != null)
+                for(int i=0;i<4;i++) basic.SetTexture("_Bump"+i,Tex(UnleashedLevels.Style.layers[i].bump));
             basic.SetTexture("_Mask",mtxTerrainMaterial.GetTexture("_DetailMask"));
             basic.SetVector("_TileRate",mtxTerrainMaterial.GetVector("_DetailTile"));
             Add(quad,basic,"HFB_4tex","MTX surface relief");
 
-            var course=ExperimentalTerrain.Info(TrackMods.Bound.folder).course;
+            if (unleashed)
+            {
+                var rutMesh=BuildUnleashedRuts(scale);
+                if(rutMesh)
+                {
+                    var rutMat=Mat("MTX_Ruts");rutMat.SetTexture("_Bump0",Tex("NAT_CO_B_Ruts"));
+                    rutMat.SetTexture("_Mask",mtxTerrainMaterial.GetTexture("_DetailMask"));rutMat.SetFloat("_TerrainSize",span);rutMat.SetFloat("_Tuner",UnleashedLevels.Style?.cover=="snow"?0:1);
+                    Add(rutMesh,rutMat,"MTX_Ruts","Unleashed authored track ruts");
+                }
+                var deformation=Mat("HFB_1tex_deformed");deformation.SetTexture("_Bump0",Tex("HFT_Default_Deform_Reveal"));
+                deformation.SetVector("_TileRate",Vector4.one*(160*terrainData.spacing*scale));
+                Add(quad,deformation,"HFB_1tex_deformed","Unleashed live deformation reveal");
+                Debug.Log($"[Unleashed] Terrain depth: {draws.Count} Reflex bump layers");
+                return draws;
+            }
+            var course=ExperimentalTerrain.Info(ExperimentalTerrain.Path).course;
             Rfx.Check(course!=null && course.Length>=20 && course.Length%5==0,"MTX rut course");
             int count=course.Length/5;
             Vector3 Point(int i) { i=(i%count+count)%count;return new Vector3(course[i*5],0,course[i*5+2])*scale; }

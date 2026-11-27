@@ -87,6 +87,13 @@ void rx_level_config_init(rx_addr c) {
     crt_strncpy(c + 0x410, 0x0096d55c /* "Shared" */, 0x103);
     SU8(c, 0x410 + 0x103, 0);
     w_format(c + 0x514, 0x104, "%sBase", host_str(c));
+#ifndef RX_ORACLE
+    /* Imported terrain levels use the shared Reflex terrain material package. */
+    if (!strncmp(host_str(c), "UNL_", 4) && rx_event_level()) {
+        const char* package = fmt_level_base_package((fmt_level*)rx_event_level());
+        if (package) w_format(c + 0x514, 0x104, "%s", package);
+    }
+#endif
     SF32(c, 0x618, 0.0f); SF32(c, 0x61c, 0.0f);
     SU32(c, 0x620, 2);
     w_format(c + 0x624, 0x104, "%sBaseSubscene", host_str(c));

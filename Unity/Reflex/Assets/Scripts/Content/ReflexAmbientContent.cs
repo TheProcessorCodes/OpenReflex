@@ -165,7 +165,7 @@ namespace Reflex.Port.Content
                 if (a != null)
                 {
                     var lt = ReflexTex.Parse(name, install.Read(a));
-                    if (lt != null) { t = ReflexTex.ToTexture(lt, TextureWrapMode.Repeat, TextureWrapMode.Repeat, FilterMode.Trilinear, 1); Track(t); }
+                    if (lt != null) { t = ReflexTex.ToTexture(lt, TextureWrapMode.Repeat, TextureWrapMode.Repeat, FilterMode.Trilinear, 1); Track(t); Rendering.ReflexTextureFiltering.Register(t); }
                 }
                 else Warn($"texture {name} ({package}) not found");
             }

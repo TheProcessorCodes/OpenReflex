@@ -232,10 +232,29 @@ namespace Reflex.Port.Content
             return s.Length == 0 ? "Track" : s.Length > 80 ? s.Substring(0, 80).Trim() : s;
         }
 
+        /// Whether a .rxmod is a kit pack (an unsealed mod archive whose metadata says "kits": installed by KitPacks); any other .rxmod is read
+        /// in place (bikes, skins, parts: BikeMods; rider gear: RxGear). False when it does not read.
+        public static bool IsKitRxMod(string path)
+        {
+            try
+            {
+                var head = new byte[16];
+                using (var f = File.OpenRead(path)) if (f.Read(head, 0, 16) != 16 || (head[12] & 1) != 0) return false;
+                if (!(head[0] == 'R' && head[1] == 'X' && head[2] == 'A' && head[3] == 'R' && head[8] == 'M' && head[9] == 'O' && head[10] == 'D' && head[11] == 'S')) return false;
+                RxFiles.EnsureCore?.Invoke();   // (the archive reader is the core library's: loaded on first use)
+                var h = Reflex.Port.RxCore.RxArchiveNative.Open(path);
+                if (h == IntPtr.Zero) return false;
+                try { return (Reflex.Port.RxCore.RxArchiveNative.Meta(h) ?? "").IndexOf("\"kits\"", StringComparison.Ordinal) >= 0; }
+                finally { Reflex.Port.RxCore.RxArchiveNative.Close(h); }
+            }
+            catch (Exception) { return false; }
+        }
+
         /// A .rxmod kit pack (RXMOD.md "Kit packs"): every entry inside outDir through the core's archive reader. A bike or skin .rxmod is
         /// refused with where it goes (Mods/Bikes reads those in place). Null: done.
         static string ExtractRxMod(string archive, string outDir)
         {
+            try { RxFiles.EnsureCore?.Invoke(); } catch (Exception e) { return "the .rxmod does not read (" + e.Message + ")"; }
             var h = Reflex.Port.RxCore.RxArchiveNative.Open(archive);
             if (h == IntPtr.Zero) return "the .rxmod does not read (" + Reflex.Port.RxCore.RxArchiveNative.LastError() + ")";
             try

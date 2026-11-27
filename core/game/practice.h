@@ -7,6 +7,11 @@
  * (race_driver.c lap_completed) and the race finishes only when the laps reach NumLaps, so the race never finishes (the end check skips
  * nothing: a driver is done only at laps >= NumLaps). The flag is a session static (rx_session_set_practice, before the event loads); off it
  * is one test of a host static and the game is the original bit for bit.
+ * The start: no intro, no countdown, the gate already down (the rider rides off from the gate at once): rx_activity_can_start
+ * (Activity::vf11) answers 0 as for the original's Practice (mode 2); rx_race_countdown runs the activity's own Countdown with nothing left
+ * to count ("Countdown Step" 0 and InProgress in the first Countdown frame) and keeps the start board hidden; the drop gate and an Alive
+ * gate start down (world_dropgate.c rx_gate_starts_closed; the Alive drop at its last key); the countdown cues, DROP_GATE and Powercross's
+ * 3-2-1 widget stay silent / hidden (activity_cues.c, powercross_countdown.c). practice_test `start` checks it.
  *
  * LAP LOG: every line crossing of the local human that the race counted (lap_completed after its early returns), in ANY exhibition lap race
  * (practice or not; online races too): a ring of RX_LAP_LOG_RING records with a session serial (D+0xf1c stops at 97, the serial does not).
@@ -68,8 +73,9 @@ typedef struct rx_lap_note {
 #define RX_LAP_MOD_PHYS_CONFIG   1u   /* rx_ps_active bit 1: a PHYSICS STUDIO config with changes */
 #define RX_LAP_MOD_PHYS_RESTORED 2u   /* bit 2: the guard put a diverged vehicle back on the file's values */
 #define RX_LAP_MOD_PHYS_TAINT    4u   /* bit 4: a config was set at some point of the session */
-#define RX_LAP_MOD_AIR_HELPERS   8u   /* FREER AIR: the air helpers are not the original's (auto level != 1, snap != 1, looseness != 0, mode bits) */
+#define RX_LAP_MOD_AIR_HELPERS   8u   /* FREER AIR: the air helpers are not the original's (auto level != 1, snap != 1, looseness != 0, mode bits, LIP PULL != 1) */
 #define RX_LAP_MOD_MAP_SCALE    16u   /* MAP SCALE != 1 */
+#define RX_LAP_MOD_ANY_VEHICLE  32u   /* ANY VEHICLE: a vehicle or class the event type never offered (rx_session_set_any_vehicle) */
 
 /* the session layer (api/practice_session.inc), once per frame: the local human's race driver (0: none) before the frame */
 void rx_lap_log_track(rx_addr driver);
@@ -86,6 +92,11 @@ void rx_lap_log_marker(rx_addr d);
 /* after a frame: once the respawn's reset has run out (P+0x116c <= 0, the vehicle at the marker), the driver's place is the vehicle's
  * (done after that frame and the next one); 1 while one is pending */
 int  rx_practice_marker_settle(rx_addr d);
+/* the INSTANT respawn (rx_session_spawn_at_instant), right after Player_Reset put the vehicle at the marker: the driver's place is the
+ * marker's (pos, the unit heading dir) at once, before the next frame's rules run (a respawn pending for d only; the settle still follows).
+ * Without it the next frame's RuleBackwards finds the vehicle behind the driver's old place (more than 60 units back within its window)
+ * and resets the rider to the track there: the rider was put back where the button was pressed, every press (the reset loop). */
+void rx_practice_marker_place_now(rx_addr d, const float pos[3], const float dir[3]);
 /* the records after `after_serial`, oldest first, at most max; the count */
 int  rx_lap_log_read(uint32_t after_serial, rx_lap_note* out, int max);
 

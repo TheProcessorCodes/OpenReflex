@@ -42,6 +42,7 @@ Shader "Reflex/Original Particles"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "ReflexCommon.hlsl"
             #include "ReflexVolumetricApply.hlsl"
+            #include "ReflexWeather.hlsl"   // WEATHER: the clouds' share of the particles' light (nothing without weather)
 
             TEXTURE2D(_MainTex); SAMPLER(sampler_MainTex);
             StructuredBuffer<float4> _Particles;    // 4 float4 per ReflexParticle (64 bytes)
@@ -89,10 +90,15 @@ Shader "Reflex/Original Particles"
                 float4 clip = TransformWorldToHClip(world);
                 float w = clip.w;
                 float4 col = Unpack(asuint(c.y)) * Unpack(asuint(c.z));
-                o.delta = col * _LuminanceDelta;
+                // WEATHER (not the original program): dust, roost and smoke are lit by the level like everything else: the lit share
+                // (c102) follows the dimmed sun, the unlit share (c101) the grey sky's tint. Additive particles (sparks, glows) give
+                // their own light and stay.
+                bool wxLit = RfxWeatherOn() && !(_DstBlend > 0.5 && _DstBlend < 1.5);
+                float3 wxTint = wxLit ? lerp(float3(1, 1, 1), float3(0.97, 0.99, 1.03), _RfxWeather.z * 0.8) : float3(1, 1, 1);
+                o.delta = col * _LuminanceDelta * (wxLit ? _RfxWeatherLight.w : 1.0);
                 float area = (s.x / w) * (s.y / w);
                 float alpha = saturate(_Fade.x * area + _Fade.y) * col.a;
-                o.colour = float4(col.rgb * _Luminance.rgb, alpha);
+                o.colour = float4(col.rgb * _Luminance.rgb * wxTint, alpha);
                 o.shadow = float3(0.5 + P.x * _RfxVolumeShadowParams.x, 0.5 + P.z * _RfxVolumeShadowParams.x, (off.y + P.y) * 0.25 + 1.025);
                 o.depth = D3DDepth(w);
                 o.positionWS = world;

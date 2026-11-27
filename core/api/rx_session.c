@@ -1,4 +1,5 @@
 #include "../game/map_scale.h"
+#include "../game/practice.h"   /* PRACTICE: no countdown number (rx_session_race) */
 #include "../game/phys_studio.h"
 #include "../game/free_air.h"
 #include "../game/rider_cap.h"   /* w-rc-core: seats / standings past 12 */
@@ -120,6 +121,7 @@ struct rx_session {
     fmt_level* level;
     rx_event_spec spec;
     int spec_loaded;
+    int local_players;   /* w-split: the local humans the event load sets up (0 / 1 = one) */
     int records_finalized; /* explicit terminal checkpoint; arena still readable/exportable */
     rx_addr game;
     uint64_t frames;
@@ -417,16 +419,50 @@ int rx_session_field_size(const struct rx_session* s) { return s ? (int)rx_rc_fi
 
 /* The local human player's MXPlayer slot P = G + 0x7460 + slot * 0x12a0 (G+0x153ec lists the slots, G+0x1541c the count;
  * the first with type 0). Copied from the old plugin's local_player() / build_event_test's slot walk. */
-static rx_addr local_player(void) {
+/* w-split: rx_session_set_view_player picks the n-th local human (the first when there is no such player). Host-side state only. */
+static int g_view_player;
+static rx_addr local_player_n(int n) {
     const rx_addr g = U32(0, RX_GAME_GLOBAL);
     if (!g) return 0;
     const uint32_t count = U8(g, 0x1541c);
+    rx_addr first = 0; int seen = 0;
     for (uint32_t i = 0; i < count && i < 8; i++) {
         const uint32_t slot = rx_seat_order(g + 0x7460, i);
         if (slot >= RX_RC_MAX) continue;
         const rx_addr p = rx_seat(g + 0x7460, slot);
-        if (U32(p, 0x10) == 0 && U32(p, 4) != 0) return p;   /* 0 human, 1 computer; +4 PlayerLocal (an online remote rider is a non-local human: w-online2) */
+        if (U32(p, 0x10) == 0 && U32(p, 4) != 0) {   /* 0 human, 1 computer; +4 PlayerLocal (an online remote rider is a non-local human: w-online2) */
+            if (seen == n) return p;
+            if (!first) first = p;
+            seen++;
+        }
     }
+    return first;
+}
+static rx_addr local_player(void) { return local_player_n(g_view_player); }
+static int local_player_count(void) {
+    const rx_addr g = U32(0, RX_GAME_GLOBAL);
+    if (!g) return 0;
+    const uint32_t count = U8(g, 0x1541c);
+    int n = 0;
+    for (uint32_t i = 0; i < count && i < 8; i++) {
+        const uint32_t slot = rx_seat_order(g + 0x7460, i);
+        if (slot >= RX_RC_MAX) continue;
+        const rx_addr p = rx_seat(g + 0x7460, slot);
+        if (U32(p, 0x10) == 0 && U32(p, 4) != 0) n++;
+    }
+    return n;
+}
+int rx_session_set_local_players(struct rx_session* s, int32_t players) {
+    if (!session_ok(s)) return 1;
+    if (players < 1 || players > 2) { session_error(s, "local players %d: 1 or 2", (int)players); return 2; }
+    if (s->spec_loaded || s->career_phase) { session_error(s, "the local players are set before the event loads (exhibition only)"); return 2; }
+    s->local_players = players;
+    return 0;
+}
+int rx_session_local_players(struct rx_session* s) { return session_ok(s) && s->spec_loaded ? local_player_count() : 0; }
+int rx_session_set_view_player(struct rx_session* s, int32_t player) {
+    if (!session_ok(s)) return 1;
+    g_view_player = player >= 0 && player < 4 ? player : 0;
     return 0;
 }
 
@@ -724,6 +760,7 @@ static int event_load_impl(struct rx_session* s, const rx_event_spec* spec) {
     {   char why[300];
         if (minigame_content_missing(s->install, spec, why, sizeof why)) { snprintf(s->error, sizeof s->error, "%s", why); return 3; }
     }
+    if (fmt_imported_terrain_open(fmt_install_vfs(s->install), spec->location) < 0) { session_error(s, "%s", fmt_error()); return 1; }
     s->spec = *spec;
     rx_event_set_spec(&s->spec);
     s->level = fmt_level_open(s->install, s->spec.location);
@@ -737,6 +774,19 @@ static int event_load_impl(struct rx_session* s, const rx_event_spec* spec) {
     /* StartEvent's path, as build_event_test.c: twice (the original's two EnsureLocalPlayers calls), SetupEvent, StartEvent. */
     rx_ensure_local_players(0, 0);
     rx_ensure_local_players(0, 0);
+    if (s->local_players >= 2) {   /* w-split: the second local human (the original's split-screen setup; viewports 0 / 1) */
+        /* player 2 rides player 1's vehicle and rider: player database 0 (the imported profile) copied over database 1, which
+         * EnsureLocalPlayers (1) and the vehicle / rider / tuning lookups of controller 1 then read (the install defaults before) */
+        /* SPLIT SCREEN RULE (w-split): player 2's laps are NEVER saved: database 1 is player 2's for this session only; nothing exports it */
+        if (rx_player_snapshot_clone(0, 1, s->error, sizeof s->error)) return 1;
+        /* and starts on player 1's driving camera: the primary device's DrivingCamera row copied to controller 1's (UISettings
+         * field 0 of device d at +4 + 0x48 * d; rx_player_apply_driving_camera reads the player's own controller's row) */
+        const rx_addr settings = U32(0, 0x00d92efcu);   /* rx_ui_settings 005544b0 */
+        const int32_t device = settings ? I32(settings, 0x16c) : -1;
+        if (device >= 0 && device <= 3 && device != 1) SU32(settings, 4u + 0x48u * 1u, U32(settings, 4u + 0x48u * (uint32_t)device));
+        rx_ensure_local_players(1, 0);
+        rx_ensure_local_players(1, 0);
+    }
     rx_setup_event(ui);
     rx_start_event(ui);
 
@@ -782,6 +832,21 @@ int rx_session_set_map_scale_base(struct rx_session* s, float base) {
 }
 float rx_session_map_scale_base(const struct rx_session* s) { return s && s->magic == RX_SESSION_MAGIC ? rx_ms_base() : 1.0f; }
 int32_t rx_session_map_scale_records(const struct rx_session* s) { return s && s->magic == RX_SESSION_MAGIC && !rx_ms_records_off() ? 1 : 0; }
+
+/* ANY VEHICLE (port, game/map_scale.h, core/plan/ANY_VEHICLE.md): the event rides a vehicle or a class its type never offered: it keeps no
+ * offline records, best laps or highlights and its laps are marked. Before event_load only, exhibition only. */
+int rx_session_set_any_vehicle(struct rx_session* s, int32_t on) {
+    if (!session_ok(s) || s->state == RX_SESSION_ERROR) return 1;
+    if (s->spec_loaded || s->career_phase || s->level) {   /* refused, the session stays usable (as rx_session_set_practice) */
+        snprintf(s->error, sizeof s->error, "any vehicle is set before the event loads (exhibition only)");
+        return 2;
+    }
+    if ((on != 0) != rx_ms_any_vehicle())
+        fprintf(stderr, "rxcore: ANY VEHICLE %s\n", on ? "on: a vehicle or class this event type never offered; the event keeps no offline records, best laps or highlights" : "off");
+    rx_ms_set_any_vehicle(on != 0);
+    return 0;
+}
+int32_t rx_session_any_vehicle(const struct rx_session* s) { return s && s->magic == RX_SESSION_MAGIC ? rx_ms_any_vehicle() : 0; }
 
 /* MODS/TRACKS (port, src/fmt_db.h fmt_install_mount_level): a custom track's files bound to its level name for this session only. */
 int rx_session_mount_level(struct rx_session* s, const char* level, const char* folder) {
@@ -829,6 +894,15 @@ int rx_session_set_free_air_looseness(struct rx_session* s, float looseness) {
     return 0;
 }
 float rx_session_free_air_looseness(const struct rx_session* s) { return s && s->magic == RX_SESSION_MAGIC ? rx_fa_looseness_value : 0.0f; }
+/* LIP PULL (port, game/free_air.h): 0 .. 1, the rear-only wheelie limiter on a steep face for the local players; 1 = the original; any time. */
+int rx_session_set_lip_pull(struct rx_session* s, float lip_pull) {
+    if (!session_ok(s)) return 1;
+    if (!(lip_pull >= 0.0f && lip_pull <= 1.0f)) { session_error(s, "lip pull %g outside 0 .. 1", (double)lip_pull); return 2; }
+    if (lip_pull != rx_fa_lip_value) fprintf(stderr, "rxcore: LIP PULL %.0f %%\n", (double)(lip_pull * 100.0f));
+    rx_fa_set_lip(lip_pull);
+    return 0;
+}
+float rx_session_lip_pull(const struct rx_session* s) { return s && s->magic == RX_SESSION_MAGIC ? rx_fa_lip_value : 1.0f; }
 /* FREE RIDE WITHOUT BORDERS (port, game/free_ride_borders.h): no reset zones / reset triggers / edge resets for a human in an event
  * world's Free Ride (a fall net past the terrain's real edge stays); any time between frames. */
 int rx_session_set_free_ride_borders(struct rx_session* s, int32_t mode) {
@@ -840,6 +914,24 @@ int rx_session_set_free_ride_borders(struct rx_session* s, int32_t mode) {
     return 0;
 }
 int32_t rx_session_free_ride_borders(const struct rx_session* s) { return s && s->magic == RX_SESSION_MAGIC ? (int32_t)rx_frb_mode_value : 0; }
+/* AI TIER (port, B.R.A.A.P.: core/plan/BRAAP.md): a computer rider's skill tier, the game's own per-player value (player +0x8f4, the
+ * Player List's AIDifficulty cell as MXUIManager_BuildAIRoster 0059f3e0 buckets it: 0 All Time, 1 Pro, 2 Amateur, 3 Rookie). The AI code
+ * reads it every frame (race_ai_params.c, race_driver_update.c; the original's own debug key steps it in a running race), so it is set
+ * between frames, after the event's riders exist. Only a computer rider's seat; the humans' value is not the AI's. */
+int rx_session_set_ai_tier(struct rx_session* s, int32_t slot, int32_t tier) {
+    if (!session_ok(s)) return 1;
+    if (slot < 0 || slot >= (int32_t)RX_RC_MAX || tier < 0 || tier > 3) { session_error(s, "ai tier: slot %d tier %d (slot 0 .. %d, tier 0 .. 3)", (int)slot, (int)tier, (int)RX_RC_MAX - 1); return 2; }
+    const rx_addr p = rx_seat(s->game + 0x7460, (uint32_t)slot);
+    if (!U32(p, 0x1ac) || I32(p, 0x10) != 1) { session_error(s, "ai tier: slot %d is not a computer rider", (int)slot); return 2; }
+    if (I32(p, 0x8f4) != tier) fprintf(stderr, "rxcore: AI TIER slot %d: %d -> %d (0 All Time .. 3 Rookie)\n", (int)slot, (int)I32(p, 0x8f4), (int)tier);
+    SU32(p, 0x8f4, (uint32_t)tier);
+    return 0;
+}
+int32_t rx_session_ai_tier(struct rx_session* s, int32_t slot) {
+    if (!session_ok(s) || slot < 0 || slot >= (int32_t)RX_RC_MAX) return -1;
+    const rx_addr p = rx_seat(s->game + 0x7460, (uint32_t)slot);
+    return U32(p, 0x1ac) && I32(p, 0x10) == 1 ? I32(p, 0x8f4) : -1;
+}
 /* WEATHER GRIP (port, game/weather_grip.h): rain / snow, every tyre's static grip times the factor; any time between frames. */
 int rx_session_set_weather_grip(struct rx_session* s, float factor) {
     if (!session_ok(s)) return 1;
@@ -1059,6 +1151,11 @@ static void finalize_records_run(void* ptr) {
         seen|=1u<<(uint32_t)slot;
         if(U32(records,0x18u*(uint32_t)slot+4)!=0xffffffffu)slots[n++]=(uint32_t)slot;
     }
+    /* SPLIT SCREEN RULE (w-split): player 2's laps are NEVER saved: a slot commits into its own controller's player database (MXRecords_Join's
+     * PlayerRecords of 0x00ae10f0 + 0x1f4 * slot), so player 2 (controller 1) commits into database 1: the session-only clone of database 0
+     * (rx_player_snapshot_clone in event_load_impl). No export ever reads it: rx_session_player_export (rx_player_snapshot_export, the
+     * profile checkpoint) is the only export and reads database 0 alone, and the next session's startup restores database 1. Player 2's
+     * records are thrown away with the session. */
     for(uint32_t i=0;i<n;i++)rx_mxrecords_leave(records,slots[i]);
     c->rc=0;
 }
@@ -1166,7 +1263,8 @@ static void frame_render_run(struct frame_call* c) {
     /* Owned dashboard component update uses the actual original engine dt.
      * The managed tree consumes its copied state, never advances another timer. */
     rx_powercross_countdown_tick(F32(RX_ENGINE_GLOBAL,0x18));
-    rx_race_hud_tick(local_player());   /* the HUD components' per-frame copies (game/race_hud.c) */
+    /* the HUD components' per-frame copies (game/race_hud.c); w-split: each local human's (one: local_player_n(0), as it was) */
+    { const int humans = local_player_count(); for (int k = 0; k < (humans > 1 ? humans : 1); k++) rx_race_hud_tick(local_player_n(k)); }
     /* RENDER BOUNDARY (documented): the original's render thread calls HFTerrainSurface::vf14 (007c4fa0) once per rendered
      * frame on the active terrain: GetRenderTargetData of the deformation target, the three TerrainTracks_FlushPending calls
      * and the level-reset clears. The core has no renderer, so the session runs the game's own vf14 here, after the frame's
@@ -1224,6 +1322,7 @@ static void frame_call_run(void* p) {
     tutorial_loading_page_frame(c->s);
 }
 
+static void funnel_after_frame(struct rx_session* s);
 int rx_session_advance_dt(struct rx_session* s, float dt) {
     if (!session_ok(s)) return 1;
     if (s->state == RX_SESSION_ERROR) return 1;
@@ -1247,8 +1346,69 @@ int rx_session_advance_dt(struct rx_session* s, float dt) {
     }
     s->frames++;
     lap_log_after_frame();
+    funnel_after_frame(s);
     update_state(s);
     return s->state == RX_SESSION_ERROR ? 1 : 0;
+}
+
+/* ---- the funnel blockers of an imported race level (rx_api.h rx_session_funnel) ----
+ * The source (MX vs ATV Unleashed, .aty [FunnelBlockDown] / [FunnelBlockUp]): a trigger gate (position, look, width) and two bale
+ * sets moved 20 ft at 40 ft/s when a racer passes it. Here, after every frame: outside a race in progress the start layout; in a
+ * race in progress the first vehicle whose step crosses the gate's plane inside its width starts the move (once per race). The down
+ * set stops colliding as it starts to sink, the up set collides once it is fully raised. */
+void rx_funnel_layout(int raced); int rx_funnel_layout_now(void);   /* game/build_collision.c */
+static struct { float progress; int fired, have; float last[64][3]; int32_t slot[64]; int n; } g_funnel;
+static void funnel_after_frame(struct rx_session* s) {
+    if (!fmt_modtrack_funnel()) { g_funnel.progress = 0; g_funnel.fired = 0; g_funnel.have = 0; return; }
+    const rx_addr p = local_player(); const rx_addr a = p ? U32(p, 0x94) : 0;
+    const int racing = a && fmt_modtrack_racing() && strcmp(s->spec.event_type, "FreeRide") != 0;
+    const int32_t state = a ? I32(a, 0x21c) : 5;
+    if (!racing || state < 2 || state > 4) {
+        g_funnel.progress = 0; g_funnel.fired = 0; g_funnel.have = 0; rx_funnel_layout(0); return;
+    }
+    const float* g = fmt_modtrack_funnel_gate(); const float scale = rx_ms_scale();
+    rx_slot sl[64]; const int n = rx_session_slots(s, sl, 64);
+    if (!g_funnel.fired && state == 2) {
+        for (int i = 0; i < n && !g_funnel.fired; i++) {
+            if (!sl[i].vehicle) continue;
+            const float x = F32(sl[i].vehicle, 0xc0), z = F32(sl[i].vehicle, 0xc8);
+            for (int j = 0; g_funnel.have && j < g_funnel.n; j++) {
+                if (g_funnel.slot[j] != sl[i].slot) continue;
+                /* signed distances from the gate's plane (through its position, normal = its look) before and after the step */
+                const float d0 = (g_funnel.last[j][0] - g[0] * scale) * g[3] + (g_funnel.last[j][2] - g[2] * scale) * g[5];
+                const float d1 = (x - g[0] * scale) * g[3] + (z - g[2] * scale) * g[5];
+                if ((d0 < 0) == (d1 < 0) || fabsf(d1 - d0) > 60.0f * scale) break;   /* (a reset far across the plane is not a pass) */
+                const float u = d0 / (d0 - d1), cx = g_funnel.last[j][0] + (x - g_funnel.last[j][0]) * u, cz = g_funnel.last[j][2] + (z - g_funnel.last[j][2]) * u;
+                const float across = (cx - g[0] * scale) * g[5] - (cz - g[2] * scale) * g[3];
+                if (fabsf(across) <= g[6] * scale * 0.5f) g_funnel.fired = 1;
+                break;
+            }
+        }
+    }
+    g_funnel.n = 0;
+    for (int i = 0; i < n && g_funnel.n < 64; i++) {
+        if (!sl[i].vehicle) continue;
+        g_funnel.slot[g_funnel.n] = sl[i].slot;
+        g_funnel.last[g_funnel.n][0] = F32(sl[i].vehicle, 0xc0); g_funnel.last[g_funnel.n][1] = F32(sl[i].vehicle, 0xc4); g_funnel.last[g_funnel.n][2] = F32(sl[i].vehicle, 0xc8);
+        g_funnel.n++;
+    }
+    g_funnel.have = 1;
+    if (g_funnel.fired && g_funnel.progress < 1.0f) {
+        uint32_t nv; float move[4]; float dist = 20.0f;
+        if (fmt_modtrack_funnel_set(1, &nv, move)) dist = move[3];
+        g_funnel.progress += g[8] * (s->last_dt > 0 && s->last_dt < 0.25f ? s->last_dt : 1.0f / 60.0f) / dist;
+        if (g_funnel.progress > 1.0f) g_funnel.progress = 1.0f;
+    }
+    /* collision: the start layout until the gate fires; then nothing while the sets move; the raced layout once they are there */
+    if (!g_funnel.fired) rx_funnel_layout(0);
+    else if (g_funnel.progress >= 1.0f) rx_funnel_layout(1);
+    else rx_funnel_layout(2);
+}
+float rx_session_funnel(struct rx_session* s, int32_t* solid) {
+    if (solid) *solid = -1;
+    if (!session_ok(s) || !fmt_modtrack_funnel()) return -1.0f;
+    if (solid) { const int l = rx_funnel_layout_now(); *solid = l == 0 ? 0 : l == 1 ? 1 : -1; }
+    return g_funnel.progress;
 }
 
 /* No real time given: the frame runs when the game's frame cap says (UpdateTiming's busy wait ends at the cap). */
@@ -1661,6 +1821,16 @@ int rx_session_set_driving_camera(struct rx_session* s, int32_t preset) {
     return rx_player_set_camera(p, entities[preset]) ? 0 : 2;
 }
 
+/* w-split: the same for the n-th local human, without the view player (a write must name its player) */
+int rx_session_set_driving_camera_player(struct rx_session* s, int32_t player, int32_t preset) {
+    static const uint32_t entities[4] = {0, 1, 4, 2};
+    if (!session_ok(s) || s->state == RX_SESSION_ERROR) return 1;
+    if (preset < 0 || preset >= 4 || player < 0 || player >= local_player_count()) return 2;
+    const rx_addr p = local_player_n(player);
+    if (!p) return 2;
+    return rx_player_set_camera(p, entities[preset]) ? 0 : 2;
+}
+
 int rx_session_event_ui_state(struct rx_session* s, rx_event_ui_state* out) {
     if (!out) return 1;
     rx_event_ui_snapshot(0, out);
@@ -1710,7 +1880,8 @@ int rx_session_race(struct rx_session* s, rx_race_state* out) {
     out->num_laps = I32(a, 0xff070);
     const rx_addr board = U32(a, 0x2cc);
     out->start_timer = board ? F32(board, 0x4f4) : 0.0f;
-    if (out->state == 1 && !board) {   /* the activity's own countdown (Activity::vf26 00559190) as 005fb830 / 005fb880 show it */
+    /* (PRACTICE, game/practice.h: no countdown: its one Countdown frame shows no number, as the Powercross widget stays hidden) */
+    if (out->state == 1 && !board && !rx_practice_applies(a)) {   /* the activity's own countdown (Activity::vf26 00559190) as 005fb830 / 005fb880 show it */
         const int32_t count = I32(a, 0x2a0);
         out->countdown_step = count >= I32(a, 0x2b8) ? 3 : count < 0 ? 0 : count + 1;
     }
@@ -2402,7 +2573,7 @@ static void read_particle(rx_addr arr, uint32_t i, uint32_t manager, rx_addr fra
 }
 
 /* the order of one manager's particles: far to near view-depth buckets (int(min(max((p . fwd + vw - near) * 10000 / (far - near) + 1, 0),
- * 10001)); within a bucket the last index first), at most 3000 - as 00699a50 sorts them. */
+ * 10001)); within a bucket the last index first), at most 10000 (normal) / 3000 (additive) - as 00699a50 sorts and 00699e70 writes them. */
 struct particle_order { int32_t bucket; uint32_t index; };
 
 static int particle_order_cmp(const void* a, const void* b) {
@@ -2414,18 +2585,24 @@ static int particle_order_cmp(const void* a, const void* b) {
 
 #define RX_PARTICLE_BUCKETS 10000
 #define RX_PARTICLE_DRAW_CAP 3000
+#define RX_PARTICLE_DRAW_CAP_NORMAL 10000
 
 /* Fills *info for both managers and, when out != NULL, writes at most max particles (normal manager first). The info counts are
  * the managers' full exports (as the old plugin). Returns the number written. */
 static int32_t particle_export(struct rx_session* s, rx_particle* out, uint32_t max, rx_particle_info* info) {
-    (void)s;
     static const rx_addr managers[2] = {0x00c11bd0u, 0x00c11d80u};   /* type 2 normal, type 1 additive */
     memset(info, 0, sizeof *info);
-    const rx_addr cam = U32(0, 0x00a7b1d8);
+    /* The view the particles are ordered by: the local player's live camera, as rx_session_camera finds it (the camera entity, the
+     * intro / podium cameras, then the render copies). Until 2026-11-16 this read only the render copy [0xa7b1d8], which the original's
+     * ForestSystem::vf4 fills: a level without a forest left it null, the order was taken from the world's origin looking down +z, and
+     * every particle outside that "view's" depth range was not exported at all (the roost and exhaust of whole tracks). */
     float pos[3] = {0, 0, 0}, fwd[3] = {0, 0, 1}, near_plane = 0.1f, far_plane = 1000.0f;
-    if (cam) {
-        for (int i = 0; i < 3; i++) { pos[i] = F32(cam, 0x10 + 4u * (uint32_t)i); fwd[i] = F32(cam, 0x40 + 4u * (uint32_t)i); }
-        near_plane = F32(cam, 0x58); far_plane = F32(cam, 0x5c);
+    {
+        rx_camera live;
+        if (rx_session_camera(s, &live) == 0) {
+            for (int i = 0; i < 3; i++) { pos[i] = live.position[i]; fwd[i] = live.forward[i]; }
+            near_plane = live.near_plane; far_plane = live.far_plane;
+        }
     }
     if (!(far_plane > near_plane) || !isfinite(far_plane - near_plane)) { near_plane = 0.1f; far_plane = 1000.0f; }
     const float vw = -(pos[0] * fwd[0] + pos[1] * fwd[1] + pos[2] * fwd[2]);
@@ -2470,11 +2647,18 @@ static int32_t particle_export(struct rx_session* s, rx_particle* out, uint32_t 
                 float d = (pz * fwd[2] + py * fwd[1] + px * fwd[0] + (vw - near_plane)) * bucket_scale + 1.0f;
                 if (!(d < (float)(RX_PARTICLE_BUCKETS + 1))) d = (float)(RX_PARTICLE_BUCKETS + 1);
                 if (d < 0.0f) d = 0.0f;
-                const int32_t bucket = (int32_t)d;
-                if (bucket >= 1 && bucket <= RX_PARTICLE_BUCKETS) { order[count].bucket = bucket; order[count].index = i; count++; }
+                /* Every live particle is exported, ordered by its bucket; the ones the original's instance writer leaves out (bucket 0:
+                 * behind the near plane; 10001: past the far plane) go first / last instead. The host draws with a camera of its own
+                 * (a replay's, a spectator's, photo mode, a custom chase camera): what is behind the game's camera may be in its view. */
+                int32_t bucket = (int32_t)d;
+                if (bucket < 1) bucket = 0; else if (bucket > RX_PARTICLE_BUCKETS) bucket = RX_PARTICLE_BUCKETS + 1;
+                order[count].bucket = bucket; order[count].index = i; count++;
             }
             qsort(order, count, sizeof *order, particle_order_cmp);
-            if (count > RX_PARTICLE_DRAW_CAP) count = RX_PARTICLE_DRAW_CAP;
+            {   /* 00699e70: at most (-(vf7 != 0) & 7000) + 3000 instances, vf7 00691ba0 = type != 1: the normal manager 10000, the additive 3000 */
+                const uint32_t draw_cap = k == 0 ? (cap > RX_PARTICLE_DRAW_CAP_NORMAL ? cap : RX_PARTICLE_DRAW_CAP_NORMAL) : RX_PARTICLE_DRAW_CAP;   /* (a field past 12 riders: the bigger normal manager, scene_fx_entities.c) */
+                if (count > draw_cap) count = draw_cap;
+            }
             drawable = count;
             if (out) {
                 for (uint32_t i = 0; i < count && written < max; i++)
@@ -2617,6 +2801,8 @@ static uint32_t ambient_lod_divisor(void) {
     if (!renderer) return 1;
     const rx_addr p = U32(renderer, 0x1c + 4u * U32(renderer, 4));
     const uint32_t d = p ? U32(p, 0x19d0) : 0;
+    /* SPLIT SCREEN (w-split, port addition): the two-viewport budget (2) not applied to the exported ambient / podium draw distances */
+    if (d > 1 && local_player_count() >= 2) return 1;
     return d ? d : 1;
 }
 

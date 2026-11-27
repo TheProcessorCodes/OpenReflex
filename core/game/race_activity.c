@@ -1,4 +1,5 @@
 #include "alive_gate.h"
+#include "practice.h"
 #include "crt_atexit.h"
 #include "waypoint_respawn.h"
 /* race_activity.c -- the activities (Activity / MXActivityRace / MXActivityRaceStub / MXActivityFreeRide): the race session object
@@ -1067,6 +1068,9 @@ RX_FUNCTION(0x0055eb00, rx_scenario_done)
  * is in mode 1 / 2 with a screen (+0x18c) whose state (+0xc, or +0x10 when 2) is 1. */
 uint32_t rx_activity_can_start(rx_addr act) {
     if (U32(act, 0xfe8) != 0 || U32(act, 0x238) == 2 || U32(0, 0xae1b90) != 0) return 0;
+    /* PORT ADDITION (PRACTICE, practice.h): no intro, as the original's own Practice (session state 2) above: the race stub's Pre
+     * never starts the intro scenario and Pre goes on to the Countdown as soon as the session's timer event has come */
+    if (rx_practice_applies(act)) return 0;
     if (U32(act, 0x23c) == 5) {
         if (rx_session_is_networked(U32(stats_root(), 0x10)) != 0) return 0;     /* 00402540 */
     }
@@ -1092,6 +1096,37 @@ RX_FUNCTION(0x0055e710, rx_activity_can_start)
 void rx_race_countdown(rx_addr act, float dt) {
     const rx_addr board = U32(act, 0x2cc);
     RACE_FRAME_PLAIN(F, 0, 1);   /* push edi (and push esi on the board path) */
+    /* PORT ADDITION (PRACTICE, practice.h): no start board and no countdown: the gate started down (world_dropgate.c), the rider is
+     * free to go. The activity's own Countdown (Activity::vf26, its front-end branch included) with nothing left to wait for or count:
+     * no intro end (+0x2a8 0), the count +0x2a0 and clock +0x29c 0, so this frame posts "Countdown Step" 0 and enters InProgress. The
+     * board (only the intro ever walks it on, job 2 / 3) stays hidden as its idle state 0 keeps it; the step-0 cues and DROP_GATE are
+     * not played (activity_cues.c). */
+    if (rx_practice_applies(act)) {
+        if (board != 0) { SU8(board, 0xa2, 0); SU32(board, 0x70, 0); }
+        SF32(act, 0x2a8, 0.0f); SU32(act, 0x2a0, 0); SF32(act, 0x29c, 0.0f);
+        RACE_CORE_CALL(1, rx_activity_countdown(act, dt));
+        RACE_FRAME_END(F);
+        return;
+    }
+#ifndef RX_ORACLE
+    /* PORT ADDITION (an imported level's Reflex start gate kit, fmt_modtrack.h): Reflex's race intro scenario walks the start board
+     * through its states (shown at B: move state 3 on the intro's step 6; walking off with the hold timer running: 4 as the intro
+     * ends). An imported level has no intro scenario, so the board would wait at B for ever (job state 2) and the race never start.
+     * Here the Countdown does the same two steps: the board is shown for 3 s, then walks off from where it stands (the setup of
+     * state 4 starts half way between A and B: B is mirrored about the girl for that one call). The start itself stays the board's. */
+    if (board != 0 && fmt_modtrack_kit()) {
+        static float kit_show;
+        const uint32_t job = U32(board, 0x480);
+        if (job == 2 && U32(board, 0x484) == 5) { SU32(board, 0x484, 3); kit_show = 0.0f; }
+        else if (job == 3 && U32(board, 0x484) == 5 && (kit_show += dt) >= 3.0f) {
+            float b[3];
+            for (uint32_t k = 0; k < 3; k++) { b[k] = F32(board, 0x4d0 + 4 * k); SF32(board, 0x4d0 + 4 * k, 2.0f * b[k] - F32(board, 0x4c0 + 4 * k)); }
+            SU32(board, 0x484, 4);
+            RACE_CORE_CALL(0, rx_board_setup(board));
+            for (uint32_t k = 0; k < 3; k++) SF32(board, 0x4d0 + 4 * k, b[k]);
+        }
+    }
+#endif
     if (board != 0) {
         race_static_dcf304();
         const rx_addr g = U32(0, 0xda6cb0);

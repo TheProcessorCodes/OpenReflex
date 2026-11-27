@@ -37,11 +37,13 @@ Shader "Reflex/Grass"
             #pragma vertex Vert
             #pragma fragment Frag
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            #pragma multi_compile_fragment _ _RFX_ENHANCED
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "ReflexCommon.hlsl"
             #include "ReflexShadows.hlsl"
             #include "ReflexVolumetricApply.hlsl"
+            #include "ReflexWeather.hlsl"   // WEATHER: the grass under snow / wet (nothing without weather)
 
             CBUFFER_START(UnityPerMaterial)
                 float _Near, _AlphaRef, _SrcBlend, _DstBlend;
@@ -60,6 +62,7 @@ Shader "Reflex/Grass"
             float4 _RfxGrassUp0, _RfxGrassUp1, _RfxGrassUp2, _RfxGrassUp3;   // g_UpVectors c61..c64 (the wind)
             float4 _RfxGrassViewRight;                  // g_View c20 xyz: the camera's right, horizontal
             float4 _RfxHeightFog;                       // gHeightFog c38 (0 on the grass levels)
+            float _RfxGrassShade;                       // LIGHTING: ENHANCED: what a tuft in the sun's shadow keeps (the level's ambient share; OriginalForest)
 
             struct Attributes
             {
@@ -149,19 +152,47 @@ Shader "Reflex/Grass"
                 float3 c = w * (cm.rgb * lum - tex.rgb) + tex.rgb;
                 float k = cm.a * 0.300000012;
                 float alpha;
+            #if defined(_MAIN_LIGHT_SHADOWS_SCREEN)
+                float4 shadowCoord = ComputeScreenPos(TransformWorldToHClip(i.positionWS));
+            #else
+                float4 shadowCoord = TransformWorldToShadowCoord(i.positionWS);
+            #endif
+            #if defined(_RFX_ENHANCED)
+                // LIGHTING: ENHANCED (not the original program): every tuft, far or near, stands in the sun's shadow as the ground under
+                // it does: its colour (albedo x light) keeps the ambient's share there. (The original's step below, the near cells' loss
+                // of the colour map's 0.3 a term, is left out here: it would darken the near cells twice and step at the far cells.)
+                float sunLit = RfxMainLightShadow(shadowCoord);
+            #endif
                 if (_Near > 0.5)
                 {
                     // PixelShaderNear: the dynamic shadow (s4) removes the colour map's 0.3 a term; alpha = min(tex.a + c51, 1) fade
-                #if defined(_MAIN_LIGHT_SHADOWS_SCREEN)
-                    float4 shadowCoord = ComputeScreenPos(TransformWorldToHClip(i.positionWS));
-                #else
-                    float4 shadowCoord = TransformWorldToShadowCoord(i.positionWS);
-                #endif
+                #if !defined(_RFX_ENHANCED)
                     if (RfxMainLightShadow(shadowCoord) < 0.5) k = 0;
+                #endif
                     alpha = min(tex.a + _RfxGrassGrid.z * (RfxIsAliveData() ? 1.0 : i.cuv.z), 1.0) * i.cuv.z;   // Alive PixelShaderNear 10 / 21 / 24: c51 unscaled
                 }
                 else alpha = tex.a * i.cuv.z;
                 clip(round(saturate(alpha) * 255.0) - _AlphaRef - 0.5);
+            #if defined(_RFX_ENHANCED)
+                {
+                    // (Alive squares the colour below: the factors go in as their roots)
+                    bool sq = RfxIsAlive();
+                    float shade = lerp(clamp(_RfxGrassShade, 0.25, 1.0), 1.0, sunLit);
+                    c *= sq ? sqrt(shade) : shade;
+                    // WEATHER (the grass is unlit: its colour stands for albedo x light): the clouds' share of the light, the snow it
+                    // holds lit by the level's light on snow (the dimmed sun where it reaches the tuft + the sky), the rain's darkening
+                    [branch] if (RfxWeatherOn())
+                    {
+                        float3 keep = _RfxWeatherLight.rgb;
+                        c *= sq ? sqrt(keep) : keep;
+                        float m = RfxWeatherFoliageSnow(i.positionWS, 0.6, 0.85);
+                        float3 snow = float3(0.87, 0.90, 0.95) * (_RfxWeatherSnowSun.rgb * sunLit + _RfxWeatherSnowAmb.rgb);
+                        snow = (sq ? sqrt(snow) : snow) / (0.699999988 + k);   // (the 0.7 + k below is the grass's own)
+                        c = lerp(c, snow, m);
+                        c *= lerp(1.0, 0.84, _RfxWeather.x * (1.0 - _RfxWeather.y));
+                    }
+                }
+            #endif
                 float3 f = lerp(c, i.fog.rgb, i.fog.w);
                 float3 colour = f * 0.699999988 + f * k;
                 // MX vs ATV Alive (GrassShader PixelShaderFar / Near): the same colour, squared (mul oC0.xyz, r2.xyz, r0.xyz with r2 = r0 x

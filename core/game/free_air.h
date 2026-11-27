@@ -31,7 +31,16 @@
  * rx_fa_settle_rate), so the bike is turned back that much slower; at 1 the helper's code takes the original's path untouched (no
  * flag, no multiply). rx_session_set_free_air(mode) maps its bits to 0 / 1.
  *
- * Off (mask 0, strengths 1 and looseness 0, the default) is the original bit for bit: the gate reads one host static and nothing of the guest. */
+ * LIP PULL (w-lippull, rx_session_set_lip_pull; 0 .. 1, 1 = the original): the original's grounded correction (MX 00441300 bike_slot12.c,
+ * ATV 00497a70 vehicle_atv_controls.c) has a wheelie limiter for the steps when only the rear wheel(s) touch: while the bike pitches
+ * nose-up it scales the pitch rate by 0.85 .. 0.95 per 7.5 ms step (strongest at a bike angle of 25 deg MX / 20 deg ATV, again at 50 deg)
+ * and caps it at 1.5 rad/s. It judges the "wheelie" by the bike's angle to world up, so on a steep jump face, when the front wheel leaves
+ * the face before the rear, it takes the face's own nose-up rotation away and the bike is held down to the lip: the steeper the face, the
+ * more (core/notes/bike.md "LIP PULL"). Below 1 the limiter's change of the pitch rate is kept by keep = 1 - (1 - lip) * slope, where
+ * slope = 0 .. 1 as the ground under the rear wheel rises 10 .. 25 deg along the bike's heading (rx_fa_lip_slope): a wheelie on flat
+ * ground keeps the original limiter at any setting, a steep face gets lip of it. 1 takes the original's path untouched.
+ *
+ * Off (mask 0, strengths 1, looseness 0 and lip pull 1, the default) is the original bit for bit: the gate reads one host static and nothing of the guest. */
 #ifndef RX_FREE_AIR_H
 #define RX_FREE_AIR_H
 
@@ -45,15 +54,18 @@
 #define RX_FA_LOOSE           0x100        /* rx_fa_for: AIR LOOSENESS applies to this simulation (rx_fa_looseness_value > 0) */
 #define RX_FA_PART_HOLD       0x200        /* rx_fa_for: the trick hold runs at 0 < strength < 1 (rx_fa_hold_rate) */
 #define RX_FA_PART_SETTLE     0x400        /* rx_fa_for: the auto-level runs at 0 < strength < 1 (rx_fa_settle_rate) */
+#define RX_FA_LIP             0x800        /* rx_fa_for: LIP PULL below 1 (rx_fa_lip_blend) */
 
 extern uint32_t rx_fa_mask_value;          /* the mask of the strengths at 0 (bit 1 snap, bit 2 level); restored with the core's statics */
 extern float    rx_fa_level_value;         /* AUTO LEVEL strength 0 .. 1 (rx_session_set_air_helpers), 1 = the original */
 extern float    rx_fa_snap_value;          /* COUNTER-STEER SNAP strength 0 .. 1, 1 = the original */
 extern float    rx_fa_looseness_value;     /* the session's AIR LOOSENESS 0 .. 1 (rx_session_set_free_air_looseness) */
+extern float    rx_fa_lip_value;           /* LIP PULL 0 .. 1 (rx_session_set_lip_pull), 1 = the original */
 extern uint32_t rx_fa_any;                 /* mask or looseness set: the only word the gate reads when FREER AIR is off */
 void     rx_fa_set(uint32_t mask);                 /* the bits as strengths: a set bit = 0, a clear bit = 1 */
 void     rx_fa_set_helpers(float level, float snap);   /* 0 .. 1 each (the caller validates) */
 void     rx_fa_set_looseness(float l);
+void     rx_fa_set_lip(float lip);              /* 0 .. 1 (the caller validates) */
 uint32_t rx_fa_local(rx_addr sim);         /* mask | RX_FA_LOOSE (when looseness > 0) if `sim` is a local human player's vehicle simulation, else 0 */
 
 /* the helpers to leave out / the looseness for simulation S this step (0: all of the original's) */
@@ -71,5 +83,10 @@ float rx_fa_loose_takeoff(float t);        /* a first-air-step damping factor (S
 float rx_fa_loose_gain(void);              /* the stick increment's factor */
 /* 0042d6b0's first-order lag (phys_lag_filter_update) with the time constant F+4 eased (F+4 itself unchanged; F+8 = the k used) */
 float rx_fa_lag_update(rx_addr f, float dt, float target);
+
+/* LIP PULL (only called with RX_FA_LIP set): the rear-only wheelie limiter's new pitch rate. before = the pitch rate it was given, limited =
+ * the original's result, n = the rear contact normal (world), fwd = the bike's forward axis (world). */
+float rx_fa_lip_slope(rx_v4 n, rx_v4 fwd);                 /* 0 .. 1: 10 .. 25 deg of uphill along the heading */
+float rx_fa_lip_blend(float before, float limited, rx_v4 n, rx_v4 fwd);
 
 #endif

@@ -163,6 +163,7 @@ int fmt_entity_matrix(const fmt_entity* e, float out[16])
     if (c < 0 || fmt_bxml_node_value(e->doc, c, &v) < 0 || v.kind != FMT_BX_MATRIX || v.count != 1) return fmt_fail("entity %u: no matrix", e ? e->id : 0);
     fmt_bx_floats(&v, 0, out);
     if (fmt_modtrack_active() && strstr(e->type,"StartEntityFreeRide")) fmt_modtrack_start(out);
+    if (fmt_modtrack_kit() && fmt_modtrack_kit_entity(e->type, fmt_entity_string(e, "Name"))) fmt_modtrack_kit_matrix(out);
     return 0;
 }
 
@@ -327,11 +328,25 @@ const fmt_entity* fmt_scene_entities(fmt_scene* s, int subscene, int* n)
             return NULL;
         }
         if (fmt_modtrack_active()) {
-            int count=0;
+            int count=0; const fmt_entity* gate=NULL; const fmt_entity* drop=NULL;
             for(int i=0;i<sc->nents;i++) {
                 const char* t=sc->ents[i].type;
-                if (!strcmp(t,"HFTerrainRSData") || strstr(t,"StartEntityFreeRide") || !strcmp(t,"AmbientDirectionalLightRSData"))
+                /* the Reflex start gate kit of an imported race level (fmt_modtrack.h): the gate, its drop bar, the start board */
+                int kit=fmt_modtrack_kit_entity(t,fmt_entity_string(&sc->ents[i],"Name"));
+                if (kit && !strcmp(t,"CollisionRSData")) { if(gate)kit=0; else gate=&sc->ents[i]; }
+                if (kit && !strcmp(t,"DropGateRSData")) { if(drop)kit=0; else drop=&sc->ents[i]; }
+                if (kit || !strcmp(t,"HFTerrainRSData") || strstr(t,"StartEntityFreeRide") || !strcmp(t,"AmbientDirectionalLightRSData"))
                     sc->ents[count++]=sc->ents[i];
+            }
+            if (gate || drop) {   /* (the subscene that holds the kit: Base) */
+                float g[16],d[16]; fmt_bxml_value v; int ok=gate&&drop;
+                for(int k=0;k<2&&ok;k++) {
+                    const fmt_entity* e=k?drop:gate; int c=fmt_entity_field_child(e,"Matrix",0);
+                    ok=c>=0&&fmt_bxml_node_value(e->doc,c,&v)>=0&&v.kind==FMT_BX_MATRIX&&v.count==1;
+                    if(ok)fmt_bx_floats(&v,0,k?d:g);
+                }
+                if(!ok){int kept=0;for(int i=0;i<count;i++)if(!fmt_modtrack_kit_entity(sc->ents[i].type,fmt_entity_string(&sc->ents[i],"Name")))sc->ents[kept++]=sc->ents[i];count=kept;}
+                fmt_modtrack_kit_donor(ok?g:NULL,ok?d:NULL);
             }
             sc->nents=count;
         }

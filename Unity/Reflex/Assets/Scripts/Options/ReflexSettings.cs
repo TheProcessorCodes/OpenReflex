@@ -32,6 +32,14 @@ namespace Reflex.Port.Options
         public static bool ClientInfo { get => ReflexSave.GetInt("ReflexClientInfo", 0) != 0; set => ReflexSave.SetInt("ReflexClientInfo", value ? 1 : 0); }
         public static float EffectsVolume { get => Mathf.Clamp(ReflexSave.GetFloat("ReflexAudio.master", 1f), 0f, 2f); set => ReflexSave.SetFloat("ReflexAudio.master", Mathf.Clamp(value, 0f, 2f)); }
         public static float MusicVolume { get => Mathf.Clamp01(ReflexSave.GetFloat("ReflexAudio.music", 0.6f)); set => ReflexSave.SetFloat("ReflexAudio.music", Mathf.Clamp01(value)); }
+        /// STREAMER MODE (after Open Unleashed's): no music at all (the soundtrack in the menus, the races and the replays, YOUR MUSIC, the
+        /// videos' sound), whatever MUSIC says; effects, engines and the crowd stay. For streams and recordings (the soundtrack is licensed music).
+        public static bool StreamerMode
+        {
+            get { if (s_streamer < 0) s_streamer = ReflexSave.GetInt("Audio.StreamerMode", 0) != 0 ? 1 : 0; return s_streamer == 1; }
+            set { s_streamer = value ? 1 : 0; ReflexSave.SetInt("Audio.StreamerMode", value ? 1 : 0); }
+        }
+        static int s_streamer = -1;
         public static bool MusicOn { get => ReflexSave.GetInt("ReflexAudio.musicOn", 1) != 0; set => ReflexSave.SetInt("ReflexAudio.musicOn", value ? 1 : 0); }
         public static int EngineVolume { get => Mathf.Clamp(ReflexSave.GetInt("ReflexUI.EngineVolume", 10), 0, 10); set => ReflexSave.SetInt("ReflexUI.EngineVolume", Mathf.Clamp(value, 0, 10)); }
         /// The game's Vibration UI setting (the game rumbles only when it is on; the PC game's default is off).
@@ -49,7 +57,7 @@ namespace Reflex.Port.Options
         public static int NativeGame { get => ReflexSave.Has("ReflexNativeGame") ? Mathf.Clamp(ReflexSave.GetInt("ReflexNativeGame", 1), 0, 2) : -1; set { if (value < 0) ReflexSave.Delete("ReflexNativeGame"); else ReflexSave.SetInt("ReflexNativeGame", Mathf.Clamp(value, 0, 2)); } }
 
         // ------------------------------------------------------------------------------------------- the client's own (save.json)
-        public static readonly string[] HudStyleNames = { "CLASSIC", "MODERN" };
+        public static readonly string[] HudStyleNames = { "ORIGINAL", "MODERN" };
         public static bool ClassicSpeedometer { get => ReflexSave.GetInt("Hud.ClassicSpeedometer", 0) != 0; set => ReflexSave.SetInt("Hud.ClassicSpeedometer", value ? 1 : 0); }
         /// HUD STYLE: ORIGINAL the game's own HUD (live, or the hand-built fallback), exactly as before; MODERN the client's
         /// (ReflexModernHud, Open Unleashed's race HUD). Switches at once. Never chosen: it follows the FRONT END in use
@@ -71,15 +79,45 @@ namespace Reflex.Port.Options
         public static int FpsCap { get => Mathf.Max(DisplayRate, ReflexSave.GetInt("Options.FpsCap", DisplayRate)); set => ReflexSave.SetInt("Options.FpsCap", Mathf.Max(DisplayRate, value)); }
         /// QUALITY: a QualitySettings level (-1 = the project's own). Player builds.
         public static int Quality { get => ReflexSave.GetInt("Options.Quality", -1); set => ReflexSave.SetInt("Options.Quality", value); }
-        /// LIGHTING: 0 ORIGINAL (the original renderer, default), 1 ENHANCED (Rendering/ReflexEnhancedLighting: modern shadows, AO, HDRI skies, tone mapping).
-        public static int Lighting { get => Mathf.Clamp(ReflexSave.GetInt("Options.Lighting", 0), 0, 1); set => ReflexSave.SetInt("Options.Lighting", Mathf.Clamp(value, 0, 1)); }
-        /// ENHANCED QUALITY (OPTIONS > VIDEO): the ENHANCED lighting's tier, -1 AUTO (SHADOW QUALITY, at most what the GPU suits:
-        /// ReflexEnhancedLighting.AutoTier), 0 LOW, 1 MEDIUM, 2 HIGH.
+        /// LIGHTING was a choice (0 ORIGINAL, the default; 1 ENHANCED) until 2026-11-09. ENHANCED (Rendering/ReflexEnhancedLighting) is now
+        /// the only lighting: this reads 1 whatever a save holds and writes nothing. The key "Options.Lighting" is left in old saves as it
+        /// is (the release line still reads it). Developers force the original renderer with REFLEX_LIGHTING=original.
+        public static int Lighting { get => 1; set { } }
+        /// Once per save (ReflexClientLive.ApplyAtStart): a save from before ENHANCED became the only lighting whose PRESET was PERFORMANCE
+        /// (which meant LIGHTING: ORIGINAL) gets the new PERFORMANCE values (LIGHTING QUALITY LOW, no volumetric light, no speed blur), so
+        /// the player who chose the fastest picture keeps the fastest one there is. Every other save keeps its settings: LIGHTING QUALITY
+        /// AUTO picks the tier the GPU suits.
+        public static void MigrateLightingOnly()
+        {
+            if (ReflexSave.GetInt("Options.LightingOnly", 0) == 1) return;
+            ReflexSave.SetInt("Options.LightingOnly", 1);
+            bool wasOriginal = ReflexSave.Has("Options.Lighting") && ReflexSave.GetInt("Options.Lighting", 0) == 0;
+            if (wasOriginal && ReflexSave.GetInt("Options.Preset", -1) == 1)
+            {
+                EnhancedQuality = 0;
+                ReflexSave.SetInt("Options.Volumetric", 0);
+                ReflexSave.SetInt("OpenReflex.SpeedBlur", 0);
+                Debug.Log("[Options] LIGHTING: ORIGINAL is gone; this save's PRESET: PERFORMANCE now means LIGHTING QUALITY LOW, VOLUMETRIC LIGHT OFF, SPEED BLUR OFF");
+            }
+            else if (wasOriginal) Debug.Log("[Options] LIGHTING: ORIGINAL is gone; this save now draws ENHANCED at LIGHTING QUALITY " + (EnhancedQuality < 0 ? "AUTO" : EnhancedQuality.ToString()));
+            ReflexSave.Save();
+        }
+        /// LIGHTING QUALITY (OPTIONS > VIDEO; "ENHANCED QUALITY" before 2026-11-09, the same key): the lighting's tier, -1 AUTO (SHADOW
+        /// QUALITY, at most what the GPU suits: ReflexEnhancedLighting.AutoTier), 0 LOW, 1 MEDIUM, 2 HIGH.
         public static int EnhancedQuality { get => Mathf.Clamp(ReflexSave.GetInt("Options.EnhancedQuality", -1), -1, 2); set => ReflexSave.SetInt("Options.EnhancedQuality", Mathf.Clamp(value, -1, 2)); }
         /// DRAW DISTANCE (OPTIONS > VIDEO, w-rmlod): 0 ORIGINAL (the original renderer's tree / scenery / grass distances and shadow
         /// distance), 1 HIGH, 2 ULTRA (Rendering/ReflexDrawDistance: longer 3D tree, scenery LOD, grass and shadow distances, with
-        /// cross-fades and hysteresis instead of hard swaps). Default HIGH in this test build.
+        /// cross-fades and hysteresis instead of hard swaps). Default HIGH.
         public static int DrawDistance { get => Mathf.Clamp(ReflexSave.GetInt("Options.DrawDistance", 1), 0, 2); set => ReflexSave.SetInt("Options.DrawDistance", Mathf.Clamp(value, 0, 2)); }
+        /// BIKE DETAIL (OPTIONS > VIDEO): 0 ORIGINAL (a race draws the race models, as the original game does: its high-res "HR_" twins are
+        /// the garage's only, MXGarage:SetHREnable), 1 HIGH (your own vehicle is the garage's high-res twin on the track too), 2 HIGH: ALL
+        /// RIDERS (the other riders' too while they are near the camera; the race models' distance LODs take over beyond, ReflexBikeModel.Lod.cs).
+        /// Read when a race builds its vehicles (Content/ReflexBikeModel.RaceDetail). REFLEX_BIKE_DETAIL=0 / 1 / 2 overrides it (tests).
+        public static int BikeDetail { get => Mathf.Clamp(ReflexSave.GetInt("Options.BikeDetail", BikeDetailDefault), 0, 2); set => ReflexSave.SetInt("Options.BikeDetail", Mathf.Clamp(value, 0, 2)); }
+        public const int BikeDetailDefault = 1;   // (HIGH: the user's call, 2026-11-16, after the measurements)
+        /// TEXTURE FILTERING (OPTIONS > VIDEO, Rendering/ReflexTextureFiltering): 0 ORIGINAL (the original's isotropic sampling), 1 4X, 2 8X,
+        /// 3 16X anisotropic filtering (and a linear mip filter) for the scenery, vehicle / rider and terrain detail textures. Default 8X.
+        public static int TextureFiltering { get => Mathf.Clamp(ReflexSave.GetInt("Options.TextureFiltering", 2), 0, 3); set => ReflexSave.SetInt("Options.TextureFiltering", Mathf.Clamp(value, 0, 3)); }
         /// FRAME PACING (OPTIONS > VIDEO): 0 ORIGINAL (the game's own 60 Hz loop, the lowest input latency: OriginalWorldRuntime PacingMode.Original),
         /// 1 SMOOTH (the game frames blended to the display's rate: PacingMode.Interpolated, one game frame later; for 120 Hz+ displays).
         public static int FramePacing { get => Mathf.Clamp(ReflexSave.GetInt("Options.FramePacing", 0), 0, 1); set => ReflexSave.SetInt("Options.FramePacing", Mathf.Clamp(value, 0, 1)); }
@@ -97,6 +135,10 @@ namespace Reflex.Port.Options
         /// where the original's per-vertex RT_Bump height detail changes look (a ring ahead of the rider). HIGH pushes that step far away.
         public static int TerrainDetail { get => Mathf.Clamp(ReflexSave.GetInt("Options.TerrainDetail", 1), 0, 1); set => ReflexSave.SetInt("Options.TerrainDetail", Mathf.Clamp(value, 0, 1)); }
         public static float TerrainPixelError => TerrainDetail == 1 ? 1f : 3f;
+        /// TERRAIN TESSELLATION (OPTIONS > VIDEO): 0 OFF, 1 ON (default since 2026-11-16, the user's call): the original's fine terrain grid around the camera (a 129 x 129
+        /// clipmap of 0.25-unit cells, each level twice as coarse), where RT_Bump's relief and the rut decals move the ground's vertices as
+        /// in the original; Unity's terrain (one vertex per height-map sample) is drawn beyond it (Rendering/ReflexTerrainClipmap.cs).
+        public static int TerrainTessellation { get => Mathf.Clamp(ReflexSave.GetInt("Options.TerrainTessellation", 1), 0, 1); set => ReflexSave.SetInt("Options.TerrainTessellation", Mathf.Clamp(value, 0, 1)); }
         public static int AspectFill { get => Mathf.Clamp(ReflexSave.GetInt("Options.AspectFill", 1), 0, 1); set => ReflexSave.SetInt("Options.AspectFill", Mathf.Clamp(value, 0, 1)); }
         /// MAP SCALE (the race setup page; core/plan/MAP_SCALE.md): a track's scale in percent (RxMapScale.MinPercent .. MaxPercent in
         /// steps of 5), kept per track (the event's location) in the client's settings; 100 % removes the key.
@@ -142,13 +184,53 @@ namespace Reflex.Port.Options
                  : FreerAir ? Mathf.Clamp01(ReflexSave.GetFloat("OpenReflex.AirLooseness", AirLoosenessLegacyDefault)) : 0f;
             set => ReflexSave.SetFloat("OpenReflex.AirLooseness2", Mathf.Clamp01(value));
         }
+        /// LIP PULL (OPTIONS > OPEN REFLEX > RIDING, w-lippull; core rx_session_set_lip_pull): 0 .. 1, how much of the original's rear-wheel-only wheelie
+        /// limiter the player keeps on a steep face (it takes the face's nose-up rotation away once the front wheel has left it, holding the bike down to
+        /// the lip). 1 (the default) = the original; 0 = none on a steep face (wheelies on flat ground keep it). Key OpenReflex.LipPull.
+        public static float LipPull
+        {
+            get => Mathf.Clamp01(ReflexSave.GetFloat("OpenReflex.LipPull", 1f));
+            set => ReflexSave.SetFloat("OpenReflex.LipPull", Mathf.Clamp01(value));
+        }
+        /// RIDER MOTION (OPTIONS > OPEN REFLEX > RIDING, a prototype; OriginalWorld/RiderLooseMotion.cs): 0 ORIGINAL (the default: the rider exactly as the
+        /// original game poses it), 1 LOOSE (the body gives with the bike: drawing only, nothing of the ride changes). Key OpenReflex.RiderMotion.
+        public static int RiderMotion { get => Mathf.Clamp(ReflexSave.GetInt("OpenReflex.RiderMotion", 0), 0, 1); set => ReflexSave.SetInt("OpenReflex.RiderMotion", Mathf.Clamp(value, 0, 1)); }
+        /// RIDER MOTION's LOOSENESS: 0 .. 1, how much of the LOOSE motion is shown (1 = as tuned). Key OpenReflex.RiderMotionStrength.
+        public static float RiderMotionStrength { get => Mathf.Clamp01(ReflexSave.GetFloat("OpenReflex.RiderMotionStrength", 1f)); set => ReflexSave.SetFloat("OpenReflex.RiderMotionStrength", Mathf.Clamp01(value)); }
         /// FREE RIDE WITHOUT BORDERS (OPTIONS > OPEN REFLEX, w-frnowalls; core rx_session_set_free_ride_borders): no invisible borders in Free Ride
         /// (no reset zones off the track, no reset triggers but deep water, no white-out band, the terrain's edge only as a fall net). ON by default (the owner's
         /// ask); OFF brings the original's borders back.
+        /// ANY VEHICLE ON ANY TRACK (core/plan/ANY_VEHICLE.md; OPTIONS > OPEN REFLEX, ON by default): the race setup's VEHICLE row offers every
+        /// vehicle on every event and CLASS every class; OFF: the original's lists (the event type's own classes).
+        /// DISABLE COMPOUND (OPTIONS > OPEN REFLEX > LOADING; OpenShell.StartEvent, OpenArenaWarm.Enabled): OFF by default. ON: START EVENT / RIDE NOW
+        /// loads behind the full-screen loading screen (as WATCH GHOST does) instead of the ridden / shown test-ride compound, and the compound's
+        /// session is not kept warm in the menus. The garage's TEST RIDE and MotoSkills, whose world the compound is, are not changed.
+        public static bool DisableCompound { get => ReflexSave.GetBool("OpenReflex.DisableCompound", false); set => ReflexSave.SetBool("OpenReflex.DisableCompound", value); }
+        public static bool AnyVehicle { get => ReflexSave.GetBool("OpenReflex.AnyVehicle", true); set => ReflexSave.SetBool("OpenReflex.AnyVehicle", value); }
+        /// PLAYERS TAB (w-split; OPTIONS > OPEN REFLEX > RACE SETUP, ON by default): the race / Free Ride setup page's PLAYERS tab, where a second
+        /// controller joins for split screen. Its own HIDE THIS TAB turns it off for players who only ride solo.
+        public static bool PlayersTab { get => ReflexSave.GetBool("OpenReflex.PlayersTab", true); set => ReflexSave.SetBool("OpenReflex.PlayersTab", value); }
         public static bool FreeRideNoBorders { get => ReflexSave.GetBool("OpenReflex.FreeRideNoBorders", true); set => ReflexSave.SetBool("OpenReflex.FreeRideNoBorders", value); }
         /// ALIVE LOOK (OPTIONS > OPEN REFLEX > FREE RIDE, w-alivereflex experiment; Content/AliveLook.cs): the MX vs ATV Alive levels drawn with Reflex's own
         /// rendering (true, REFLEX) or with the Alive translation (false, ALIVE). Read when a level loads. Default: AliveLook.DefaultReflex.
-        public static bool AliveLookReflex { get => ReflexSave.GetBool("OpenReflex.AliveLookReflex", Reflex.Port.Content.AliveLook.DefaultReflex); set => ReflexSave.SetBool("OpenReflex.AliveLookReflex", value); }
+        /// A save from before 2026-11-10 that holds ALIVE (an older default, or a test) goes back to REFLEX once: with the ALIVE look the terrain
+        /// deformation of the Alive tracks looks wrong, and players did not know the option was the cause. A choice made after that is kept.
+        public static bool AliveLookReflex
+        {
+            get { MigrateAliveLook(); return ReflexSave.GetBool("OpenReflex.AliveLookReflex", Reflex.Port.Content.AliveLook.DefaultReflex); }
+            set { MigrateAliveLook(); ReflexSave.SetBool("OpenReflex.AliveLookReflex", value); }
+        }
+        static bool aliveLookMigrated;
+        static void MigrateAliveLook()
+        {
+            if (aliveLookMigrated) return;
+            aliveLookMigrated = true;
+            if (ReflexSave.Has("OpenReflex.AliveLookReset1")) return;
+            bool wasAlive = ReflexSave.Has("OpenReflex.AliveLookReflex") && !ReflexSave.GetBool("OpenReflex.AliveLookReflex", true);
+            if (wasAlive) ReflexSave.SetBool("OpenReflex.AliveLookReflex", true);
+            ReflexSave.SetBool("OpenReflex.AliveLookReset1", true);
+            ReflexSave.Save();
+        }
         public static int FreeRideBordersMode => FreeRideNoBorders ? Reflex.Port.RxCore.RxApiNative.FreeRideBordersOpen : Reflex.Port.RxCore.RxApiNative.FreeRideBordersOriginal;
         /// SPAWN MARKERS (OPTIONS > OPEN REFLEX, w-spawnmarker; OriginalWorld/OriginalSpawnMarker.cs, core rx_session_spawn_at_instant): hold SET SPAWN MARKER to
         /// keep the rider's place as a marker, press RIDE TO SPAWN MARKER to ride back there at once (Free Ride and PRACTICE). ON by default.
@@ -215,6 +297,10 @@ namespace Reflex.Port.Options
         /// soundtrack only), 1 MIX IN (default: the songs are played among the game's tracks in the races; nothing changes while the folder is empty), 2 ONLY (they
         /// replace the game's soundtrack in the menus and the races; the game's soundtrack plays while the folder has no songs).
         public static int CustomMusic { get => Mathf.Clamp(ReflexSave.GetInt("Options.CustomMusic", 1), 0, 2); set => ReflexSave.SetInt("Options.CustomMusic", Mathf.Clamp(value, 0, 2)); }
+        /// SOUNDTRACK (OPTIONS > AUDIO, Content/ReflexSongLibrary.Pool): which games' songs play: 0 ALL SONGS (default: Reflex's own tracks and the
+        /// MX vs ATV Alive / Untamed soundtracks imported from the player's discs, together), 1 REFLEX SONGS ONLY, 2 ALIVE SONGS ONLY, 3 UNTAMED SONGS
+        /// ONLY (Reflex's tracks while that game's songs are not imported). YOUR MUSIC adds the player's own songs to whichever it is.
+        public static int Soundtrack { get => Mathf.Clamp(ReflexSave.GetInt("Options.Soundtrack", 0), 0, 3); set => ReflexSave.SetInt("Options.Soundtrack", Mathf.Clamp(value, 0, 3)); }
         /// NOW PLAYING POP-UP (OPTIONS > AUDIO, Hud/ReflexNowPlaying.cs): the title and artist of a song slide in when it starts (the game's tracks too). ON by default.
         public static bool NowPlayingPopup { get => ReflexSave.GetInt("Options.NowPlaying", 1) != 0; set => ReflexSave.SetInt("Options.NowPlaying", value ? 1 : 0); }
         /// MASTER VOLUME (0 .. 1): every sound (AudioListener.volume), over the game's own EFFECTS / MUSIC / ENGINE volumes.
@@ -227,6 +313,9 @@ namespace Reflex.Port.Options
         public static float CrowdVolume { get => Mathf.Clamp01(ReflexSave.GetFloat("Options.CrowdVolume", 1f)); set => ReflexSave.SetFloat("Options.CrowdVolume", Mathf.Clamp01(value)); }
         /// MOUSE LEAN: the mouse leans the rider (the game's Raw Input path, scaled by MOUSE SENSITIVITY); off = the mouse is not sent to the game.
         public static bool MouseLean { get => ReflexSave.GetInt("Options.MouseLean", 1) != 0; set => ReflexSave.SetInt("Options.MouseLean", value ? 1 : 0); }
+        /// INVERT LEAN (ReflexLeanInvert.cs): the rider leans the other way from the stick and the mouse; LEFT / RIGHT and FORWARD / BACK apart. Off = the original's.
+        public static bool InvertLeanX { get => ReflexSave.GetInt("Options.InvertLeanX", 0) != 0; set => ReflexSave.SetInt("Options.InvertLeanX", value ? 1 : 0); }
+        public static bool InvertLeanY { get => ReflexSave.GetInt("Options.InvertLeanY", 0) != 0; set => ReflexSave.SetInt("Options.InvertLeanY", value ? 1 : 0); }
         /// LANGUAGE of the game's texts (the install's string tables): "" = the install's own (UIRegistry ForceLanguage, else ENG); else a
         /// language code the install has (ENG, GER, FRE, SPA, ITA). Applies at the next start.
         public static string Language { get => ReflexSave.GetString("Options.Language", ""); set => ReflexSave.SetString("Options.Language", value ?? ""); }

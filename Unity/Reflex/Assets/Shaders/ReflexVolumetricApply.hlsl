@@ -67,17 +67,41 @@ float4 RfxVolAt(float3 P, float4 positionCS)
     return float4(L, Td);
 }
 
-// The fragment's colour (raw, before RfxOutput) with the medium in front of it, by the blend it is drawn with (UnityEngine.Rendering.BlendMode:
-// 0 Zero, 1 One, 2 DstColor, 3 SrcColor, 10 OneMinusSrcAlpha). a: the fragment's alpha.
+// WEATHER's mist (Scripts/Rendering/ReflexWeather.cs, Resources/ReflexWeatherMist.shader: one full-screen blend over the opaque world, after
+// the volumetric composite and before the transparent queue): rgb the mist colour (raw), w its density (1/m); 0 without weather. What
+// draws after that pass takes the mist between the camera and itself here (the same amount the pass gives an opaque surface there).
+float4 _RfxMistApply;
+float RfxMistAt(float3 P)
+{
+    float3 toP = P - _WorldSpaceCameraPos;
+    float k = _RfxMistApply.w * lerp(0.45, 1.0, exp2(-max(toP.y, 0.0) / 120.0));
+    return min(1.0 - exp(-k * max(length(toP) - 4.0, 0.0)), 0.92);
+}
+
+// The fragment's colour (raw, before RfxOutput) with the medium, then the weather's mist, in front of it, by the blend it is drawn with
+// (UnityEngine.Rendering.BlendMode: 0 Zero, 1 One, 2 DstColor, 3 SrcColor, 10 OneMinusSrcAlpha). a: the fragment's alpha.
 float3 RfxVolApply(float3 c, float a, float3 P, float4 positionCS, float srcBlend, float dstBlend)
 {
-    if (_RfxVolApply.x < 0.5) return c;
-    float4 v = RfxVolAt(P, positionCS);
-    if (dstBlend > 0.5 && dstBlend < 1.5) return c * v.a;                                                  // additive: dst + c (x a)
-    if ((srcBlend > 1.5 && srcBlend < 2.5 && dstBlend < 0.5) || (srcBlend < 0.5 && dstBlend > 2.5 && dstBlend < 3.5))
-        return lerp(float3(1, 1, 1), c, v.a);                                                              // multiplicative: towards 1
-    if (srcBlend > 0.5 && srcBlend < 1.5 && dstBlend > 9.5 && dstBlend < 10.5) return c * v.a + v.rgb * a;  // premultiplied
-    return c * v.a + v.rgb;                                                                                 // alpha blended / opaque
+    bool additive = dstBlend > 0.5 && dstBlend < 1.5;                                                       // dst + c (x a)
+    bool multiply = (srcBlend > 1.5 && srcBlend < 2.5 && dstBlend < 0.5) || (srcBlend < 0.5 && dstBlend > 2.5 && dstBlend < 3.5);   // towards 1
+    bool premultiplied = srcBlend > 0.5 && srcBlend < 1.5 && dstBlend > 9.5 && dstBlend < 10.5;
+    if (_RfxVolApply.x > 0.5)
+    {
+        float4 v = RfxVolAt(P, positionCS);
+        if (additive) c = c * v.a;
+        else if (multiply) c = lerp(float3(1, 1, 1), c, v.a);
+        else if (premultiplied) c = c * v.a + v.rgb * a;
+        else c = c * v.a + v.rgb;                                                                           // alpha blended / opaque
+    }
+    if (_RfxMistApply.w > 0.0)
+    {
+        float m = RfxMistAt(P);
+        if (additive) c = c * (1.0 - m);
+        else if (multiply) c = lerp(c, float3(1, 1, 1), m);
+        else if (premultiplied) c = c * (1.0 - m) + _RfxMistApply.rgb * (m * a);
+        else c = lerp(c, _RfxMistApply.rgb, m);
+    }
+    return c;
 }
 
 #endif

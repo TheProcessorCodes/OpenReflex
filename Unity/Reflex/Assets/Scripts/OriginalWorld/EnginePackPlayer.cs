@@ -147,6 +147,8 @@ namespace Reflex.Port.OriginalWorld
         bool built, atLimiter;
         float rpmNorm = -1f, throttle, limiterHeld, limiterGain;
         public EnginePack Pack => pack;
+        /// SPLIT SCREEN (w-split): this pack is placed for the second listener (OriginalAudio.Hear's hysteresis; the caller's, main thread).
+        public bool HeardBy2;
         /// w-packrpm: this rider's audio rpm / load model (OriginalVehicleSound steps it and passes its output to Update).
         public readonly EnginePackRpm AudioRpm = new EnginePackRpm();
         /// Diagnostics: the last frame's normalized pack rpm, the throttle mix, and each voice's (layer, file, volume, pitch).

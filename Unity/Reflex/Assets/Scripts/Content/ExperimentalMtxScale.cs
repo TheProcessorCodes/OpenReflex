@@ -11,7 +11,7 @@ namespace Reflex.Port.Content
     // Experimental launcher only. Rebuild the complete session so render and collision scales stay together.
     public sealed class ExperimentalMtxScale : MonoBehaviour
     {
-        public static int DefaultFor(TrackMod track) => track?.id == "ParadiseValley" ? 180 : 160;
+        public static int DefaultFor(TrackMod track) => track?.defaultScale > 0 ? track.defaultScale : track?.id == "KeweniFalls" ? 100 : track?.id == "ParadiseValley" ? 180 : 160;
         static string SaveKey(TrackMod track) => "Experimental.Mtx.ScalePercent." + (track?.id ?? "McKennaRock") + "@" + DefaultFor(track);
         public static int PercentFor(TrackMod track) => RxMapScale.ClampPercent(ReflexSave.GetInt(SaveKey(track), DefaultFor(track)));
         public static int Percent => PercentFor(TrackMods.Bound);

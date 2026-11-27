@@ -114,7 +114,7 @@ namespace Reflex.Port.Content
             Debug.Log($"[MTX] smoke {(ok?"PASS":"FAIL")}: frames {first} -> {rt.PresentedGameFrame}, distance {Vector3.Distance(start,end)}, exceptions {errors}, terrain {terrain?.Built}, scenery {sceneryOk}, animation {animationOk}");
             if(ok && Has("-reflexMtxDepthSmoke") && !string.IsNullOrEmpty(shot))
             {
-                var course=ExperimentalTerrain.Info(TrackMods.Bound.folder).course;
+                var course=ExperimentalTerrain.Info(ExperimentalTerrain.Path).course;
                 float scale=Reflex.Port.RxCore.RxMapScale.Current;
                 var target=new Vector3(course[20],0,course[22])*scale;
                 target.y=terrain.CoreHeightAt(target.x,target.z,out _);

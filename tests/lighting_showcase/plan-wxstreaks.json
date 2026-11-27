@@ -1,0 +1,8 @@
+{
+ "event": "National/NAT_Stillwater", "prefix": "WX_Streaks", "settle": 4, "adapt": 1.0, "perf": 0,
+ "modes": ["enhanced-wxrain-wxi2-wxmove0", "enhanced-wxrain-wxi2-wxmove28", "enhanced-wxsnow-wxi2-wxmove0", "enhanced-wxsnow-wxi2-wxmove28"],
+ "views": [
+  {"name": "rider", "cam": "game", "t": 9},
+  {"name": "chase", "cam": "pose", "t": 10, "frame": "bike", "offset": [0, 2.2, -5.5], "look": "anchor", "lookY": 1.0, "fov": 70}
+ ]
+}

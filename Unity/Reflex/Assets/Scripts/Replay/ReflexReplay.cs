@@ -996,6 +996,9 @@ namespace Reflex.Port.Replay
             shuttleDt += PlayTime - before;
         }
 
+        /// PHOTO MODE was opened from the replay: Esc / B goes back to it (the hint says BACK), else it leaves the viewer (EXIT).
+        public bool PhotoReturnsToReplay => photoFromReplay;
+
         /// Opens PHOTO MODE from the replay (the UI's button).
         public void PhotoFromReplay() { photoFromReplay = true; SetFace(View.Photo); }
 

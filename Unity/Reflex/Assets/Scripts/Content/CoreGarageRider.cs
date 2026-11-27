@@ -8,13 +8,18 @@ namespace Reflex.Port.Content
 {
     public static partial class CoreGarageProfile
     {
-        /// The jersey's name and number of the PlayerRider row (the motocard's CHANGE RIDER NAME / NUMBER): Name = up to 8 letters and
-        /// digits, Number = up to 3 digits (the original puts "998" for an empty number and "RIDER" for an unusable name).
+        /// The jersey's name and number of the PlayerRider row (the motocard's CHANGE RIDER NAME / NUMBER): Name = up to
+        /// ReflexPlateRaster.MaxName letters, digits and single spaces (the original: 8 letters and digits; a longer name runs off the
+        /// jersey at both ends), Number = up to 3 digits (the original puts "998" for an empty number and "RIDER" for an unusable name).
         public static bool SetRiderText(string column, string value)
         {
             string text = (value ?? "").Trim();
             if (column == "Number") { if (text.Length == 0) text = "998"; if (!Regex.IsMatch(text, "^[0-9]{1,3}$")) { Error = "The number is up to 3 digits."; return false; } }
-            else if (column == "Name") { text = text.ToUpperInvariant(); if (text.Length == 0) text = "RIDER"; if (!Regex.IsMatch(text, "^[A-Z0-9]{1,8}$")) { Error = "The name is up to 8 letters and digits."; return false; } }
+            else if (column == "Name")
+            {
+                text = Regex.Replace(text.ToUpperInvariant(), " {2,}", " "); if (text.Length == 0) text = "RIDER";
+                if (text.Length > ReflexPlateRaster.MaxName || !Regex.IsMatch(text, "^[A-Z0-9]+( [A-Z0-9]+)*$")) { Error = "The name is up to " + ReflexPlateRaster.MaxName + " letters, digits and spaces."; return false; }
+            }
             else { Error = "Unknown rider field."; return false; }
             return Change(p =>
             {

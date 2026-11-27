@@ -16,6 +16,7 @@ Shader "Hidden/Reflex/RTBump"
         [NoScaleOffset] _Bump2("usr_sampler_bump_map_g", 2D) = "gray" {}
         [NoScaleOffset] _Bump3("usr_sampler_bump_map_b", 2D) = "gray" {}
         [NoScaleOffset] _Mask("usr_sampler_mask", 2D) = "black" {}
+        _UnleashedDetail("Unleashed stochastic detail", Float) = 0
         _TileRate("usr_bump_map_tile_rate", Vector) = (1, 1, 1, 1)
         _Tuner("usr_dirt_grass_puffy_tuner", Float) = 1
         _TerrainSize("usr_terrain_size", Float) = 4096
@@ -33,11 +34,15 @@ Shader "Hidden/Reflex/RTBump"
         TEXTURE2D(_Mask);  SAMPLER(sampler_Mask);
         TEXTURE2D(_RfxDeformRT); SAMPLER(sampler_RfxDeformRT);   // the live deformation surface (DeformSampler), Unity rows flipped
         float4 _RfxDeformParams;                                 // x: 1 when _RfxDeformRT is valid
+        #include "UnleashedDetail.hlsl"
         CBUFFER_START(UnityPerMaterial)
+            float _UnleashedDetail;
             float4 _TileRate; float _Tuner, _TerrainSize, _Cull;
         CBUFFER_END
         struct A { float4 positionOS : POSITION; float2 uv : TEXCOORD0; float4 color : COLOR; };
-        struct V { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; float4 color : TEXCOORD1; float2 xz : TEXCOORD2; };
+        // the near target's view wedge (ReflexRTBump.ViewWedge): two half-planes over the world (x, z, 1), >= 0 inside; (0, 0, 1) for the slices
+        float4 _RfxRTBumpClip0, _RfxRTBumpClip1;
+        struct V { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; float4 color : TEXCOORD1; float2 xz : TEXCOORD2; float2 wedge : SV_ClipDistance0; };
         V Vert(A a)
         {
             V o;
@@ -45,9 +50,11 @@ Shader "Hidden/Reflex/RTBump"
             o.positionCS = mul(UNITY_MATRIX_VP, float4(w.x, 0.0, w.z, 1.0));
             o.uv = float2(a.uv.x, 1.0 - a.uv.y);     // D3D uv (the scenery meshes carry Unity-flipped v)
             o.color = a.color; o.xz = w.xz;
+            o.wedge = float2(dot(_RfxRTBumpClip0.xyz, float3(w.xz, 1.0)), dot(_RfxRTBumpClip1.xyz, float3(w.xz, 1.0)));
             return o;
         }
         float4 S(TEXTURE2D_PARAM(t, s), float2 d3d) { return SAMPLE_TEXTURE2D(t, s, float2(d3d.x, 1.0 - d3d.y)); }
+        float4 DetailS(TEXTURE2D_PARAM(t,s),float2 uv) { return _UnleashedDetail>.5 ? UnleashedSample(TEXTURE2D_ARGS(t,s),uv) : S(TEXTURE2D_ARGS(t,s),uv); }
         ENDHLSL
 
         Pass
@@ -62,13 +69,13 @@ Shader "Hidden/Reflex/RTBump"
             float4 F(V i) : SV_Target
             {
                 float4 r0 = _TileRate.xxyy * i.uv.xyxy;
-                float4 r1 = S(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), r0.xy);
-                float4 b1 = S(TEXTURE2D_ARGS(_Bump1, sampler_Bump1), r0.zw);
+                float4 r1 = DetailS(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), r0.xy);
+                float4 b1 = DetailS(TEXTURE2D_ARGS(_Bump1, sampler_Bump1), r0.zw);
                 float4 m = S(TEXTURE2D_ARGS(_Mask, sampler_Mask), i.uv);
                 float4 r3 = lerp(r1, b1, m.x);
                 r0 = _TileRate.zzww * i.uv.xyxy;
-                float4 g = S(TEXTURE2D_ARGS(_Bump2, sampler_Bump2), r0.xy);
-                float4 b = S(TEXTURE2D_ARGS(_Bump3, sampler_Bump3), r0.zw);
+                float4 g = DetailS(TEXTURE2D_ARGS(_Bump2, sampler_Bump2), r0.xy);
+                float4 b = DetailS(TEXTURE2D_ARGS(_Bump3, sampler_Bump3), r0.zw);
                 float4 r4 = lerp(r3, g, m.y);
                 return m.z * (b - r4) + r4;
             }
@@ -87,13 +94,13 @@ Shader "Hidden/Reflex/RTBump"
             float4 F(V i) : SV_Target
             {
                 float4 r0 = _TileRate.xxyy * i.uv.xyxy;
-                float4 r1 = S(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), r0.xy);
-                float4 b1 = S(TEXTURE2D_ARGS(_Bump1, sampler_Bump1), r0.zw);
+                float4 r1 = DetailS(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), r0.xy);
+                float4 b1 = DetailS(TEXTURE2D_ARGS(_Bump1, sampler_Bump1), r0.zw);
                 float4 m = S(TEXTURE2D_ARGS(_Mask, sampler_Mask), i.uv);
                 float4 r3 = lerp(r1, b1, m.x);
                 r0 = _TileRate.zzww * i.uv.xyxy;
-                float4 g = S(TEXTURE2D_ARGS(_Bump2, sampler_Bump2), r0.xy);
-                float4 b = S(TEXTURE2D_ARGS(_Bump3, sampler_Bump3), r0.zw);
+                float4 g = DetailS(TEXTURE2D_ARGS(_Bump2, sampler_Bump2), r0.xy);
+                float4 b = DetailS(TEXTURE2D_ARGS(_Bump3, sampler_Bump3), r0.zw);
                 float4 r4 = lerp(r3, g, m.y);
                 float4 o = m.z * (b - r4) + r4;
                 return float4(o.rgb, o.a * i.color.a);
@@ -111,7 +118,7 @@ Shader "Hidden/Reflex/RTBump"
             #pragma fragment F
             float4 F(V i) : SV_Target
             {
-                float4 t = S(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), i.uv);
+                float4 t = DetailS(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), i.uv);
                 return float4(t.rgb, t.a * i.color.a);
             }
             ENDHLSL
@@ -127,7 +134,7 @@ Shader "Hidden/Reflex/RTBump"
             #pragma fragment F
             float4 F(V i) : SV_Target
             {
-                float4 t = S(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), i.uv);
+                float4 t = DetailS(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), i.uv);
                 float2 terrainUV = float2(i.xz.x, -i.xz.y) / _TerrainSize + .5;
                 float4 mask = S(TEXTURE2D_ARGS(_Mask, sampler_Mask), terrainUV);
                 float soil = (1.0 - mask.g) * lerp(1.0, 1.0 - mask.b, _Tuner);
@@ -158,7 +165,7 @@ Shader "Hidden/Reflex/RTBump"
                 r0y = saturate(r0x * -10.0);
                 float r2w = min(r0y, 0.25);
                 r0y = 1.0 - r2w;
-                float4 r3 = S(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), _TileRate.xy * i.uv);
+                float4 r3 = DetailS(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), _TileRate.xy * i.uv);
                 float r2x = r0y * r3.x;
                 float r2z = saturate(r3.z - r2w);
                 // cmp oC0.xzw, r0.x, (r3.x, r3.z, r1.w), (r2.x, r2.z, r2.w); oC0.y = r3.y
@@ -181,7 +188,7 @@ Shader "Hidden/Reflex/RTBump"
                 float2 muv = float2(i.xz.x * rcp(_TerrainSize), i.xz.y * rcp(-_TerrainSize)) + 0.5;
                 float4 m = S(TEXTURE2D_ARGS(_Mask, sampler_Mask), muv);
                 float r2x = lerp(_Tuner, 1.0, m.z);                 // lrp r2.x, r0.z, 1, c150.x
-                float4 t = S(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), i.uv);
+                float4 t = DetailS(TEXTURE2D_ARGS(_Bump0, sampler_Bump0), i.uv);
                 return float4(t.x, t.y, r2x * t.z, (1.0 - m.y) * (t.w * i.color.a));
             }
             ENDHLSL

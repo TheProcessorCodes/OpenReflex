@@ -1,0 +1,31 @@
+{
+ "event": "National/NAT_Stillwater",
+ "ai": 11,
+ "follow": -1,
+ "start": 0,
+ "seconds": 3,
+ "step": 0.1,
+ "hold": true,
+ "cams": [
+  {
+   "name": "side",
+   "offset": [
+    13.0,
+    -0.6,
+    0.8
+   ],
+   "lookY": 0.3,
+   "fov": 36
+  },
+  {
+   "name": "rear",
+   "offset": [
+    -5.0,
+    2.2,
+    -12.0
+   ],
+   "lookY": 0.3,
+   "fov": 36
+  }
+ ]
+}

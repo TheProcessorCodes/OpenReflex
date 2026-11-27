@@ -49,7 +49,7 @@ namespace Reflex.Port.OriginalWorld
     [DisallowMultipleComponent]
     public sealed class OriginalParticles : MonoBehaviour
     {
-        public const int MaxParticles = 6000;   // 3000 drawn per manager (the original's instance cap)
+        public const int MaxParticles = 30000;   // the original's instance caps: 10000 for the normal manager (per 12 riders: 26,667 for a field of 32), 3000 for the additive one (00699e70)
         [Tooltip("Reflex/Original Particles; a serialized reference keeps it in player builds.")]
         public Shader particleShader;
         [Tooltip("The level's Database (e.g. NAT_Concord): the particle atlas is looked up there first.")]

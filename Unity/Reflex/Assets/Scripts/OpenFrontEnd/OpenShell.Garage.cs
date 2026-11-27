@@ -18,6 +18,7 @@
 // garage-class-all / garage-class-mods, garage-vehicle-<PlayerVehicleId> (EQUIPPED pill), garage-model-<id>, garage-mod-<model>-<n>,
 // garage-own-rider, garage-pro-<rider>-<vehicle>, garage-tuning-<n>, garage-unlock-everything, garage-name / garage-jersey-name /
 // garage-number, garage-motocard, garage-back; GarageCurrentTab / GaragePath / GarageTitle; MoveGarageTuning.
+// The vehicle list's SOURCE / CLASS / SORT filters (garage-filter-*, garage-class-own-<class>, garage-class-alive): OpenShell.GarageFilters.cs.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -38,6 +39,9 @@ namespace Reflex.Port.OpenFrontEnd
         {
             var row = FeGarageData.Unique("VehicleModel", "VehicleModelId", model);
             string title = OpenGarageData.Title(FeGarageData.ProductOfAsset(FeTables.I(row, "StoreAssetId")), "BIKE").ToUpperInvariant();
+            // a bike mod active on the model keeps its own choice (EngineSoundPacks: EngineSound.Mod.<modId>): the row names the mod
+            var mod = BikeMods.Find(EngineSoundPacks.ActiveMod(model));
+            if (mod != null && !string.IsNullOrEmpty(mod.name)) title = mod.name.ToUpperInvariant();
             EngineSoundPicker.Row(container, model, "ENGINE SOUND  ·  " + title, "garage-engine-sound");
         };
     }
@@ -169,7 +173,12 @@ namespace Reflex.Port.OpenFrontEnd
         }
 
         string FirstGearSectionName() { var t = OpenGarageData.P != null ? OpenGarageData.GearTypes() : null; return t != null && t.Count > 0 ? "garage-gear-" + t[0].id : null; }
-        string FirstPartSectionName() { var t = OpenGarageData.P != null && !OpenGarageData.Pro ? OpenGarageData.PartTypes(OpenGarageData.Equipped) : null; return t != null && t.Count > 0 ? "garage-part-" + t[0].id : null; }
+        string FirstPartSectionName()
+        {
+            if (OpenGarageData.P == null || OpenGarageData.Pro) return null;
+            if (GarageRxBike(OpenGarageData.EquippedModel) is RxModBike rx && rx.slots.Count > 0) return "garage-rxslot-0";   // (a .rxmod bike: its own parts first)
+            var t = GarageListedPartTypes(OpenGarageData.Equipped, OpenGarageData.EquippedModel); return t.Count > 0 ? "garage-part-" + t[0].id : null;
+        }
 
         void OpenGarage()
         {
@@ -196,6 +205,7 @@ namespace Reflex.Port.OpenFrontEnd
             ScreenUpdate = GarageUpdate;
             _nav.OnCancel = GarageBack;
             _nav.OnTab = GarageSwitchBranch;
+            _nav.OnAlt = GarageFilterJump;   // (Y / F on the vehicle list: its filters)
             _nav.OnPage = _ => { };          // the triggers zoom the stage here, they do not page the list
             _nav.DefaultItem = GarageDefaultItem;
             RebuildGarageLevel(GTop.focus, true);
@@ -433,6 +443,7 @@ namespace Reflex.Port.OpenFrontEnd
             garageRows = null; garageScroll = null; garageView = null; garageDialog = null; garageHead = null;
             garageStatus = null; garageName = null; garageNumber = null; garageSub = null; garageMake = null; garageModelName = null; garageCredits = null; garageHint = null;
             garageCrumb = null; garageTitle = null; garageLevelSub = null;
+            GarageFiltersReset();
             garageBadges = null; garageStats = null; garageIdBlock = null; garageTyping = null; garageTypeCancel = null;
             garagePendingMake = null; garageShownKey = null; garagePendingKey = null; garageBuilt = false;
             garageSoundSlot = null; garageSoundModel = -1;
@@ -446,7 +457,7 @@ namespace Reflex.Port.OpenFrontEnd
             if (garageTyping != null && _nav.IsOn(garageTyping)) return garageTyping;   // (a typed box was left by the pad: the focus goes back to its row)
             if (garageRows != null)
             {
-                var first = OuUi.FirstItem(garageRows);
+                var first = GarageFirstListItem() ?? OuUi.FirstItem(garageRows);   // (the vehicle list: its first card, not a filter chip)
                 if (first != null) return first;
             }
             return _layer.Q<VisualElement>("garage-back");
@@ -506,6 +517,7 @@ namespace Reflex.Port.OpenFrontEnd
             using var perf = Platform.ReflexMenuPerf.Measure("garage page built");
             var place = _nav.Remember();
             garageRows.Clear();
+            GarageFiltersReset();   // (the vehicle list's filter bar went with the rows: OpenShell.GarageFilters.cs)
             garageTyping = null; garageTypeCancel = null; garageSoundSlot = null; garageSoundModel = -1;
             if (entered) garageScroll.scrollOffset = Vector2.zero;
             var top = GTop;
@@ -552,7 +564,10 @@ namespace Reflex.Port.OpenFrontEnd
             var top = GTop;
             string submit = top == null ? "SELECT" : top.kind == GKind.GearLine || top.kind == GKind.PartLine ? "EQUIP / BUY" : top.kind == GKind.Models ? "RIDE THIS / BUY" : top.kind == GKind.Tuning ? "ADJUST" : "SELECT";
             string back = garageStack.Count <= 1 ? "DONE" : "BACK";
-            Hints((OuUi.KeySubmit, submit), (OuUi.KeyCancel, back), (OuUi.KeyTabs, "VEHICLE / RIDER"), ("T", "TEST RIDE"), (OuGlyphs.Look, "TURN"), (OuGlyphs.Zoom, "ZOOM"));
+            if (top != null && top.kind == GKind.Models)
+                Hints((OuUi.KeySubmit, "RIDE / BUY"), (OuUi.KeyCancel, back), (OuUi.KeyAlt, "FILTERS"), (OuUi.KeyTabs, "VEHICLE / RIDER"), ("T", "TEST RIDE"), (OuGlyphs.Look, "TURN"));   // (no ZOOM: the band holds at UI SCALE 130 %)
+            else
+                Hints((OuUi.KeySubmit, submit), (OuUi.KeyCancel, back), (OuUi.KeyTabs, "VEHICLE / RIDER"), ("T", "TEST RIDE"), (OuGlyphs.Look, "TURN"), (OuGlyphs.Zoom, "ZOOM"));
             if (garageHint != null) garageHint.text = "DRAG TO TURN  ·  WHEEL TO ZOOM";
         }
 
@@ -644,7 +659,7 @@ namespace Reflex.Port.OpenFrontEnd
             if (named != null && named.model.Length > 0) title = named.model;
             garageMake.text = (brand ?? OpenGarageData.TypeName(type)).ToUpperInvariant();
             garageModelName.text = title.ToUpperInvariant();
-            string ownClass = mod?.rx?.bikes.FirstOrDefault(b => b.vehicleModelId == model)?.garageClass;   // (an imported Alive 50cc / 650: its own class)
+            string ownClass = BikeMods.BikeOf(mod, model)?.garageClass;   // (an imported Alive 50cc / 650: its own class)
             OuUi.Text(ownClass ?? OpenGarageData.TypeName(type), "ou-badge", garageBadges);
             if (mod != null) OuUi.Text("MOD", "ou-badge", garageBadges);
             if (playerVehicle >= 0 && playerVehicle == (OpenGarageData.Pro ? -1 : OpenGarageData.Equipped) && (mod?.id ?? "") == BikeMods.ChoiceFor(model)) OuUi.Text("EQUIPPED", "ou-badge ou-badge-dark", garageBadges);
@@ -671,10 +686,15 @@ namespace Reflex.Port.OpenFrontEnd
             garageMake.text = (!string.IsNullOrEmpty(item.line) ? item.line : OpenGarageData.BrandName(item.product) ?? section).ToUpperInvariant();
             garageModelName.text = item.title.ToUpperInvariant();
             OuUi.Text(section, "ou-badge", garageBadges);
+            // an original performance part on a .rxmod bike (an imported MX vs ATV Alive bike, a bike mod) brings its tuning points and changes
+            // nothing drawn: no PREVIEW there, the tag says what it does (tyres / wheels on a bike that has none of its own are drawn: a preview)
+            bool performanceOnly = part && GarageRxBike(OpenGarageData.EquippedModel) is RxModBike rxOn
+                && (RxParts.HasOwnWheels(rxOn) || !new[] { "tires", "wheels", "tire", "wheel" }.Contains((OpenGarageData.PartTypes(OpenGarageData.Equipped).FirstOrDefault(t => t.id == item.type).factory ?? "").ToLowerInvariant()));
+            if (performanceOnly) { var perf = OuUi.Text("PERFORMANCE ONLY  ·  NOT DRAWN ON THIS BIKE", "ou-badge", garageBadges); perf.name = "garage-performance-tag"; }
             if (item.equipped) OuUi.Text("EQUIPPED", "ou-badge ou-badge-dark", garageBadges);
             else
             {
-                var tag = OuUi.Text("PREVIEW", "ou-badge ou-badge-preview", garageBadges); tag.name = "garage-preview-tag";
+                if (!performanceOnly) { var tag = OuUi.Text("PREVIEW", "ou-badge ou-badge-preview", garageBadges); tag.name = "garage-preview-tag"; }
                 OuUi.Text(item.Available ? "OWNED" : item.locked ? "LOCKED" : item.price.ToString("N0") + " CREDITS", "ou-badge", garageBadges);
             }
             int icon = item.brandIcon >= 0 ? item.brandIcon : item.parent >= 0 ? OpenGarageData.BrandIcon(item.parent) : -1;

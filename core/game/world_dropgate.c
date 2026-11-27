@@ -7,6 +7,7 @@
 #include "phys_vec.h"
 #include "world_misc.h"
 #include "race_activity_misc.h"
+#include "practice.h"
 
 /* 006bdb50 (thiscall gate, stack activity; RET 4): for an activity of kind != 8 (a free ride): +0x210 = the activity, +0x20c = its channel (+0x290), and the gate subscribed
  * to "Countdown Step" (006c3cd0: EAX = the channel; stack gate, 006bed90, 0) */
@@ -67,9 +68,14 @@ RX_FUNCTION(0x006bed90, rx_drop_gate_countdown_step)
 /* 006bdbe0 (EAX = the activity, ECX = the gate): the gate put to its resting pose: an activity of kind != 8, a mode (+0x238) other than 0 / 6 and no session result (+0xfe8): the collision
  * part on, up (+0x1a0 = 0, +0x1f8 = 0.0) and the up pose (+0x1b0) copied to the entity matrix (+0x30); else the collision part off and the gate down (+0x1a0 = 4, +0x1f8 = the down
  * angle +0x1f0): the up pose turned about its x axis by the down angle (sine / cosine polynomials of 0x00935d3c ..., the zero products kept) into +0x30 */
+int rx_gate_starts_closed(rx_addr act) {
+    /* PORT ADDITION (PRACTICE, practice.h): a practice session starts with the gate down, as a free ride does */
+    return U32(act, 0x23c) != 8 && U32(act, 0x238) != 0 && U32(act, 0x238) != 6 && U32(act, 0xfe8) == 0 && !rx_practice_applies(act);
+}
+
 void rx_drop_gate_reset(rx_addr g, rx_addr act) {
     ACT_FRAME_EBP(L, 16, 0xe4, 3);
-    const int upright = U32(act, 0x23c) != 8 && U32(act, 0x238) != 0 && U32(act, 0x238) != 6 && U32(act, 0xfe8) == 0;
+    const int upright = rx_gate_starts_closed(act);
     const rx_addr part = U32(g, 0x160);
     if (part != 0) {
         const rx_addr body = U32(part, 4);

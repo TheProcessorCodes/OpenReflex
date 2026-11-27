@@ -248,11 +248,11 @@ namespace Reflex.Port.Content
             foreach (char ch in s ?? "") { if (ch == '"' || ch == '\\') sb.Append('\\').Append(ch); else if (ch < 0x20) sb.Append("\\u").Append(((int)ch).ToString("x4")); else sb.Append(ch); }
             return sb.Append('"').ToString();
         }
-        static string TrackMeta(Job j, string alive, Dictionary<string, string> sha)
+        static string TrackMeta(Job j, string alive, string unleashed, Dictionary<string, string> sha)
         {
             bool package = j.files.Any(f => f.rel.EndsWith(".dx9.package", StringComparison.OrdinalIgnoreCase)), extracted = j.files.Any(f => f.rel.StartsWith("Assets/", StringComparison.Ordinal));
             var sb = new StringBuilder("{\"format\":\"reflex-track-archive\",\"version\":1,\"level\":").Append(Json(j.level)).Append(",\"name\":").Append(Json(j.level))
-                .Append(",\"source\":").Append(Json(alive != null ? "alive" : "base")).Append(",\"layout\":").Append(Json(package ? (extracted ? "packed+extracted" : "packed") : "extracted"))
+                .Append(",\"source\":").Append(Json(unleashed != null ? "unleashed" : alive != null ? "alive" : "base")).Append(",\"layout\":").Append(Json(package ? (extracted ? "packed+extracted" : "packed") : "extracted"))
                 .Append(",\"created\":").Append(Json(DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"))).Append(",\"files\":[");
             bool first = true;
             foreach (string ext in new[] { ".dx9.database", ".dx9.level", ".dx9.scene", ".dx9.package" })
@@ -265,6 +265,7 @@ namespace Reflex.Port.Content
             }
             sb.Append(']');
             if (alive != null) sb.Append(",\"alive\":").Append(alive);
+            if (unleashed != null) sb.Append(",\"unleashed\":").Append(unleashed);
             return sb.Append('}').ToString();
         }
 
@@ -355,7 +356,11 @@ namespace Reflex.Port.Content
                 throw new IOException($"Not enough free space to pack: about {(largest * 6 / 10 >> 20) + 256} MB needed, {free.Value >> 20} MB free on that drive.");
             string registry = null;
             try { string r = Path.Combine(root, "Database", AliveLevels.Registry); if (File.Exists(r)) registry = File.ReadAllText(r); } catch (IOException) { }
-            foreach (var j in c.levels) j.meta = TrackMeta(j, registry == null ? null : AliveEntry(registry, j.level), sha);
+            foreach (var j in c.levels) {
+                string path = Full(root, "Assets/unleashed/" + j.level + "/level.json");
+                string unleashed = RxFiles.Exists(path) ? Encoding.UTF8.GetString(RxFiles.ReadAllBytes(path)) : null;
+                j.meta = TrackMeta(j, registry == null ? null : AliveEntry(registry, j.level), unleashed, sha);
+            }
             if (c.shared != null)
                 c.shared.meta = "{\"format\":\"reflex-data-archive\",\"version\":2,\"created\":\"" + DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") + "\",\"dirs\":[\"Assets\"],\"files\":" + c.shared.files.Count + ",\"pool\":" + pool.Count + "}";
             Directory.CreateDirectory(Path.Combine(root, TracksDir));

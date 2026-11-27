@@ -28,6 +28,9 @@ extern "C" {
 struct fmt_entity;
 
 void rx_modtrack_add_collision(rx_addr world);
+/* The funnel blockers of an imported race level (fmt_modtrack.h): which set collides (0 the start layout, 1 raced); -1 none. */
+void rx_funnel_layout(int raced);
+int rx_funnel_layout_now(void);
 
 /* shapes */
 rx_addr rx_shape_triangles_construct(rx_addr shape, rx_addr tris);         /* 008449d0 (ECX = shape, EDI = triangle group) */

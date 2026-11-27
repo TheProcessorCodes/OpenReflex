@@ -52,7 +52,8 @@ namespace Reflex.Port.OpenFrontEnd
         /// REFLEX_LOADARENA_WARM=0: nothing is made in the menus (the arena's session starts at START EVENT); nor on a PC with less than 8 GB
         /// of memory (the warm session keeps the second image's arena resident: about 120 MB on the developer's Mac).
         public static bool Enabled => Environment.GetEnvironmentVariable("REFLEX_LOADARENA_WARM") != "0" && (SystemInfo.systemMemorySize <= 0 || SystemInfo.systemMemorySize >= 7600)
-                                      && !Reflex.Port.Content.ReflexDataPack.Running;   // (not while PACK GAME FILES moves the library's files into archives)
+                                      && !Reflex.Port.Content.ReflexDataPack.Running   // (not while PACK GAME FILES moves the library's files into archives)
+                                      && !Reflex.Port.Options.ReflexSettings.DisableCompound;   // (OPTIONS > OPEN REFLEX > DISABLE COMPOUND: no arena to warm)
         /// Its startup snapshot is captured (the vehicle and rider are in the world): the race scene starts the ride at once.
         public bool Ready => failure == null && sim?.Open != null && sim.Open.StartupReady;
         public bool Claimed => claimed;

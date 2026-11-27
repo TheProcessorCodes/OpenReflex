@@ -4,7 +4,14 @@
 //            the original game (the default), 0 % = removed, after Open Unleashed's FREER AIR ROTATION, in between they work that much slower. They
 //            replace the earlier FREER AIR toggle (a saved FREER AIR on reads as both at 0 %, its KEEP choices as 100 %). AIR LOOSENESS (w-freeair2,
 //            core rx_session_set_free_air_looseness): 0 .. 100 %, the air damping while coasting, the stick lag and authority eased; off at 0 %.
-//            All apply at once, in a race too (the next airborne step).
+//            LIP PULL (w-lippull, core rx_session_set_lip_pull): 0 .. 100 %, how much of the original's rear-wheel-only wheelie limiter is kept on a
+//            steep face (it holds the bike down to a steep lip); 100 % = the original (the default). All apply at once, in a race too (the next step).
+//            RIDER MOTION (a prototype; OriginalWorld/RiderLooseMotion.cs, ReflexSettings.RiderMotion / RiderMotionStrength): ORIGINAL (the default) /
+//            LOOSE and its LOOSENESS 0 .. 100 %: secondary motion on the drawn riders, applied at once. Nothing of the ride changes.
+//   RACE SETUP  ANY VEHICLE ON ANY TRACK (core/plan/ANY_VEHICLE.md; ReflexSettings.AnyVehicle, OpenSetup.AnyVehicle): ON by default.
+//               PLAYERS TAB (w-split; ReflexSettings.PlayersTab): SHOW by default; the setup page's split-screen tab (OpenShell.Setup.cs).
+//   LOADING  DISABLE COMPOUND (ReflexSettings.DisableCompound): OFF by default; ON: START EVENT loads behind the full-screen loading screen (no
+//            test-ride compound while it loads, none kept warm in the menus), as WATCH GHOST does.
 //   FREE RIDE  SPAWN MARKERS (w-spawnmarker, w-markerbtns; OriginalWorld/OriginalSpawnMarker.cs, core rx_session_spawn_at_instant): ON by default; hold Y / F to set, B / V to respawn.
 //   FREE RIDE  NO INVISIBLE BORDERS (w-frnowalls, w-reyesborders; core rx_session_set_free_ride_borders, game/free_ride_borders.h): ON by default: no
 //            reset zones, no reset triggers but deep water, no cannonball band (the FR maps' white-out boundary), the terrain's edge only as a fall net,
@@ -26,56 +33,76 @@ namespace Reflex.Port.Options
             {
                 ReflexSettings.AirAutoLevel = v; ReflexSettings.Save(); ReflexClientLive.ApplyFreeAir();
             }, panel, 0f, 1f, 0.05f, v => Mathf.RoundToInt(v * 100f) + "%"), "air-auto-level");
-            Note(panel, "How much the original's auto-level helps you in the air. Once you have used the sticks in a jump, letting go turns the bike back toward level with its nose along the jump " +
-                        "(half way in about 1 to 1.5 s), which also lines it up for the landing. 100% (the default) is the original game. Lower is slower: you keep more of the angle you let go at, " +
-                        "and set up the landing yourself. 0% turns it off: the bike stays where you leave it and keeps turning a little on its own momentum, like Open Unleashed's FREER AIR. " +
-                        "Your bike or ATV only (the computer riders keep the original's air). Applies at once, also in a race. Ours.");
+            Help(panel, "How strongly the original's auto-level turns the bike back toward level once you let go of the sticks in the air. 100% is the original; 0% leaves the bike where you put it. Your vehicle only.");
             Named(OptUi.Slider("COUNTER-STEER SNAP", () => ReflexSettings.AirSnap, v =>
             {
                 ReflexSettings.AirSnap = v; ReflexSettings.Save(); ReflexClientLive.ApplyFreeAir();
             }, panel, 0f, 1f, 0.05f, v => Mathf.RoundToInt(v * 100f) + "%"), "air-counter-steer-snap");
-            Note(panel, "How hard the original snaps you back out of a whip. After a big whip, pushing the steering stick hard the other way (past 90 %) takes the stick away and snaps the bike back toward its take-off angle. " +
-                        "100% (the default) is the original game. Lower snaps back slower. 0% turns it off: that counter-steer is yours, and it turns the bike back at the stick's own rate, slower than the snap. Applies at once. Ours.");
+            Help(panel, "How hard the original snaps the bike back when you push the stick hard against a big whip. 100% is the original; 0% turns the snap off, so the counter-steer is yours.");
             Named(OptUi.Slider("AIR LOOSENESS", () => ReflexSettings.AirLooseness, v =>
             {
                 ReflexSettings.AirLooseness = v; ReflexSettings.Save(); ReflexClientLive.ApplyFreeAir();
             }, panel, 0f, 1f, 0.05f, v => Mathf.RoundToInt(v * 100f) + "%"), "air-looseness");
-            Note(panel, "How loose the bike feels in the air: higher lets a whip or spin carry on longer after you let go, answers the stick a little quicker and gives the stick a little more say. " +
-                        "0% (the default) is the original's air; it works with any AUTO LEVEL and COUNTER-STEER SNAP, and goes best with them lowered. 100% is the loosest, still smooth. Jumps you don't touch the sticks on stay the same. Applies at once. Ours.");
+            Help(panel, "How loose the bike feels in the air: higher lets a whip or spin carry on longer and answers the stick quicker. 0% is the original's air.");
+            Named(OptUi.Slider("LIP PULL", () => ReflexSettings.LipPull, v =>
+            {
+                ReflexSettings.LipPull = v; ReflexSettings.Save(); ReflexClientLive.ApplyFreeAir();
+            }, panel, 0f, 1f, 0.05f, v => Mathf.RoundToInt(v * 100f) + "%"), "lip-pull");
+            Help(panel, "How hard the original's wheelie limiter holds the bike down to a steep lip. 100% is the original; lower leaves the lip with more rotation and pop. Flat-ground wheelies never change. Your vehicle only.");
+            Named(OptUi.Toggle("RIDER MOTION", () => ReflexSettings.RiderMotion == 1, v =>
+            {
+                ReflexSettings.RiderMotion = v ? 1 : 0; ReflexSettings.Save();
+            }, panel, "LOOSE", "ORIGINAL"), "rider-motion");
+            Help(panel, "How the riders move on their bikes. ORIGINAL: exactly as the original game poses them. LOOSE: the body gives with the bike. It leans into braking and power, soaks up landings and keeps its head steadier. Looks only: the ride is the same.");
+            Needs(Named(OptUi.Slider("LOOSENESS", () => ReflexSettings.RiderMotionStrength, v =>
+            {
+                ReflexSettings.RiderMotionStrength = v; ReflexSettings.Save();
+            }, panel, 0f, 1f, 0.05f, v => Mathf.RoundToInt(v * 100f) + "%"), "rider-motion-strength"), () => ReflexSettings.RiderMotion == 1, "RIDER MOTION IS ORIGINAL");
+            Help(panel, "How much the LOOSE rider moves. 100% is the full effect; lower is closer to the original.");
+            Section(panel, "RACE SETUP");
+            Named(OptUi.Toggle("ANY VEHICLE ON ANY TRACK", () => ReflexSettings.AnyVehicle, v =>
+            {
+                ReflexSettings.AnyVehicle = v; ReflexSettings.Save();
+            }, panel), "any-vehicle");
+            Help(panel, "ON: the race setup offers every vehicle and every class on every event (a truck at a Supercross, bikes against buggies). A choice the event never had keeps no records and posts no laps. OFF: the original's lists. Single player; the career and online play are not changed.");
+            Named(OptUi.Toggle("PLAYERS TAB", () => ReflexSettings.PlayersTab, v =>
+            {
+                ReflexSettings.PlayersTab = v; ReflexSettings.Save();
+                if (!v) Reflex.Port.OriginalWorld.LocalGamepadRouting.Player2Pad = null;
+            }, panel, "SHOW", "HIDE"), "players-tab");
+            Help(panel, "SHOW: the race, Free Ride and practice setup has a PLAYERS tab. Press A on a second controller there to ride split screen, two riders on one screen. HIDE: for riding solo only; the setup shows EVENT and RIDER.");
+            Section(panel, "LOADING");
+            Named(OptUi.Toggle("DISABLE COMPOUND", () => ReflexSettings.DisableCompound, v =>
+            {
+                ReflexSettings.DisableCompound = v; ReflexSettings.Save();
+                if (v) Reflex.Port.OpenFrontEnd.OpenArenaWarm.Release("DISABLE COMPOUND is on");   // (its warm session and the memory it holds)
+            }, panel), "disable-compound");
+            Help(panel, "ON: races, practice and Free Ride load behind a full-screen loading screen instead of putting you on your bike in the compound while they load. Faster on slower PCs and uses less memory in the menus. The garage's TEST RIDE and MotoSkills still use the compound.");
             Section(panel, "FREE RIDE");
             Named(OptUi.Toggle("NO INVISIBLE BORDERS", () => ReflexSettings.FreeRideNoBorders, v =>
             {
                 ReflexSettings.FreeRideNoBorders = v; ReflexSettings.Save(); ReflexClientLive.ApplyFreeRideBorders();
             }, panel), "free-ride-no-borders");
-            Note(panel, "ON (the default): in Free Ride you are never put back for where you ride. No reset when you leave the track or ride into an out-of-bounds area, " +
-                        "no white-out near the edge of the Free Ride maps, and no reset boxes (tunnels, boats, cliffs). Walls, fences, buildings, screens and the ground stay solid. " +
-                        "Kept: your own reset and save spot, the crash reset, deep water, and a safety net at the true edge of the map: ride off the end of the ground and you are " +
-                        "brought back after 4 s of falling. OFF: the original's borders. Races, the career, the challenges, MotoSkills and the test ride always keep the original's. Ours.");
+            Help(panel, "ON: Free Ride never resets you for where you ride. Walls, fences and the ground stay solid; deep water and the edge of the map still bring you back. OFF: the original's borders. Races always keep them.");
             Named(OptUi.Toggle("ALIVE LOOK", () => ReflexSettings.AliveLookReflex, v =>
             {
                 ReflexSettings.AliveLookReflex = v; ReflexSettings.Save();
             }, panel, "REFLEX", "ALIVE"), "alive-look");
-            Note(panel, "How the MX vs ATV Alive tracks are drawn (an experiment). REFLEX: with this game's own terrain, lighting, shadows and fog: a similar Reflex track's dirt " +
-                        "textures, ruts, sun, fill light and haze over the Alive track's layout and objects. ALIVE: as MX vs ATV Alive drew them. From the next track you load. Ours.");
+            Help(panel, "How MX vs ATV Alive tracks are drawn. REFLEX: with this game's dirt, ruts, sun and haze over the Alive layout. ALIVE: as MX vs ATV Alive drew them.", When.NextEvent);
             Named(OptUi.Toggle("SPAWN MARKERS", () => ReflexSettings.SpawnMarkers, v =>
             {
                 ReflexSettings.SpawnMarkers = v; ReflexSettings.Save();
             }, panel), "spawn-markers");
-            Note(panel, "ON (the default): in Free Ride, hold SET SPAWN MARKER (the pad's Y, or F) for about half a second to keep your place and heading as this track's marker; " +
-                        "press RIDE TO SPAWN MARKER (B, or V) to ride back there at once (change them under CONTROLS). The respawn is the game's own reset (upright, speed gone, a crash cleared, " +
-                        "the short see-through ghost time after it), only at your marker and without the reset key's white fade and wait. " +
-                        "Kept for each track and map scale. Also in PRACTICE, any time: riding back there ends the lap (not counted: MARKER) and the timing starts again at the finish line, as in MX Bikes. " +
-                        "Free Ride and PRACTICE only: never in races, challenges, MotoSkills or the test ride. " +
-                        "Y / B (F / V) are the game's own reset-point buttons (a flag where you are, back to the flag): where markers work the spawn marker replaces them; in races and the career they stay the game's. " +
-                        "OFF: Y / B are the game's flag everywhere. Ours.");
+            Help(panel, "In Free Ride and PRACTICE: hold SET SPAWN MARKER (Y or F) to keep your place, press RIDE TO SPAWN MARKER (B or V) to ride back there at once. Never in races. OFF: those buttons are the original's reset flag.");
             Section(panel, "PHYSICS STUDIO");
             Named(OptUi.Toggle("PHYSICS STUDIO EVERYWHERE", () => ReflexSettings.PhysicsEverywhere, v =>
             {
                 ReflexSettings.PhysicsEverywhere = v; ReflexSettings.Save(); Reflex.Port.RxCore.RxPhysicsStudio.Everywhere = v;
             }, panel), "physics-everywhere");
-            Note(panel, "OFF (the default): your PHYSICS STUDIO config rides in races, Free Ride and the test ride only. ON: also in the career, MotoSkills and the challenges. " +
-                        "There an event with a config is practice: no progress, rewards or records are saved. From the next event. Ours.");
+            Help(panel, "OFF: your PHYSICS STUDIO config rides in races, Free Ride and the test ride only. ON: also in the career, MotoSkills and the challenges, as practice: nothing is saved there.", When.NextEvent);
             BuildReplayOptions(panel);   // REPLAY / PHOTO MODE (ReflexOptionsMenu.Replay.cs)
+            ResetSection(panel, "OPEN REFLEX", "reset-open-reflex", "Puts every row of this page back to its default: the air sliders at the original's, RIDER MOTION ORIGINAL, the race setup, loading, Free Ride, leaderboard, online and replay rows as they ship.",
+                         "Every OPEN REFLEX option on this page goes back to its default: the riding sliders (the original's air), RACE SETUP, LOADING, FREE RIDE, PHYSICS STUDIO EVERYWHERE, POST LAP TIMES, PARTY MODES, CHAT and the replay rows. Your Physics Studio configs stay.", ResetOpenReflex);
             return first;
         }
     }

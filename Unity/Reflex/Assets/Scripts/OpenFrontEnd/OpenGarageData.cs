@@ -26,6 +26,8 @@ namespace Reflex.Port.OpenFrontEnd
         public string modId = ""; public BikeMod mod; public BikeName modName;
         /// A gear / kit pack's piece (w-gearmods, KitPacks): its id is the renumbered one; null: a stock item.
         public KitItem kit;
+        /// A "gear" .rxmod piece (Content/RxGear.cs: the MX vs ATV Alive gear); null: not one.
+        public RxGearPiece rx;
         public GarageItem Clone() => (GarageItem)MemberwiseClone();
         /// Owned or free: can be put on now.
         public bool Available => owned;
@@ -66,6 +68,7 @@ namespace Reflex.Port.OpenFrontEnd
         /// A store product's name (STR_<id> through the install's strings).
         public static string Title(int product, string fallback = "")
         {
+            if (RxGear.IsId(product)) return RxGear.LineTitle(product) ?? RxGear.Piece(product)?.name ?? fallback;   // a "gear" .rxmod line / piece
             if (KitPacks.IsKitId(product))
             {   // a pack's line or piece (KitPacks: the pack's own names)
                 if (KitPacks.Line(product, out var line)) return line.title;
@@ -150,7 +153,7 @@ namespace Reflex.Port.OpenFrontEnd
             return it;
         }
         /// A pack's gear type / part type of an id (the stock tables' for a stock id).
-        static int GearTypeOf(int id) => KitPacks.Item(id) is KitItem k ? k.type : I(Row("RiderGear", "RiderGearId", id), "RiderGearTypeId");
+        static int GearTypeOf(int id) => RxGear.Piece(id) is RxGearPiece rx ? rx.type : KitPacks.Item(id) is KitItem k ? k.type : I(Row("RiderGear", "RiderGearId", id), "RiderGearTypeId");
         static int PartTypeOf(int id) => KitPacks.Item(id) is KitItem k ? k.type : I(Row("VehiclePart", "VehiclePartId", id), "VehiclePartTypeId");
         static int ModelOfVehicle(int playerVehicle) { var pv = Tab("PlayerVehicle"); int row = pv.Find("PlayerVehicleId", playerVehicle); return row < 0 ? -1 : pv.Int("VehicleModelId", row); }
 
@@ -198,6 +201,7 @@ namespace Reflex.Port.OpenFrontEnd
 
         public static int EquippedGear(int type)
         {
+            var rx = RxGear.Chosen(type); if (rx != null) return rx.id;   // a "gear" .rxmod piece the player chose (the MX vs ATV Alive gear)
             var kit = KitPacks.ChosenGear(type); if (kit != null) return kit.id;   // a pack's piece the player chose (the profile keeps its stock one)
             return StockGear(type);
         }
@@ -217,7 +221,8 @@ namespace Reflex.Port.OpenFrontEnd
             var t = Tab("PlayerRiderGear");
             var stock = Enumerable.Range(0, t.rows).Select(i => t.Int("RiderGearId", i)).ToList();
             var kits = KitPacks.ChosenGear();
-            return kits.Count == 0 ? stock : KitPacks.WithGear(stock, kits, GearTypeOf).ToList();
+            var worn = kits.Count == 0 ? stock : KitPacks.WithGear(stock, kits, GearTypeOf).ToList();
+            return RxGear.WithChosen(worn, GearTypeOf);   // (the chosen "gear" .rxmod pieces in place of their type's)
         }
 
         /// Every piece of a gear type that is not hidden, "No ..." first, then by product line and name.
@@ -237,6 +242,11 @@ namespace Reflex.Port.OpenFrontEnd
             {
                 if (k.bike || k.type != type || k.hidden) continue;
                 var it = Make(k); it.equipped = it.id == worn; list.Add(it);
+            }
+            foreach (var px in RxGear.All)   // the "gear" .rxmod pieces of this type (the MX vs ATV Alive gear): owned at once
+            {
+                if (px.type != type) continue;
+                list.Add(new GarageItem { id = px.id, type = type, parent = px.lineId, title = px.name, line = px.line, owned = true, equipped = px.id == worn, rx = px });
             }
             // RiderGearListSort: "No Chest Protector" (product 378) / "No Neckbrace" (1722) first, then by title
             int Hack(GarageItem x) => x.product == 378 || x.product == 1722 ? 0 : 1;
@@ -276,9 +286,10 @@ namespace Reflex.Port.OpenFrontEnd
         public static bool EquipGear(GarageItem item)
         {
             if (item == null || !item.Available) return false;
-            if (item.kit != null) { KitPacks.SetGear(item.type, item.kit); return true; }   // a pack's piece: the client save (the profile keeps its stock piece)
+            if (item.rx != null) { RxGear.Set(item.type, item.rx); return true; }   // a "gear" .rxmod piece: the client save (the profile keeps its stock piece)
+            if (item.kit != null) { KitPacks.SetGear(item.type, item.kit); RxGear.Clear(item.type); return true; }   // a pack's piece: the client save (the profile keeps its stock piece)
             bool ok = StockGear(item.type) == item.id || ReflexProfile.EquipGear(item.id, null).Result;
-            if (ok) KitPacks.ClearGear(item.type);
+            if (ok) { KitPacks.ClearGear(item.type); RxGear.Clear(item.type); }
             return ok;
         }
 
@@ -373,6 +384,8 @@ namespace Reflex.Port.OpenFrontEnd
         // ------------------------------------------------------------------------------------------------ vehicles
 
         static readonly int[] TypeSort = { 2, 3, 4, 11, 14, 12, 15 };
+        /// A vehicle type's place in the garage's lists (GarageMyRides' order; an unknown type after them, by id).
+        public static int TypeRank(int type) { int k = Array.IndexOf(TypeSort, type); return k < 0 ? 1000 + type : k; }
         /// One list row of the vehicle page: a model with the player's vehicle of it (-1 when not owned).
         public static List<GarageItem> Vehicles()
         {
@@ -547,7 +560,16 @@ namespace Reflex.Port.OpenFrontEnd
                 int k = ids.FindIndex(x => GearTypeOf(x) == ty);
                 if (k >= 0) ids[k] = gearOverride; else ids.Add(gearOverride);
             }
-            try { return ids.Count == 0 ? null : ReflexVehicleSpecs.Rider(Tables(), ids); }
+            try
+            {
+                var spec = ids.Count == 0 ? null : ReflexVehicleSpecs.Rider(Tables(), ids);
+                // under a "gear" .rxmod suit (an MX vs ATV Alive suit) the rider's head, neck, wrists and gloves are still the player's own
+                // jersey's (the suit took its id's place in the list): RxGear.Body
+                var suit = spec?.parts.FirstOrDefault(p => p.rx != null && p.rx.slot == "jersey");
+                int own = suit != null ? StockGear(3) : -1;
+                if (own >= 0) RxGear.Body(suit, ReflexVehicleSpecs.Rider(Tables(), new[] { own })?.parts.FirstOrDefault(p => p.key == "jersey"));
+                return spec;
+            }
             catch (Exception e) { Debug.LogWarning("[Garage] rider: " + e.Message); return null; }
         }
 

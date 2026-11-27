@@ -97,13 +97,18 @@ int rs_matrix(const char* field, float out[16]) {
     fmt_bxml_value v;
     if (!value_of(field, RS_MATRIX, &v) || v.count < 1) return 0;
     fmt_bx_floats(&v, 0, out);
+    /* an imported level's Reflex start gate kit: the donor's gate, drop bar and start board at this level's start (fmt_modtrack.h) */
+    if (g_rs && !strcmp(field,"Matrix") && fmt_modtrack_kit() && fmt_modtrack_kit_entity(g_rs->type, fmt_entity_string(g_rs, "Name"))) fmt_modtrack_kit_matrix(out);
     rx_ms_scene_matrix(out);   /* MAP SCALE (port): the placement (and a volume's size) scaled; nothing at 1 */
     return 1;
 }
 int rs_vec3(const char* field, float out[3]) {
     fmt_bxml_value v;
     if (!value_of(field, RS_VEC3, &v) || v.count < 1) return 0;
-    for (int k = 0; k < 3; k++) out[k] = ms_field(field, fmt_bx_f32(&v, 0, k));
+    for (int k = 0; k < 3; k++) out[k] = fmt_bx_f32(&v, 0, k);
+    /* the start board's show point moves with an imported level's Reflex start gate kit (fmt_modtrack.h) */
+    if (g_rs && !strcmp(field, "ShowSignPosition") && fmt_modtrack_kit() && fmt_modtrack_kit_entity(g_rs->type, fmt_entity_string(g_rs, "Name"))) fmt_modtrack_kit_point(out);
+    for (int k = 0; k < 3; k++) out[k] = ms_field(field, out[k]);
     return 1;
 }
 int rs_vec4(const char* field, float out[4]) {

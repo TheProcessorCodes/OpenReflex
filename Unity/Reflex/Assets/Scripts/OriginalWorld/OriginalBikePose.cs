@@ -54,6 +54,38 @@ namespace Reflex.Port.OriginalWorld
         }
         public ForkFix forkFix;
 
+        /// A bike of its own size (.rxmod "pose": "physics"): the swing arm aimed at the simulation's rear wheel. The core turns the arm by the
+        /// original's solve, made for the original's arm: on the Alive 50cc's 1.0 ft arm a rear wheel hanging past 45 degrees hit its fold-over
+        /// guard and the arm flipped up and back from frame to frame (the wheel "bouncing" in the air, 2026-11-09; the core's tune now hangs
+        /// it higher: ALIVE_BIKES.md "Playtest fixes"). A backstop: the arm and the nodes under it turn about its hinge (its X) onto the rear
+        /// wheel body; the tyre sits on that line at the wheel's distance, held to minReach .. maxReach of the arm (the dropouts: within the
+        /// arm's range on the ground, 0.97 - 1.08 of it).
+        public sealed class SwingFix
+        {
+            public int arm, tyre; public int[] subtree;   // pose indices; subtree: the nodes under the arm (not the tyre)
+            public Vector3 restTyre;                      // the tyre's rest position in the arm's frame
+            public float minReach = 0.9f, maxReach = 1.08f;
+            public void Apply(float[] m, int count, Vector3 axle)
+            {
+                if (arm >= count || tyre >= count) return;
+                var A = FromRows(m, arm * 16); var T = FromRows(m, tyre * 16);
+                Vector3 P = A.GetColumn(3), hinge = ((Vector3)A.GetColumn(0)).normalized;
+                float len = restTyre.magnitude; if (len < 0.1f || hinge.sqrMagnitude < 0.5f) return;
+                Vector3 cur = Vector3.ProjectOnPlane(A.MultiplyVector(restTyre), hinge), want = Vector3.ProjectOnPlane(axle - P, hinge);
+                if (cur.sqrMagnitude < 1e-4f || want.sqrMagnitude < 1e-4f) return;
+                var about = Matrix4x4.Translate(P) * Matrix4x4.Rotate(Quaternion.AngleAxis(Vector3.SignedAngle(cur, want, hinge), hinge)) * Matrix4x4.Translate(-P);
+                var A2 = about * A;
+                ToRows(A2, m, arm * 16);
+                if (subtree != null) foreach (int i in subtree) if (i < count) ToRows(about * FromRows(m, i * 16), m, i * 16);
+                Vector3 dir = A2.MultiplyVector(restTyre).normalized;
+                float reach = Mathf.Clamp(Vector3.Dot(axle - P, dir), len * minReach, len * maxReach);
+                ToRows(Matrix4x4.TRS(P + dir * reach, (about * T).rotation, Vector3.one), m, tyre * 16);
+            }
+        }
+        public SwingFix swingFix;
+        /// The simulation's rear wheel this frame (its render body; SwingFix), set before Apply.
+        public Vector3? rearAxle;
+
         /// Unity column-vector matrix -> the game's rows (FromRows' inverse; column 3 written 0, 0, 0, 1).
         public static void ToRows(Matrix4x4 r, float[] m, int o)
         {
@@ -93,6 +125,7 @@ namespace Reflex.Port.OriginalWorld
             // Only the affine part is used (elements 3, 7, 11, 15 are not read).
             for (int i = 0; i < count * 16; i++) if ((i & 3) != 3 && (float.IsNaN(matrices[i]) || float.IsInfinity(matrices[i]))) return false;
             forkFix?.Apply(matrices, count);   // (in place: the rider's limb offsets and grips read the same rows after)
+            if (swingFix != null && rearAxle is Vector3 axle) swingFix.Apply(matrices, count, axle);
             for (int i = 0; i < parts.Length; i++)
             {
                 if (!parts[i]) continue;

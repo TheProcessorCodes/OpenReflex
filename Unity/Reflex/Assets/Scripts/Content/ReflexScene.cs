@@ -35,7 +35,9 @@ namespace Reflex.Port.Content
         /// The `name` attribute of an Asset field (ModelAsset, SurfaceAsset, HeightMapAsset ...).
         public string Asset(string name) => Value(name)?.S("name");
         /// The scene matrix (row-major D3D, row vectors: rows 0..2 are the local axes, row 3 the translation).
-        public float[] Matrix => Floats("Matrix");
+        public float[] Matrix => matrixOverride ?? Floats("Matrix");
+        /// A placement that replaces the scene's own (UnleashedStartGate: the donor's start gate kit at an imported level's start).
+        public float[] matrixOverride;
         /// The list of children names under a field, e.g. the MaterialList overrides: first child of each item's `name`.
         public List<string> MaterialList()
         {
@@ -99,11 +101,18 @@ namespace Reflex.Port.Content
                 {
                     if (node.tag != "Entity" || node.children.Count != 1 || node.children[0].tag != "RSData") continue;
                     var rs = node.children[0];
-                    list.Add(new SceneEntity { id = node.I("entityId"), ns = rs.S("namespace") ?? "", rsdata = rs, section = chunks[k].section });
+                    list.Add(new SceneEntity { id = node.I("entityId"), ns = Namespace(rs.S("namespace") ?? ""), rsdata = rs, section = chunks[k].section });
                 }
                 parsed[k] = list;
             });
             return parsed.SelectMany(l => l).ToList();
         }
+
+        // The original finds an RSData namespace's class without regard to case (FUN_0080de70; the core: build_scene.c rx_scene_type_id),
+        // and the community's track tools write the start gate as "RSToolsNS_RSDataNS_DropgateRSData" (every custom National / Supercross
+        // track). The client names entity types by their original spelling (SceneEntity.Type), so that one is given it here: without it
+        // the gate was no scenery instance at all (its model not drawn, nothing for OriginalLevel.CreateGates to animate).
+        const string DropGateNamespace = "RSToolsNS_RSDataNS_DropGateRSData";
+        static string Namespace(string ns) => string.Equals(ns, DropGateNamespace, StringComparison.OrdinalIgnoreCase) ? DropGateNamespace : ns;
     }
 }

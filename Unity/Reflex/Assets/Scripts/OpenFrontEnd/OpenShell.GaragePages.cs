@@ -1,5 +1,5 @@
 // The levels of the open garage (OpenShell.Garage.cs is the frame and the way up and down):
-//   GARAGE > VEHICLE > MY RIDES > class > vehicle             (GarageMyRides.lua: the types, then their models)
+//   GARAGE > VEHICLE > MY RIDES > class > vehicle             (GarageMyRides.lua: the types, then their models; the list's filters: OpenShell.GarageFilters.cs)
 //   GARAGE > VEHICLE > part type > product line > item         (GarageVehicleCustomize.lua: part types, primary list, secondary list)
 //   GARAGE > VEHICLE > ENGINE SOUND (a row) / VEHICLE TUNING
 //   GARAGE > RIDER > NAME & NUMBER
@@ -35,7 +35,7 @@ namespace Reflex.Port.OpenFrontEnd
                 case GKind.ProRiders: GarageProRidersPage(); return true;
                 case GKind.Vehicle: GarageVehicleLevel(); return true;
                 case GKind.Classes: GarageClassesLevel(); return true;
-                case GKind.Models: return GarageModelsLevel(l.a);
+                case GKind.Models: return GarageModelsLevel(l);
                 case GKind.PartSection: return GaragePartSectionLevel(l.a);
                 case GKind.PartLine: return GaragePartLineLevel(l.a, l.b);
                 case GKind.Tuning: GarageTuningPage(); return true;
@@ -56,12 +56,12 @@ namespace Reflex.Port.OpenFrontEnd
                 case GKind.Rider: return OpenContent.Str("STR_GARAGE_RIDER", "RIDER").ToUpperInvariant();
                 case GKind.Identity: return "NAME & NUMBER";
                 case GKind.GearSection: return OpenGarageData.GearTypes().FirstOrDefault(t => t.id == l.a).name ?? "GEAR";
-                case GKind.PartSection: return OpenGarageData.PartTypes(OpenGarageData.Equipped).FirstOrDefault(t => t.id == l.a).name ?? "PART";
+                case GKind.PartSection: return l.a >= RxSlotBase ? GarageRxSlotName(l.a) : OpenGarageData.PartTypes(OpenGarageData.Equipped).FirstOrDefault(t => t.id == l.a).name ?? "PART";
                 case GKind.GearLine: case GKind.PartLine: return OpenGarageData.Title(l.b, "LINE").ToUpperInvariant();
                 case GKind.ProRiders: return OpenContent.Str("STR_PRO_RIDERS", "PRO RIDERS").ToUpperInvariant();
                 case GKind.Vehicle: return "VEHICLE";
                 case GKind.Classes: return OpenContent.Str("STR_GARAGE_VEHICLE_MYRIDES", "MY RIDES").ToUpperInvariant();
-                case GKind.Models: return l.a == ModdedOnly ? "MODDED BIKES" : l.a < 0 ? "ALL VEHICLES" : OpenGarageData.TypeName(l.a).ToUpperInvariant();
+                case GKind.Models: return l.a == ModdedOnly ? "MODDED BIKES" : l.a >= 0 ? OpenGarageData.TypeName(l.a).ToUpperInvariant() : GarageListTitle();
                 case GKind.Tuning: return OpenContent.Str("STR_GARAGE_VEHICLE_TUNE", "VEHICLE TUNING").ToUpperInvariant();
                 case GKind.RiderPresets: return "RIDER PRESETS";
                 case GKind.BikePresets: return "BIKE PRESETS";
@@ -85,7 +85,7 @@ namespace Reflex.Port.OpenFrontEnd
                 case GKind.ProRiders: return "WHO RIDES: YOUR RIDER OR A PRO";
                 case GKind.Vehicle: return OpenGarageData.Pro ? "RIDING AS A PRO RIDER: HIS VEHICLE IS HIS OWN" : "RIDING  " + GarageBikeTitle(OpenGarageData.EquippedModel, OpenGarageData.Equipped);
                 case GKind.Classes: return "CHOOSE A CLASS";
-                case GKind.Models: return "CHOOSE A VEHICLE  ·  " + OuGlyphs.Retarget(OuUi.KeySubmit).ToUpperInvariant() + " TO RIDE IT";
+                case GKind.Models: return GarageListSub();
                 case GKind.Tuning: return "LEFT / RIGHT SLIDES TOWARD THE WORD ON THAT SIDE  ·  SAVED AT ONCE";
                 case GKind.RiderPresets: return "SAVE THE LOOK YOU WEAR NOW, OR LOAD ONE YOU SAVED";
                 case GKind.BikePresets: return "SAVE THE BIKE SETUP YOU RIDE NOW, OR LOAD ONE YOU SAVED";
@@ -315,6 +315,7 @@ namespace Reflex.Port.OpenFrontEnd
             if (g.AnyNew) pills.Add(("NEW", "warn"));
             if (g.AnyDlc) pills.Add(("DLC", null));
             if (mod || g.items.Any(i => i.kit != null && !i.kit.pack.builtIn)) pills.Add(("MOD", "mod"));   // (a gear / kit pack's pieces in the line; the built-in GEICO kits are DLC)
+            if (g.items.Any(i => i.rx != null)) pills.Add(("ALIVE", "mod"));   // (a line of imported MX vs ATV Alive gear: Content/RxGear.cs)
             var card = GarageCard("garage-line-" + g.line, g.title.ToUpperInvariant(), sub, true, GarageBrandLogo(g.line), enter, pills.ToArray());
             card.EnableInClassList("ou-gcard-off", owned == 0);
             return card;
@@ -349,6 +350,7 @@ namespace Reflex.Port.OpenFrontEnd
             if (item.dlc) pills.Add(("DLC", null));
             mod |= item.kit != null && !item.kit.pack.builtIn;   // a gear / kit pack's piece (KitPacks): tagged MOD, its pack named under it (the built-in GEICO kits: DLC only)
             if (mod) pills.Add(("MOD", "mod"));
+            if (item.rx != null) pills.Add(("ALIVE", "mod"));   // a "gear" .rxmod piece: the imported MX vs ATV Alive gear
             string sub = inLine ? null : (!string.IsNullOrEmpty(item.line) ? item.line : OpenGarageData.BrandName(item.product))?.ToUpperInvariant();
             if (item.kit != null && !item.kit.pack.builtIn)
             {   // (a long folder name is cut: "ALPINESTARSHUNTERLAWRENCELEPURPLEGEAR" ran under the pills)
@@ -457,7 +459,8 @@ namespace Reflex.Port.OpenFrontEnd
 
         static string CleanLetters(string s, bool spaces) => new string((s ?? "").ToUpperInvariant().Where(c => char.IsLetterOrDigit(c) || spaces && (c == ' ' || c == '-' || c == '_')).ToArray()).Trim();
 
-        /// NAME (the motocard's name the hub and the results show), JERSEY NAME (8 letters / digits on the jersey) and NUMBER (the jersey's
+        /// NAME (the motocard's name the hub and the results show), JERSEY NAME (up to ReflexPlateRaster.MaxName letters / digits / spaces on
+        /// the jersey; the original's 8, a longer name runs off the jersey at both ends, centred) and NUMBER (the jersey's
         /// and the plates', 1..999): the PlayerRider row's Name / Number as the motocard's pages write them.
         void GarageIdentityRows()
         {
@@ -466,15 +469,17 @@ namespace Reflex.Port.OpenFrontEnd
                 string was = ReflexProfile.HasPersona ? ReflexProfile.Persona : null;
                 ReflexProfile.Persona = v; GarageStageHeader();
             }, 16);
-            GarageTextRow("JERSEY NAME", "garage-jersey-name", () => OpenGarageData.Tab("PlayerRider").Str("Name", 0) ?? "", false, v =>
+            GarageTextRow("JERSEY NAME", "garage-jersey-name", () => OpenGarageData.Tab("PlayerRider").Str("Name", 0) ?? "", true, v =>
             {
+                v = v.Replace('-', ' ').Replace('_', ' ');   // (the jersey font draws letters, digits and spaces)
                 if (!CoreGarageProfile.SetRiderText("Name", v)) { GarageStatus((CoreGarageProfile.Error ?? "The name could not be saved.").ToUpperInvariant()); return; }
                 ReflexProfile.Open(); GarageStatus("JERSEY NAME SAVED"); GarageStageHeader(); GaragePlatesChanged();
-            }, 8);
+            }, ReflexPlateRaster.MaxName);
             GarageNumberRow();
             GarageHideNumberRow("HIDE NUMBER · BIKE", "garage-hide-bike-number", () => ReflexPlateText.HideBikeSetting, v => ReflexPlateText.HideBikeSetting = v, OpenGarageStage.Shot.Front, "BIKE NUMBER");
             GarageHideNumberRow("HIDE NUMBER · GEAR", "garage-hide-gear-number", () => ReflexPlateText.HideRiderSetting, v => ReflexPlateText.HideRiderSetting = v, OpenGarageStage.Shot.Torso, "GEAR NUMBER");
-            GarageNote("NAME is the motocard's (the hub, the results, the leaderboards). JERSEY NAME and NUMBER are printed on your jersey and plates. HIDE NUMBER leaves the number off your bike's plates or your jersey / chest protector (the jersey name stays), in races too.");
+            GarageHideNumberRow("HIDE NAME · GEAR", "garage-hide-gear-name", () => ReflexPlateText.HideNameSetting, v => ReflexPlateText.HideNameSetting = v, OpenGarageStage.Shot.Torso, "GEAR NAME");
+            GarageNote("NAME is the motocard's (the hub, the results, the leaderboards). JERSEY NAME and NUMBER are printed on your jersey and plates. HIDE NUMBER leaves the number off your bike's plates or your jersey / chest protector, HIDE NAME leaves the jersey name off (for gear skins that print their own), in races too.");
         }
 
         /// HIDE NUMBER (bike / gear): the client save's choice (ReflexPlateText.HideBikeSetting / HideRiderSetting), drawn at once on the stage
@@ -637,6 +642,9 @@ namespace Reflex.Port.OpenFrontEnd
 
             OuTheme.Section(garageRows, OpenContent.Str("STR_GARAGE_VEHICLE_CUSTOMIZE", "CUSTOMIZE VEHICLE").ToUpperInvariant());
             var types = OpenGarageData.PartTypes(vehicle);
+            // a .rxmod bike (an imported Alive vehicle, a bike mod): its own parts, then only the original types that still work on it (OpenShell.GarageRxParts.cs)
+            var rxBike = GarageRxBike(model);
+            if (rxBike != null) { types = GarageRxCustomize(rxBike, vehicle, model); if (types.Count == 0) return; }
             if (types.Count == 0) { GarageNote("This vehicle has no parts to change."); return; }
             var mod = BikeMods.ChosenFor(model);
             var tables = mod != null ? OpenGarageData.PartTables() : null;
@@ -688,9 +696,10 @@ namespace Reflex.Port.OpenFrontEnd
 
         bool GaragePartSectionLevel(int type)
         {
+            if (type >= RxSlotBase) return GarageRxPartSection(type);   // (a .rxmod bike's own slot: OpenShell.GarageRxParts.cs)
             if (OpenGarageData.Pro) return false;
             int vehicle = OpenGarageData.Equipped, model = OpenGarageData.EquippedModel;
-            var ty = OpenGarageData.PartTypes(vehicle).FirstOrDefault(t => t.id == type);
+            var ty = GarageListedPartTypes(vehicle, model).FirstOrDefault(t => t.id == type);   // (on a .rxmod bike: only the original types that work on it)
             if (ty.name == null) return false;
             var mod = BikeMods.ChosenFor(model);
             var tables = mod != null ? OpenGarageData.PartTables() : null;
@@ -711,6 +720,7 @@ namespace Reflex.Port.OpenFrontEnd
                 });
             }
             if (ty.tuning != null && ty.tuning.Length > 0) GarageNote("A " + ty.name + " brings " + ty.tuning.ToUpperInvariant() + " points to tune in VEHICLE TUNING.");
+            if (GarageRxBike(model) is RxModBike rxOn) GarageNote("Fitted to the " + GarageOriginalTitle(model) + " that " + GarageRxBikeName(rxOn) + " rides as: it is not drawn on this bike.");
             if (groups.Any(g => g.items.Any(i => i.kit != null)) && BikeMods.ChosenFor(model) != null)
                 GarageNote("KIT PACKS are made for the original bike: on " + BikeMods.Title(BikeMods.ChoiceFor(model)) + " the mod's own kit shows (pick the original bike's card in MY RIDES to see them).");
             GarageKitNotes(true);
@@ -721,7 +731,7 @@ namespace Reflex.Port.OpenFrontEnd
         {
             if (OpenGarageData.Pro) return false;
             int vehicle = OpenGarageData.Equipped, model = OpenGarageData.EquippedModel;
-            var ty = OpenGarageData.PartTypes(vehicle).FirstOrDefault(t => t.id == type);
+            var ty = GarageListedPartTypes(vehicle, model).FirstOrDefault(t => t.id == type);
             if (ty.name == null) return false;
             var items = OpenGarageData.PartItems(model, vehicle, type).Where(i => i.parent == line).ToList();
             if (items.Count == 0) return false;
@@ -757,86 +767,17 @@ namespace Reflex.Port.OpenFrontEnd
 
         // ================================================================================================ MY RIDES
 
-        /// The vehicle classes (GarageMyRides' types, in its order), then the modded bikes and every vehicle at once.
-        void GarageClassesLevel()
-        {
-            bool pro = OpenGarageData.Pro;
-            var all = OpenGarageData.Vehicles();
-            int equippedType = pro ? -1 : all.FirstOrDefault(v => v.equipped)?.type ?? -1;
-            foreach (var type in all.Select(v => v.type).Distinct().ToList())
-            {
-                int t = type;
-                var of = all.Where(v => v.type == t).ToList();
-                var eq = of.FirstOrDefault(v => v.equipped);
-                int owned = of.Count(v => v.owned);
-                string sub = (eq != null ? "RIDING  " + GarageBikeTitle(eq.id, eq.playerVehicle) + "  ·  " : "") + owned + " OWNED  ·  " + of.Count + " IN ALL";
-                var pills = new List<(string, string)>();
-                if (t == equippedType) pills.Add(("EQUIPPED", "good"));
-                if (of.Any(v => v.isNew && !v.locked)) pills.Add(("NEW", "warn"));
-                var card = GarageCard("garage-class-" + t, OpenGarageData.TypeName(t).ToUpperInvariant(), sub, true, null, () => GarageEnter(GKind.Models, t), pills.ToArray());
-                card.EnableInClassList("ou-gcard-off", owned == 0);
-                card.RegisterCallback<FocusInEvent>(_ => GarageEquippedPreview(OpenGarageStage.Shot.Overview, false));
-            }
-            OuTheme.Section(garageRows, "MORE");
-            if (BikeMods.All.Count > 0)
-            {
-                OpenGarageData.LogModCoverage(all);
-                int n = all.Sum(v => OpenGarageData.ModsOfModel(v.id).Count);
-                var mods = GarageCard("garage-class-mods", "MODDED BIKES", n + " BIKE MOD MODELS  ·  MODS/BIKES", true, null, () => GarageEnter(GKind.Models, ModdedOnly), ("MOD", "mod"));
-                mods.RegisterCallback<FocusInEvent>(_ => GarageEquippedPreview(OpenGarageStage.Shot.Overview, false));
-            }
-            var every = GarageCard("garage-class-all", "ALL VEHICLES", all.Count(v => v.owned) + " OWNED  ·  " + all.Count + " IN ALL  ·  EVERY CLASS", true, null, () => GarageEnter(GKind.Models, -1));
-            every.RegisterCallback<FocusInEvent>(_ => GarageEquippedPreview(OpenGarageStage.Shot.Overview, false));
-        }
-
-        /// The vehicles of a class (-1 every class, ModdedOnly the modded bikes); under each covered bike's own card one card per installed bike
-        /// mod that has its chassis: a vehicle of its own, named as the mod names it (mod.ini [Bikes]), owned and priced as the base bike.
-        bool GarageModelsLevel(int cls)
-        {
-            var all = OpenGarageData.Vehicles();
-            if (cls >= 0 && !all.Any(v => v.type == cls)) return false;
-            if (BikeMods.All.Count > 0) OpenGarageData.LogModCoverage(all);
-            var entries = new List<GarageItem>();
-            foreach (var v in all.Where(v => cls < 0 || v.type == cls))
-            {
-                if (cls != ModdedOnly) entries.Add(v);
-                foreach (var m in OpenGarageData.ModsOfModel(v.id)) entries.Add(ModCard(v, m));
-            }
-            if (cls == ModdedOnly && entries.Count == 0) { GarageNote("No installed bike mod has a chassis for a bike in this garage (Mods/Bikes)."); return true; }
-            // a bike of a class of its own (an imported Alive 50cc / 650: its "class") is a section of its own, after the game's classes
-            foreach (var group in entries.GroupBy(v => OwnClassOf(v) ?? OpenGarageData.TypeName(v.type)).OrderBy(g => g.Any(x => OwnClassOf(x) != null) ? 1 : 0))
-            {
-                if (cls < 0 || group.Any(x => OwnClassOf(x) != null)) OuTheme.Section(garageRows, group.Key);
-                foreach (var v in group)
-                {
-                    var item = v;
-                    string choice = BikeMods.ChoiceFor(item.id);
-                    string brand = ShownBrand(item);
-                    bool here = item.equipped && choice == item.modId;   // the card that matches the choice made for the bike
-                    var pills = new List<(string, string)>();
-                    if (here) pills.Add(("EQUIPPED", "good"));
-                    else if (item.owned) pills.Add(("OWNED", null));
-                    else pills.Add(item.locked ? ("LOCKED", "bad") : (item.price > 0 ? item.price.ToString("N0") : "FREE", "gold"));
-                    if (item.mod != null) pills.Add(("MOD", "mod"));
-                    if (item.isNew && !item.locked) pills.Add(("NEW", "warn"));
-                    if (item.dlc) pills.Add(("DLC", null));
-                    string sub = (brand ?? OpenGarageData.TypeName(item.type)) + (item.mod != null && !string.IsNullOrEmpty(item.mod.author) ? "  ·  BY " + item.mod.author : "");
-                    var card = GarageCard(GarageVehicleCardName(item), ShownModel(item).ToUpperInvariant(), sub.ToUpperInvariant(), false, item.mod == null ? GarageBrandLogo(item.product) : null, () => GarageVehicleAccept(item), pills.ToArray());
-                    card.EnableInClassList("ou-gcard-off", !item.owned);
-                    card.RegisterCallback<FocusInEvent>(_ => GarageVehicleShow(item, false));
-                }
-            }
-            return true;
-        }
+        // (the classes and the vehicle list with its filters: OpenShell.GarageFilters.cs)
 
         /// The garage class of a mod card's bike when it has its own (RxModBike.garageClass: "50CC", "650"), else null.
-        static string OwnClassOf(GarageItem v) => v.mod?.rx?.bikes.FirstOrDefault(b => b.vehicleModelId == v.id)?.garageClass;
+        static string OwnClassOf(GarageItem v) => BikeMods.BikeOf(v.mod, v.id)?.garageClass;
 
-        /// The base bike's item as a mod shows it: a card of its own (same ownership and price), titled as the mod names the bike.
+        /// The base bike's item as a mod shows it: a card of its own (same ownership and price), titled as the mod names the bike (with the
+        /// pack's name when another card has the same bike name: BikeMods.CardNameFor).
         static GarageItem ModCard(GarageItem v, BikeMod m)
         {
             var c = v.Clone(); c.modId = m.id; c.mod = m;
-            c.modName = BikeMods.NameFor(m, v.id, v.title);
+            c.modName = BikeMods.CardNameFor(m, v.id, v.title);
             if (c.modName != null) c.title = c.modName.Full;   // (the purchase dialog and the status line say what the bike is)
             return c;
         }

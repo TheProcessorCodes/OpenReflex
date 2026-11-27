@@ -85,14 +85,16 @@ namespace Reflex.Port.OriginalWorld
         /// launch clears it).
         /// weather / weatherIntensity: WEATHER (the RACE / FREE RIDE setup's rows, Rendering/ReflexWeather.cs: 0 CLEAR, 1 RAIN, 2 SNOW, 3 DYNAMIC;
         /// 0 LIGHT .. 2 HEAVY). Every other launch rides CLEAR; the pause page's reload of the same ride passes the ride's own (ReflexWeather.RideMode).
-        public static void Launch(string eventKey, int ai, bool remember = true, string scene = "Reflex", int laps = 0, ReflexWorldFiles.Garage garage = null, float mapScale = float.NaN, bool practice = false, int riders = 0, int weather = 0, int weatherIntensity = 1)
+        public static void Launch(string eventKey, int ai, bool remember = true, string scene = "Reflex", int laps = 0, ReflexWorldFiles.Garage garage = null, float mapScale = float.NaN, bool practice = false, int riders = 0, int weather = 0, int weatherIntensity = 1, bool anyVehicle = false, bool splitScreen = false)
         {
+            Reflex.Port.RxCore.RxSplitScreen.Set(splitScreen);   // SPLIT SCREEN (w-split): this launch only (PRACTICE too: player 2's laps are never logged)
             Reflex.Port.Rendering.ReflexWeather.SetRide(practice ? 0 : weather, weatherIntensity);
             float mapBase = MapScaleBaseOf(eventKey);
             if (float.IsNaN(mapScale) && ReflexEvents.Find(eventKey)?.trackMod?.experimentalTerrain == true)
                 mapScale = ExperimentalMtxScale.PercentFor(ReflexEvents.Find(eventKey).trackMod) / 100f;
             Reflex.Port.RxCore.RxMapScale.Set(float.IsNaN(mapScale) ? mapBase : mapScale, mapBase);
             Reflex.Port.RxCore.RxPracticeMode.Set(practice);
+            Reflex.Port.RxCore.RxAnyVehicle.Set(anyVehicle);   // ANY VEHICLE (OpenSetup.OffEvent): the event keeps no records
             if (practice) ai = 0;
             if (remember) { PlayerPrefs.SetString(PrefsKey, eventKey); PlayerPrefs.SetInt(AiKey, ai); PlayerPrefs.Save(); }
             Pending = eventKey; PendingAi = ai; PendingLaps = laps; PendingGarage = garage; PendingRiders = riders;
@@ -155,7 +157,8 @@ namespace Reflex.Port.OriginalWorld
             ReflexEvents.Event ev = null;
             try { ev = ReflexEvents.Find(key) ?? ReflexEvents.Find(defaultEvent); }
             catch (Exception e) { Debug.LogWarning("Reflex events not read from the install: " + e.Message); }
-            TrackMods.Bind(ev?.trackMod);   // MODS/TRACKS: a custom track's files bound to its level name for this event (none for the original's)
+            UnleashedLevels.Bind(ev?.location);
+                TrackMods.Bind(ev?.trackMod);   // MODS/TRACKS: a custom track's files bound to its level name for this event (none for the original's)
             if (ev == null)
             {
                 if (OwnCareerLaunch.HasPending) OwnCareerLaunch.Prepare(runtime ? runtime : FindAnyObjectByType<OriginalWorldRuntime>(), null);

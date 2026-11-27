@@ -61,6 +61,49 @@ namespace Reflex.Port.Rendering
         public static int NearSize = 2048;
         public static float NearSpan = 56f, NearAhead = 0.2f, NearBand = 6f;
         public static bool DebugNoNear;
+        /// The near target is drawn only where the camera can see the ground: inside the wedge its view makes on the ground plane (ViewWedge).
+        /// The target is redrawn in full every frame for this one camera, and the texels outside the wedge are read by no pixel of the
+        /// frame, so the picture is the same; about half of the square's fill (every bump layer blended over 2048 x 2048) is not drawn.
+        /// false (tests): the whole square, as before.
+        public static bool NearClip = true;
+        static readonly int Clip0Id = Shader.PropertyToID("_RfxRTBumpClip0"), Clip1Id = Shader.PropertyToID("_RfxRTBumpClip1");
+        static readonly Vector4 NoClip = new Vector4(0f, 0f, 1f, 0f);
+        static readonly Vector3[] WedgeCorners = { new Vector3(0, 0, 0), new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(1, 1, 0) };
+        const float WedgeMarginDeg = 4f, WedgeBack = 2f, WedgeMaxDeg = 170f;
+
+        /// The camera's view on the ground plane: every point it can see is the eye plus a positive mix of its four corner rays, so its
+        /// (x, z) lies in the cone those rays' horizontal directions span from the eye. The two bounding half-planes over (x, z, 1)
+        /// (>= 0 inside), opened by WedgeMarginDeg and moved WedgeBack metres behind the eye (the bump taps and the bilinear footprint read
+        /// a texel or two past a visible point). False (no clipping) when a corner ray is vertical or the cone is too wide (looking down).
+        public static bool ViewWedge(Camera c, out Vector4 lo, out Vector4 hi)
+        {
+            lo = hi = NoClip;
+            Vector2 sum = Vector2.zero; Span<Vector2> d = stackalloc Vector2[4];
+            for (int i = 0; i < 4; i++)
+            {
+                Vector3 r = c.ViewportPointToRay(WedgeCorners[i]).direction;
+                var h = new Vector2(r.x, r.z); float m = h.magnitude;
+                if (!(m > 0.05f)) return false;
+                d[i] = h / m; sum += d[i];
+            }
+            if (!(sum.magnitude > 0.5f)) return false;
+            Vector2 a = sum.normalized; float min = 0f, max = 0f;
+            for (int i = 0; i < 4; i++)
+            {
+                float dot = a.x * d[i].x + a.y * d[i].y;
+                if (!(dot > 0.05f)) return false;
+                float ang = Mathf.Atan2(a.x * d[i].y - a.y * d[i].x, dot);
+                if (ang < min) min = ang; if (ang > max) max = ang;
+            }
+            min -= WedgeMarginDeg * Mathf.Deg2Rad; max += WedgeMarginDeg * Mathf.Deg2Rad;
+            if (!(max - min < WedgeMaxDeg * Mathf.Deg2Rad)) return false;
+            Vector2 Turn(float t) { float s = Mathf.Sin(t), k = Mathf.Cos(t); return new Vector2(a.x * k - a.y * s, a.x * s + a.y * k); }
+            Vector2 bl = Turn(min), bh = Turn(max);
+            var p = c.transform.position; Vector2 apex = new Vector2(p.x, p.z) - a * WedgeBack;
+            lo = new Vector4(-bl.y, bl.x, bl.y * apex.x - bl.x * apex.y, 0f);    // cross(bl, p - apex) >= 0
+            hi = new Vector4(bh.y, -bh.x, bh.x * apex.y - bh.y * apex.x, 0f);    // cross(p - apex, bh) >= 0
+            return true;
+        }
         CommandBuffer cmd;
         static ReflexRTBump activeOwner;
         Camera renderingCamera;
@@ -75,6 +118,7 @@ namespace Reflex.Port.Rendering
 
         void OnEnable()
         {
+            Shader.SetGlobalVector(Clip0Id, NoClip); Shader.SetGlobalVector(Clip1Id, NoClip);   // (other users of the bump / track shaders draw unclipped)
             RenderPipelineManager.beginCameraRendering += OnBegin;
             RenderPipelineManager.endCameraRendering += OnEnd;
         }
@@ -96,7 +140,10 @@ namespace Reflex.Port.Rendering
             var target = targetCamera ? targetCamera : Camera.main;
             // Foreign subscribers must not erase the rendering camera's RT_Bump binding.
             // The owner clears validity when its camera finishes, so other cameras use the fallback.
-            if (c != target) return;
+            // SPLIT SCREEN (w-split): the second rider's camera too. The one target is drawn again for it with its own layout (each camera's
+            // slices and terrain draws are submitted before the next camera begins), its fit state is its own (views[1]).
+            if (!OriginalWorld.ReflexWorldViews.Is(target, c)) return;
+            var view = views[OriginalWorld.ReflexWorldViews.Index(c)];
             if (!rt)
             {
                 rt = new RenderTexture(Width, SliceHeight * Slices, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear)
@@ -104,10 +151,10 @@ namespace Reflex.Port.Rendering
                 rt.Create();
             }
             cmd ??= new CommandBuffer { name = "RT_Bump" };
-            bool fromCore = CoreFit(c, out var coreFit);
+            bool fromCore = CoreFit(c, view, out var coreFit);
             var fit = fromCore ? coreFit : FitCascades(c, groundHeight ?? UnityTerrainHeight);
             // test aid (showcase 'rtfreeze'): FreezeHold keeps the layout of the frame it was set in (the slices stop following the camera)
-            if (FreezeHold) { if (!frozen) { frozenFit = fit; frozen = true; Debug.Log("[RT_Bump] layout frozen"); } fit = frozenFit; } else frozen = false;
+            if (FreezeHold) { if (!view.frozen) { view.frozenFit = fit; view.frozen = true; Debug.Log("[RT_Bump] layout frozen"); } fit = view.frozenFit; } else view.frozen = false;
             LastFit = fit;
 
             cmd.Clear();
@@ -117,6 +164,7 @@ namespace Reflex.Port.Rendering
             Texture deform = tm && tm.HasProperty(DeformMapId) && tm.GetFloat(UseDeformMapId) > 0.5f ? tm.GetTexture(DeformMapId) : null;
             cmd.SetGlobalTexture(DeformRTId, deform ? deform : Texture2D.grayTexture);
             cmd.SetGlobalVector(DeformParamsId, new Vector4(deform ? 1f : 0f, 0f, 0f, 0f));
+            cmd.SetGlobalVector(Clip0Id, NoClip); cmd.SetGlobalVector(Clip1Id, NoClip);   // the slices are drawn whole
             bool trackPass = tracks && tracks.TryGetDraw(out _, out _, out _, out _);
             for (int k = 0; k < Slices; k++)
             {
@@ -156,6 +204,7 @@ namespace Reflex.Port.Rendering
                 cmd.SetRenderTarget(rtNear);
                 cmd.SetViewport(new Rect(0, 0, NearSize, NearSize));
                 cmd.ClearRenderTarget(false, true, ClearColor);
+                if (NearClip && ViewWedge(c, out var wedgeLo, out var wedgeHi)) { cmd.SetGlobalVector(Clip0Id, wedgeLo); cmd.SetGlobalVector(Clip1Id, wedgeHi); }
                 cmd.SetViewProjectionMatrices(Matrix4x4.identity, nvp);
                 foreach (var d in draws)
                     if (d.mesh && d.material) cmd.DrawMesh(d.mesh, d.matrix, d.material, d.submesh, d.pass);
@@ -165,6 +214,7 @@ namespace Reflex.Port.Rendering
                     cmd.SetViewProjectionMatrices(toWorldN, nvp);
                     cmd.DrawMesh(ribbonsN, Matrix4x4.identity, decalN, 0, 0);
                 }
+                cmd.SetGlobalVector(Clip0Id, NoClip); cmd.SetGlobalVector(Clip1Id, NoClip);
                 cmd.SetGlobalTexture(NearId, rtNear);
                 cmd.SetGlobalVector(NearRectId, new Vector4(x0, z0, 1f / NearSpan, NearBand));
             }
@@ -251,10 +301,17 @@ namespace Reflex.Port.Rendering
         // the oracle): the camera goes to the core worker between frames and the latest trapezoid comes back (at most a game frame old;
         // the slices and the terrain's lookups always use the same one). FitCascades below is the stand-in until the first result (or
         // without the Open Reflex core).
-        Reflex.Port.OriginalWorld.OriginalWorldRuntime world; float worldLook; bool frozen; Fit frozenFit;
+        Reflex.Port.OriginalWorld.OriginalWorldRuntime world; float worldLook;
         public static bool FreezeHold;
+        // per world view (SPLIT SCREEN, w-split: 0 the game camera, 1 the second rider's): the frozen layout, the held fit and the core's fit channel
+        sealed class ViewState
+        {
+            public int index; public bool frozen; public Fit frozenFit;
+            public readonly float[] heldOut = new float[12], heldKey = new float[12]; public bool heldValid; public Fit heldFit;
+        }
+        readonly ViewState[] views = { new ViewState(), new ViewState { index = 1 } };
         readonly float[] fitPos = new float[3], fitFwd = new float[3], fitUp = new float[3];
-        bool CoreFit(Camera c, out Fit fit)
+        bool CoreFit(Camera c, ViewState view, out Fit fit)
         {
             fit = default;
             if (!Application.isPlaying) return false;
@@ -264,10 +321,10 @@ namespace Reflex.Port.Rendering
             var tr = c.transform;
             Vector3 p = tr.position, f = tr.forward, u = tr.up;
             fitPos[0] = p.x; fitPos[1] = p.y; fitPos[2] = p.z; fitFwd[0] = f.x; fitFwd[1] = f.y; fitFwd[2] = f.z; fitUp[0] = u.x; fitUp[1] = u.y; fitUp[2] = u.z;
-            if (world.FramesHeld || world.ViewerActive) return HeldFit(sim, c, out fit);
-            heldValid = false;
-            sim.RequestRTBumpFit((float[])fitPos.Clone(), (float[])fitFwd.Clone(), (float[])fitUp.Clone(), c.fieldOfView * Mathf.Deg2Rad, c.aspect, c.nearClipPlane);
-            var o = sim.LatestRTBumpFit(out _);
+            if (world.FramesHeld || world.ViewerActive) return HeldFit(sim, c, view, out fit);
+            view.heldValid = false;
+            sim.RequestRTBumpFit((float[])fitPos.Clone(), (float[])fitFwd.Clone(), (float[])fitUp.Clone(), c.fieldOfView * Mathf.Deg2Rad, c.aspect, c.nearClipPlane, view.index);
+            var o = sim.LatestRTBumpFit(out _, view.index);
             if (o == null || !(o[1] > o[0])) return false;
             fit = FromTrapezoid(o);
             return true;
@@ -279,30 +336,29 @@ namespace Reflex.Port.Rendering
         // fit of this camera now, asked of the idle worker directly (OpenReflexSimulation.RTBumpFitNow, in the same render frame: a camera cut
         // never shows the previous camera's layout); asked again only when the camera changed (a held shot costs nothing); the stand-in fit
         // if the worker does not answer in time.
-        readonly float[] heldOut = new float[12], heldKey = new float[12];
-        bool heldValid; Fit heldFit;
         const double HeldWaitMs = 4.0;
         /// (tests) the main thread's wait for the last held fit, ms.
         public static float HeldFitMs;
-        bool HeldFit(Reflex.Port.RxCore.OpenReflexSimulation sim, Camera c, out Fit fit)
+        bool HeldFit(Reflex.Port.RxCore.OpenReflexSimulation sim, Camera c, ViewState view, out Fit fit)
         {
+            float[] heldOut = view.heldOut, heldKey = view.heldKey;
             float fov = c.fieldOfView * Mathf.Deg2Rad, aspect = c.aspect, near = c.nearClipPlane;
-            bool same = heldValid && heldKey[9] == fov && heldKey[10] == aspect && heldKey[11] == near;
+            bool same = view.heldValid && heldKey[9] == fov && heldKey[10] == aspect && heldKey[11] == near;
             for (int i = 0; i < 3 && same; i++) same = heldKey[i] == fitPos[i] && heldKey[3 + i] == fitFwd[i] && heldKey[6 + i] == fitUp[i];
-            if (same) { fit = heldFit; return true; }
+            if (same) { fit = view.heldFit; return true; }
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             bool got = sim.RTBumpFitNow(fitPos, fitFwd, fitUp, fov, aspect, near, HeldWaitMs, heldOut);
             HeldFitMs = (float)((System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
             if (got && heldOut[1] > heldOut[0])
             {
-                heldFit = FromTrapezoid(heldOut);
+                view.heldFit = FromTrapezoid(heldOut);
                 for (int i = 0; i < 3; i++) { heldKey[i] = fitPos[i]; heldKey[3 + i] = fitFwd[i]; heldKey[6 + i] = fitUp[i]; }
                 heldKey[9] = fov; heldKey[10] = aspect; heldKey[11] = near;
-                heldValid = true;
-                fit = heldFit;
+                view.heldValid = true;
+                fit = view.heldFit;
                 return true;
             }
-            heldValid = false;
+            view.heldValid = false;
             fit = default;
             return false;   // (OnBegin: the stand-in fit of this camera)
         }

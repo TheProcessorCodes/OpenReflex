@@ -136,3 +136,43 @@ gate and players as FREER AIR (`rx_fa_for` returns RX_FA_LOOSE); the factors at 
   landed 78 deg sideways, and a part-stick whip spiked to 1.8 x its plateau rate.
 Composition with a physics editor (w-physstudio): every factor eases the value the simulation holds (S+5680, the filters' F+4), so an
 edited damping or lag is loosened from its edited value; edits of rx_fa_curve_value itself would change the 100 % end.
+
+## LIP PULL (port addition, w-lippull 2026-11-09)
+
+The owner: "like a magnet pulling you down to the lip, the steeper the takeoff". What it is, measured with a stage-hooked product probe (per
+7.5 ms step, the pitch rate S+740.x after each stage of 00431d60; negative = nose up):
+
+- **The limiter.** The grounded correction 00441300 (bike_slot12.c part 2) has a wheelie limiter for the steps when only the **rear** wheel touches
+  (S+8890 set, S+89e0 clear; the file's own "front" / "rear" names are swapped, fixed in its comments): while the bike pitches nose-up it scales the
+  pitch rate by f = 0.85 .. 0.95 per step (strongest at a bike angle of 25 deg to world up, again from 45 / 50 deg; speed / rpm / rider lean blend it)
+  and caps it at 1.5 rad/s. It measures the angle against **world up**, so on a steep jump face, once the front wheel has left it (40 .. 120 ms
+  before the rear on the FR jumps), it takes the face's own nose-up rotation away and the bike is held down to the lip. Example (FR_Alpine 35 deg
+  kicker, no rider input, LIP PULL 0 only from 0.6 s before the take-off): the step after the front left, 0 %: -3.53 rad/s, original: -1.50 (the cap).
+  The ATV has the same limiter (vehicle_atv_controls.c 00497a70, its rear pair 94e0 / 9630).
+- **Not it** (each switched off around the same lip in a scratch build): the take-off damping S+56e0 (pitch x 0.25 on the first air step) is a
+  safety net, not the pull: without it the 35 deg jump flips to -48 deg; it does cost ~1 ft/s of the centre of mass on that step (4 x gravity) and
+  0.6 ft of apex, because it damps the root body only. The yaw / pitch damping of part 1 (no change), the stoppie branch (front only, not at lips).
+  The big nose-down kick at a hands-off kicker's lip is the rear suspension (no rear strut force for those 60 ms: no kick): physics, kept.
+- **The option.** `rx_session_set_lip_pull(s, 0 .. 1)` (rx_api.h; free_air.h rx_fa_lip_*), OPTIONS > OPEN REFLEX > RIDING > LIP PULL (key
+  `OpenReflex.LipPull`, default 100 %). Same gate as FREER AIR (`rx_fa_for`: local human players only, one host static when off). Below 1 the
+  limiter's change of the pitch rate is kept by keep = 1 - (1 - lip) * slope, slope = 0 .. 1 as the ground under the rear wheel (its contact normal
+  S+88c0, ATV the touching rear wheels' sum) rises 10 .. 25 deg along the bike's heading: a wheelie on flat ground keeps the original limiter at any
+  setting (FR_Alpine's start wheelie: 3.4 rad/s removed by the limiter, identical at 0 %). At 1 the original's value is used as it is.
+- **Proof that 100 % is the original.** HEAD probe vs this build (no call / `PROBE_LIP=1`): identical SHA-256 of the 12-rider pair lines and the trace
+  of Concord turn 3000 frames (f66bd2dc.. / df07177c..) and of FR_Alpine whip jump 2 (929891e6.. / a7e8f4af..), and of the stage trace of a hands-off
+  Alpine ride. 0 % on Concord differs (d6c3dc90..).
+- **Numbers** (paired: the same ride, LIP PULL changed only from 0.6 s before the take-off to the landing; full throttle; "pull back" = the rider stick
+  back for the last 0.3 s before the lip; nose = bike angle to horizontal, wx = pitch rate at take-off, + = nose down):
+
+  | jump (face) | input | 100 % | 50 % | 0 % |
+  |---|---|---|---|---|
+  | Alpine 35 deg | hands off | nose 37.8, wx 3.43, apex 23.56 ft, lowest nose in the air 26.2 | 38.1, 3.37, 23.61, 27.9 | 38.5, 3.30, 23.65, 29.8 |
+  | Alpine 35 deg | half pull back | nose 36.5, wx 3.98, lowest nose 18.7 (drops 17.8 deg) | 37.4, 3.60, 26.1 | 38.1, 3.48, 29.2 (drops 8.9) |
+  | Alpine 35 deg | full pull back | nose 44.0, wx 2.12, apex 24.40 ft, 126.2 ft long | 45.7, 1.78, 24.83, 127.0 | 48.4, 0.96, 25.47, 129.0 |
+  | Gibson 44 deg | full pull back | nose 52.7, wx 1.42, apex 27.53 ft, 121.7 ft | 57.2, 1.07, 28.44, 122.3 | 64.7, 0.37, 29.94, 122.9 |
+  | Gibson 60 deg (crawl up a wall) | hands off | vy 14.0 ft/s, apex 2.8 ft, 0.29 s of air | | vy 17.6, apex 5.1, 0.73 s |
+  | Alpine 22 / 16 / 10 deg | full pull back | apex 14.56 / 8.40 / 4.47 ft | | 14.77 / 8.65 / 4.61 |
+  | Cheyenne 43 deg | full pull back | apex 35.52 ft | | 35.11 (the front left with the rear: little to remove) |
+
+  The steeper the face, the more the limiter removes and the more the setting changes; gentle faces (< 10 deg) are unchanged by construction.
+  A fuzzed 6000-frame Gibson ride at 0 %: no NaN, no stop. The ATV path is compiled (Mac + Windows) but not ride-tested (no ATV profile at hand).

@@ -119,7 +119,7 @@ namespace Reflex.Port.Content
 
         /// Every pack found (cached; Refresh rescans).
         public static List<EnginePack> All { get { lock (s_lock) { if (s_packs == null) s_packs = Scan(); return s_packs; } } }
-        public static void Refresh() { lock (s_lock) s_packs = null; }
+        public static void Refresh() { lock (s_lock) s_packs = null; lock (s_resolved) s_choices++; }
         public static EnginePack Find(string id)
         {
             if (string.IsNullOrEmpty(id)) return null;
@@ -246,33 +246,115 @@ namespace Reflex.Port.Content
         }
 
         // ------------------------------------------------------------------------------------------------ the per-bike choice
-        /// The pack chosen for a vehicle model (VehicleModelId; the garage's ENGINE SOUND), else the default (OPTIONS), else Original.
-        public static string ChoiceFor(int vehicleModelId)
+        // A choice is a string: "" Original, "mod:..." / "builtin:..." an MX Bikes pack, "alive:<PROJECT>" an imported MX vs ATV Alive engine
+        // set (AliveEngineSets, played by OriginalWorld/AliveEngineAudio). Which one a model plays (core/plan/ALIVE_ENGINE_SOUNDS.md section 6):
+        //   1. while a bike mod is active on the model (BikeMods.ChoiceFor, the garage's TEST RIDE first): its own choice EngineSound.Mod.<modId>,
+        //      so two mods on one Reflex slot (two imported Alive bikes) keep their own engines;
+        //   2. an imported Alive bike (mod "AliveBikes/alive-<aliveId>-...") without one: its own Alive set (AliveEngineSets.ForAliveVehicle);
+        //   3. the model's choice EngineSound.Model.<id>;
+        //   4. the OPTIONS default EngineSound.Default; else Original.
+        // Resolved once per model and cached until a choice, a bike mod, the TEST RIDE, the packs or the Alive sets change: PackFor / AliveSetFor
+        // run every game frame for every rider (no allocation, w-gcspikes).
+        public const string ModKeyPrefix = "EngineSound.Mod.";
+
+        sealed class Resolved
         {
-            string v = Options.ReflexSave.GetString(ModelKey(vehicleModelId), null);
-            if (v == null) v = Options.ReflexSave.GetString(DefaultKey, Original);
-            return v ?? Original;
+            public int choices = -1, bikes, sets, rideModel; public string rideMod;
+            public string mod = "", key = "", choice = Original; public bool own, bikesOwn;
+            public AliveEngineSet ownSet, aliveSet; public EnginePack pack;
         }
-        // the save keys by model, made once (ChoiceFor runs every frame for every rider)
-        static readonly Dictionary<int, string> s_modelKeys = new Dictionary<int, string>();
-        static string ModelKey(int vehicleModelId)
+        static readonly Dictionary<int, Resolved> s_resolved = new Dictionary<int, Resolved>();
+        static int s_choices;   // bumped by every change of an EngineSound.* key and by Refresh
+        static bool s_hooked;
+
+        static Resolved Resolve(int model)
         {
-            lock (s_modelKeys)
+            lock (s_resolved)
             {
-                if (!s_modelKeys.TryGetValue(vehicleModelId, out var k)) s_modelKeys[vehicleModelId] = k = KeyPrefix + vehicleModelId;
-                return k;
+                if (!s_hooked) { s_hooked = true; Options.ReflexSave.Changed += k => { if (k != null && k.StartsWith("EngineSound.", StringComparison.Ordinal)) lock (s_resolved) s_choices++; }; }
+                if (!s_resolved.TryGetValue(model, out var r)) s_resolved[model] = r = new Resolved();
+                if (r.choices == s_choices && r.bikes == BikeMods.Version && r.sets == AliveEngineSets.Version && r.rideModel == BikeMods.RideModel && ReferenceEquals(r.rideMod, BikeMods.RideMod)) return r;
+                r.choices = s_choices; r.bikes = BikeMods.Version; r.sets = AliveEngineSets.Version; r.rideModel = BikeMods.RideModel; r.rideMod = BikeMods.RideMod;
+                r.mod = ActiveMod(model);
+                r.key = r.mod.Length > 0 ? ModKeyPrefix + r.mod : KeyPrefix + model;
+                r.ownSet = AliveEngineSets.ForAliveVehicle(AliveIdOf(PaintedMod(r.mod, model)));
+                string v = null; r.own = r.bikesOwn = false;
+                if (r.mod.Length > 0 && Options.ReflexSave.TryGetString(r.key, out v)) r.own = true;
+                else if (r.ownSet != null) { v = r.ownSet.id; r.bikesOwn = true; }
+                else if (Options.ReflexSave.TryGetString(KeyPrefix + model, out v)) r.own = true;
+                else v = Options.ReflexSave.GetString(DefaultKey, Original);
+                r.choice = v ?? Original;
+                r.pack = Find(r.choice);
+                r.aliveSet = r.choice.StartsWith(AliveEngineSets.IdPrefix, StringComparison.OrdinalIgnoreCase) ? AliveEngineSets.Find(r.choice) : null;
+                return r;
             }
         }
-        /// Whether the model has its own choice (else it follows the default).
-        public static bool HasOwnChoice(int vehicleModelId) => Options.ReflexSave.Has(KeyPrefix + vehicleModelId);
-        public static void SetChoice(int vehicleModelId, string packId) { Options.ReflexSave.SetString(KeyPrefix + vehicleModelId, packId ?? Original); Options.ReflexSave.Save(); }
+        /// The bike mod in effect on a model: the garage's TEST RIDE of it, else its saved choice ("" the original bike).
+        public static string ActiveMod(int vehicleModelId)
+        {
+            if (vehicleModelId < 0) return Original;
+            if (vehicleModelId == BikeMods.RideModel && BikeMods.RideMod != null && (BikeMods.RideMod.Length == 0 || BikeMods.Find(BikeMods.RideMod) != null)) return BikeMods.RideMod;
+            return BikeMods.ChoiceFor(vehicleModelId) ?? Original;
+        }
+        /// The bike mod whose bike a mod puts on a model: a skin mod's painted bike's mod (an imported Alive bike under a skin keeps its own
+        /// Alive set), else the mod itself.
+        static string PaintedMod(string modId, int model)
+        {
+            var m = BikeMods.Find(modId);
+            if (m?.rx == null || m.rx.type != "skins") return modId;
+            var b = m.rx.skins.FirstOrDefault(k => k.target != null && k.target.vehicleModelId == model)?.target;
+            return b == null ? modId : BikeMods.All.FirstOrDefault(x => ReferenceEquals(x.rx, b.mod))?.id ?? modId;
+        }
+        /// The Alive VehicleModel id of an imported Alive bike's mod id ("AliveBikes/alive-<id>-<label>", AliveImport.AliveBikeSource.Slug), -1 other.
+        public static int AliveIdOf(string modId)
+        {
+            string p = AliveImport.AliveBikes.Folder + "/alive-";
+            if (modId == null || !modId.StartsWith(p, StringComparison.OrdinalIgnoreCase)) return -1;
+            int i = p.Length, v = 0, n = 0;
+            for (; i < modId.Length && modId[i] >= '0' && modId[i] <= '9' && n < 9; i++, n++) v = v * 10 + (modId[i] - '0');
+            return n > 0 ? v : -1;
+        }
+
+        /// The choice a vehicle model plays (VehicleModelId; the garage's ENGINE SOUND), resolved as above.
+        public static string ChoiceFor(int vehicleModelId) => vehicleModelId < 0 ? Original : Resolve(vehicleModelId).choice;
+        /// Whether the model (or its active mod) has its own stored choice (else it follows the bike's own Alive set or the default).
+        public static bool HasOwnChoice(int vehicleModelId) => vehicleModelId >= 0 && Resolve(vehicleModelId).own;
+        /// The model plays its imported Alive bike's own set because nothing else is chosen ("BIKE'S OWN" in the menus).
+        public static bool IsBikesOwn(int vehicleModelId) => vehicleModelId >= 0 && Resolve(vehicleModelId).bikesOwn;
+        /// The installed Alive set of the model's active imported Alive bike, null: none.
+        public static AliveEngineSet OwnAliveSet(int vehicleModelId) => vehicleModelId < 0 ? null : Resolve(vehicleModelId).ownSet;
+        /// Stores a choice: per mod while a bike mod is active on the model, else per model.
+        public static void SetChoice(int vehicleModelId, string packId)
+        {
+            if (vehicleModelId < 0) return;
+            Options.ReflexSave.SetString(Resolve(vehicleModelId).key, packId ?? Original); Options.ReflexSave.Save();
+        }
+        /// Removes the model's (or its active mod's) own choice: it follows the bike's own Alive set or the default again.
+        public static void ClearChoice(int vehicleModelId)
+        {
+            if (vehicleModelId < 0) return;
+            string key = Resolve(vehicleModelId).key;
+            if (Options.ReflexSave.Has(key)) { Options.ReflexSave.Delete(key); Options.ReflexSave.Save(); }
+        }
         public static string DefaultChoice { get => Options.ReflexSave.GetString(DefaultKey, Original); set { Options.ReflexSave.SetString(DefaultKey, value ?? Original); Options.ReflexSave.Save(); } }
-        /// The pack to play for a model (null = the original engine): a chosen pack that is not installed any more plays the original.
-        public static EnginePack PackFor(int vehicleModelId) => vehicleModelId < 0 ? null : Find(ChoiceFor(vehicleModelId));
-        /// "ORIGINAL" or the pack's title.
-        public static string Title(string id) { var p = Find(id); return p == null ? "ORIGINAL" : p.Title.ToUpperInvariant(); }
-        /// The choices in menu order: Original, then every pack.
-        public static List<string> Choices() { var l = new List<string> { Original }; l.AddRange(All.Select(p => p.id)); return l; }
+        /// The MX Bikes pack to play for a model (null = not a pack: the original engine or an Alive set): a chosen pack that is not installed
+        /// any more plays the original.
+        public static EnginePack PackFor(int vehicleModelId) => vehicleModelId < 0 ? null : Resolve(vehicleModelId).pack;
+        /// The Alive engine set to play for a model (null = none chosen, or the chosen set is not installed any more: the original engine).
+        public static AliveEngineSet AliveSetFor(int vehicleModelId) => vehicleModelId < 0 ? null : Resolve(vehicleModelId).aliveSet;
+        /// "ORIGINAL", the pack's title or the Alive set's ("ALIVE 450F"); a choice that is not installed reads "ORIGINAL" (what plays).
+        public static string Title(string id)
+        {
+            if (id != null && id.StartsWith(AliveEngineSets.IdPrefix, StringComparison.OrdinalIgnoreCase)) { var s = AliveEngineSets.Find(id); return s == null ? "ORIGINAL" : s.Title; }
+            var p = Find(id); return p == null ? "ORIGINAL" : p.Title.ToUpperInvariant();
+        }
+        /// The choices in menu order: Original, every pack, then every installed Alive set.
+        public static List<string> Choices()
+        {
+            var l = new List<string> { Original }; l.AddRange(All.Select(p => p.id));
+            foreach (var s in AliveEngineSets.All) l.Add(s.id);
+            return l;
+        }
     }
 
     /// RIFF WAVE reader: PCM 8 / 16 / 24 / 32-bit and IEEE float, any channel count (downmixed to mono for the 3D engine voices).

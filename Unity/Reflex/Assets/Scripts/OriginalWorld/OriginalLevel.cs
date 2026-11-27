@@ -172,6 +172,9 @@ namespace Reflex.Port.OriginalWorld
             RTBump.terrain = terrain;
             RTBump.tracks = terrain ? terrain.GetComponent<OriginalTracks>() : null;
             RTBump.targetCamera = gameCamera ? gameCamera : runtime && runtime.chaseCamera ? runtime.chaseCamera : null;
+            // TERRAIN TESSELLATION (OPTIONS > VIDEO, on by default): the original's fine grid around the camera (it draws nothing while off)
+            var clipmap = GetComponent<Rendering.ReflexTerrainClipmap>() ?? gameObject.AddComponent<Rendering.ReflexTerrainClipmap>();
+            clipmap.terrain = terrain; clipmap.bump = RTBump;
         }
 
         // The start gate: DropGate entities rotate about their local X when the race starts (_re/notes/start-gate.md); the running

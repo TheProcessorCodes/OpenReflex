@@ -30,7 +30,7 @@ namespace Reflex.Port.OpenFrontEnd
 {
     public sealed partial class OpenShell : MonoBehaviour
     {
-        public enum Screen { None, Install, Library, Main, Browser, Setup, Options, Loading, Working, Garage, Credits, Motocard, MotoSkills, PhysicsStudio, Play }
+        public enum Screen { None, Install, Library, Main, Browser, Setup, Options, Loading, Working, Garage, Credits, Motocard, MotoSkills, PhysicsStudio, Play, Braap }
 
         /// The front-end scene's original front end (disabled while the shell runs).
         public FrontEndManager original;
@@ -63,6 +63,7 @@ namespace Reflex.Port.OpenFrontEnd
         {
             Instance = this;
             Reflex.Port.RxCore.RxMapScale.Reset();   // MAP SCALE: the front end's menu world is always at 100 %
+            Reflex.Port.RxCore.RxAnyVehicle.Reset();   // ANY VEHICLE: set again by such a launch only
             Reflex.Port.RxCore.RxPracticeMode.Reset();   // PRACTICE: set again by a practice launch only
             Reflex.Port.Rendering.ReflexWeather.SetRide(0, 1);   // WEATHER: the menus (and the loading arena) are CLEAR; a ride's launch sets its own
             Reflex.Port.Options.ReflexClientLive.ApplyFrameRate();
@@ -107,7 +108,38 @@ namespace Reflex.Port.OpenFrontEnd
         void StartConnected(bool returnToCareer)
         {
             { string root = ReflexInstall.Dir; System.Threading.Tasks.Task.Run(() => RxFiles.Warm(root)); }   // (a packed library's archives opened ahead: Content/RxFiles.cs)
+            CleanUntamedStaging();   // (what an Untamed import that did not end left in Mods/Tracks: OpenShell.UntamedImport.cs)
+            CleanUnleashedStaging();   // (what an Unleashed import that did not end left in the game files: OpenShell.UnleashedImport.cs)
+            if (Environment.GetEnvironmentVariable("REFLEX_MODS_SCAN") == "1")
+            {   // support / tests: every Mods scanner runs now, so the log lists what the game finds in Mods (MODS ANYWHERE: Content/ReflexMods.cs)
+                try { _ = TrackMods.All; _ = BikeMods.All; _ = KitPacks.All; Debug.Log("[Mods] scan: " + RxGear.All.Count() + " rider gear pieces of .rxmods"); }
+                catch (Exception e) { Debug.LogWarning("[Mods] scan: " + e); }
+            }
+            {   // tests: REFLEX_UNLEASHED_IMPORT="<Unleashed folder>|Nat04,SX01" (or "|all") imports those tracks now, without the screens, and
+                // logs each track's result and content hash (tests/unleashed_import: the importer in the real player)
+                string spec = Environment.GetEnvironmentVariable("REFLEX_UNLEASHED_IMPORT");
+                if (!string.IsNullOrEmpty(spec))
+                {
+                    string root = ReflexInstall.Dir; int bar = spec.LastIndexOf('|');
+                    string folder = bar < 0 ? spec : spec.Substring(0, bar), ids = bar < 0 ? "all" : spec.Substring(bar + 1);
+                    System.Threading.Tasks.Task.Run(() =>
+                    {
+                        try
+                        {
+                            var found = Reflex.Port.Content.UnleashedImport.UnleashedImporter.Scan(folder, root, System.Threading.CancellationToken.None);
+                            var want = new HashSet<string>(ids.Split(','), StringComparer.OrdinalIgnoreCase);
+                            var pick = found.Ready.Where(t => ids == "all" || want.Contains(t.entry.id)).ToList();
+                            var r = Reflex.Port.Content.UnleashedImport.UnleashedImporter.Import(found, pick, root, new Reflex.Port.Content.UnleashedImport.UnleashedImportOptions { log = m => Debug.Log("[Unleashed import test] " + m) }, null, System.Threading.CancellationToken.None);
+                            RxFiles.Reset();
+                            foreach (var t in r.tracks) Debug.Log("[Unleashed import test] " + t);
+                            Debug.Log("[Unleashed import test] done: " + r.Imported + " of " + r.tracks.Count + " in " + r.seconds.ToString("0.0") + " s");
+                        }
+                        catch (Exception e) { Debug.LogWarning("[Unleashed import test] failed: " + e); }
+                    });
+                }
+            }
             Connected();
+            if (OpenTestRide.PendingReturn == null) { BikeMods.RideModel = -1; BikeMods.RideMod = null; }   // (an Alive class's forced bike ends with its ride: OpenSetup.Launch)
             if (TestRideReturn()) return;   // back from the garage's TEST RIDE: the garage where it was left (OpenShell.TestRide.cs)
             if (TutorialReturn()) return;   // back from the MotoSkills lessons: the MOTOSKILLS page (OpenShell.Tutorials.cs)
             if (ChallengesReturn()) return;   // back from a Free Ride challenge: the CHALLENGES page (OpenShell.Challenges.cs)
@@ -152,6 +184,8 @@ namespace Reflex.Port.OpenFrontEnd
             ReleaseGarage();
             WorldStop();
             _assetCancel?.Cancel();
+            StopUntamedImport();   // (a running Untamed scan / import: OpenShell.UntamedImport.cs)
+            StopUnleashedImport();   // (a running Unleashed scan / import: OpenShell.UnleashedImport.cs)
             _input?.Dispose();
             if (OuSound.Player == _sounds) OuSound.Player = null;
             _sounds?.music?.Detach();   // (the static music hooks held the destroyed shell, w-gcspikes)
@@ -164,6 +198,7 @@ namespace Reflex.Port.OpenFrontEnd
         {
             float dt = Time.unscaledDeltaTime;
             _sounds?.Tick(dt);
+            OuDevice.Watch();   // (the key caps follow the device: a change redraws every legend and page cap)
             if (_input == null) return;
             // the options pages over the shell have the keys and the pad (and the frame they close in: the Esc that closed them)
             bool optionsUp = Options.ReflexOptions.IsOpen || Options.ReflexOptions.ClosedFrame == Time.frameCount;
@@ -203,6 +238,7 @@ namespace Reflex.Port.OpenFrontEnd
             ReleaseKeyboard();
             ReleaseGarage();
             ReleaseBrowser();
+            if (s != Screen.Braap) ReleaseBraap();   // (OpenShell.Braap.cs: the portrait is the player's again)
             _layer.Clear();
             _layer.ClearClassList();
             _layer.AddToClassList("mxa-layer");
@@ -297,7 +333,8 @@ namespace Reflex.Port.OpenFrontEnd
             var rows = PlayRows();
             var single = HubButton(menu, "PLAY", string.Join(" · ", rows.Select(r => r.label)), ShowPlay);
             single.name = "ou-hub-play";
-            HubButton(menu, "GARAGE", "MOTOCARD · GEAR · VEHICLES · TUNING", ShowGarage).name = "ou-hub-garage";
+            var garage = HubButton(menu, "GARAGE", "MOTOCARD · GEAR · VEHICLES · TUNING", ShowGarage);
+            garage.name = "ou-hub-garage";
             var opts = HubButton(menu, "OPTIONS", "CONTROLS · AUDIO · VIDEO · CAMERA & HUD · SYSTEM", ShowOptions);
             opts.name = "ou-hub-options";
             var library = OuUi.Button("GAME LIBRARY", "ou-chip", () => ShowLibrary(true), small);
@@ -307,13 +344,16 @@ namespace Reflex.Port.OpenFrontEnd
             string physics = RxCore.RxPhysicsStudio.PendingName;
             var studio = OuUi.Button(string.IsNullOrEmpty(RxCore.RxPhysicsStudio.PendingText) ? "PHYSICS STUDIO" : "PHYSICS: " + physics.ToUpperInvariant(), "ou-chip", () => ShowPhysicsStudio(0), small);
             studio.name = "ou-hub-physics";
+            // B.R.A.A.P. (OpenShell.Braap.cs): the chip names the roster the races use when it is not the game's own
+            var braap = OuUi.Button(ReflexBraap.UsingDefault ? "B.R.A.A.P." : "AI: " + BrShort(ReflexBraap.Active.name, 14).ToUpperInvariant(), "ou-chip", () => ShowBraap(), small);
+            braap.name = "ou-hub-braap";
             var credits = OuUi.Button("CREDITS", "ou-chip", () => ShowCredits(), small);
             credits.name = "ou-hub-credits";
             var quit = OuUi.Button("QUIT", "ou-chip", ConfirmQuit, small);   // asks first (OpenShell.Popups.cs: QuitConfirmationPopup)
             quit.name = "ou-hub-quit";
             var bigRows = new List<VisualElement>(menu.Children().Where(c => c.userData is OuNavItem));
             OuWidgets.LinkColumn(bigRows);
-            var chips = new[] { library, studio, credits, quit };
+            var chips = new[] { library, studio, braap, credits, quit };
             OuWidgets.LinkRow(chips);
             // the last big row down to the chips (the first chip, or the one under it) and every chip back up to it
             ((OuNavItem)opts.userData).down = library;
@@ -563,7 +603,8 @@ namespace Reflex.Port.OpenFrontEnd
             Clear(Screen.Loading);
             _hints.Clear();
             _sounds?.music?.SetEnable(false);   // InGameLoadingPage:Start: App.SetEnableUIMusic( FALSE )
-            if (OpenSetup.LaunchOverride == null && ShowLoadArena(ev, s)) return;   // the test-ride arena while it loads, then PRESS START (OpenShell.LoadArena.cs)
+            // (DISABLE COMPOUND, OPTIONS > OPEN REFLEX: every launch loads behind the full-screen loading screen, no arena)
+            if (OpenSetup.LaunchOverride == null && !Options.ReflexSettings.DisableCompound && ShowLoadArena(ev, s)) return;   // the test-ride arena while it loads, then PRESS START (OpenShell.LoadArena.cs)
             if (OpenSetup.LaunchOverride == null) OpenLoading.Show(ev, s);
             s.Launch();
         }

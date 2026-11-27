@@ -14,6 +14,7 @@ namespace Reflex.Port.Options
 {
     public sealed partial class ReflexOptionsMenu
     {
+        string _stickNote = "";   // (STICK CONFIG: what the last copy / paste / reset said, shown after the page is drawn again)
         static readonly string[] ActionKeys = { "STR_CM_ACTION_05", "STR_CM_ACTION_06", "STR_STEERING_LEFT", "STR_STEERING_RIGHT", "STR_CM_ACTION_18", "STR_CM_ACTION_09",
             "STR_RIDER_REFLEX_LEFT", "STR_RIDER_REFLEX_RIGHT", "STR_RIDER_REFLEX_UP", "STR_RIDER_REFLEX_DOWN", "STR_CM_ACTION_02", "STR_CM_ACTION_15", "STR_CM_ACTION_11",
             "STR_CM_ACTION_16", "STR_CM_ACTION_04" };
@@ -50,23 +51,61 @@ namespace Reflex.Port.Options
             {
                 ReflexSettings.Vibration = v; ReflexClientLive.GameSetting("Vibration", v ? 1 : 0); ReflexSettings.Save();
             }, panel), "rumble");
-            Note(panel, "The game's Vibration setting: the game rumbles the pad (crashes, landings, the engine) only when it is on.");
-            Named(OptUi.Slider("RUMBLE STRENGTH", () => ReflexSettings.RumbleStrength, v => { ReflexSettings.RumbleStrength = v; ReflexSettings.Save(); }, panel, 0f, 2f, 0.1f, v => Mathf.RoundToInt(v * 100f) + "%"), "rumble-strength");
-            Note(panel, "How strongly the pads rumble, against the game's own motor values (100%).");
-            Named(OptUi.Slider(Str("STR_OPT_MOUSE_SENSITIVITY", "MOUSE SENSITIVITY"), () => ReflexSettings.MouseSensitivity / 100f, v =>
-            {
-                int n = Mathf.RoundToInt(v * 100f); ReflexSettings.MouseSensitivity = n; ReflexClientLive.GameSetting("MouseSensitivity", n); ReflexSettings.Save();
-            }, panel, 0f, 1f, 0.1f), "mouse-sensitivity");
-            Note(panel, "The game's MouseSensitivity: how far the mouse leans the rider. Takes effect at once in a race.");
-            Named(OptUi.Toggle("MOUSE LEAN", () => ReflexSettings.MouseLean, v => { ReflexSettings.MouseLean = v; ReflexSettings.Save(); }, panel), "mouse-lean");
-            Note(panel, "Off: the mouse does not move the rider (it is not sent to the game). Ours.");
+            Help(panel, "Shakes the controller on crashes, landings and with the engine.", When.Now, true);
+            Needs(Named(OptUi.Slider(Str("STR_OPT_VIBRATION", "RUMBLE") + " STRENGTH", () => ReflexSettings.RumbleStrength, v => { ReflexSettings.RumbleStrength = v; ReflexSettings.Save(); }, panel, 0f, 2f, 0.1f, v => Mathf.RoundToInt(v * 100f) + "%"), "rumble-strength"),
+                  () => ReflexSettings.Vibration, Str("STR_OPT_VIBRATION", "RUMBLE") + " IS OFF");
+            Help(panel, "How strongly the controller shakes. 100% is the original game's strength.");
             Named(OptUi.Spinner("STICK LAYOUT", () => ReflexSettings.RightHanded ? "RIGHT-HANDED" : "LEFT-HANDED", d =>
             {
                 ReflexSettings.RightHanded = !ReflexSettings.RightHanded; ReflexClientLive.GameSetting("ControllerHandedness", ReflexSettings.RightHanded ? 1 : 0); ReflexSettings.Save();
             }, panel), "handedness");
-            Note(panel, "The game's ControllerHandedness. RIGHT-HANDED (the game's default): the left stick steers, the right stick (and the arrow keys) move the rider. LEFT-HANDED swaps them; on the keyboard A / D then move the rider. Applies from the next race.");
+            Help(panel, "RIGHT-HANDED: the left stick steers, the right stick and the arrow keys move the rider. LEFT-HANDED swaps them; on the keyboard A / D then move the rider.", When.NextEvent, true);
+            // INVERT LEAN (ReflexLeanInvert.cs, issue #46): the stick and the mouse lean the rider the other way
+            Named(OptUi.Toggle("INVERT LEAN LEFT / RIGHT", () => ReflexSettings.InvertLeanX, v => { ReflexSettings.InvertLeanX = v; ReflexSettings.Save(); }, panel), "invert-lean-x");
+            Named(OptUi.Toggle("INVERT LEAN FORWARD / BACK", () => ReflexSettings.InvertLeanY, v => { ReflexSettings.InvertLeanY = v; ReflexSettings.Save(); }, panel), "invert-lean-y");
+            Help(panel, "ON: the rider leans the other way from the stick and the mouse, so stick left leans right. Stunts keep their directions while the TRICK MODIFIER is held on the controller. The lean keys are not changed: swap them in the mapping table below.");
 
-            Section(panel, "CONTROLLER REMAPPING");
+            // STICK RESPONSE (ReflexStickResponse.cs): per stick, applied to the pad before the game reads it
+            foreach (bool left in new[] { true, false })
+            {
+                bool l = left; string stick = l ? "LEFT STICK" : "RIGHT STICK", id = l ? "left" : "right";
+                ReflexStickResponse.Tune Get() => l ? ReflexStickResponse.Left : ReflexStickResponse.Right;
+                Section(panel, stick + " RESPONSE");
+                Named(OptUi.Slider("SENSITIVITY", () => Get().sensitivity, v => { var t = Get(); t.sensitivity = v; ReflexStickResponse.Set(l, t); }, panel, 1f, ReflexStickResponse.SensitivityMax, 0.1f), "stick-" + id + "-sensitivity");
+                Help(panel, "How fast the " + stick.ToLowerInvariant() + " reaches 100%. At 200% half of its travel is already full; a key press is 100% at once. It never gives more than 100%.", When.Now, true);
+                Named(OptUi.Slider("DEAD ZONE", () => Get().deadZone, v => { var t = Get(); t.deadZone = v; ReflexStickResponse.Set(l, t); }, panel, 0f, ReflexStickResponse.DeadZoneMax, 0.01f), "stick-" + id + "-deadzone");
+                Help(panel, "How far the stick moves before anything happens. 24% is the original game's. Lower reacts sooner; too low and a stick that does not centre well drifts.", When.Now, true);
+                Named(OptUi.Slider("FULL AT", () => Get().full, v => { var t = Get(); t.full = v; ReflexStickResponse.Set(l, t); }, panel, ReflexStickResponse.FullMin, 1f, 0.05f), "stick-" + id + "-full");
+                Help(panel, "The share of the stick's travel that counts as all the way. Below 100% for a worn stick that never reaches its end, or a shorter throw.", When.Now, true);
+                Named(OptUi.Slider("CURVE", () => Get().curve, v => { var t = Get(); t.curve = Mathf.Abs(v) < 0.05f ? 0f : v; ReflexStickResponse.Set(l, t); }, panel, -1f, 1f, 0.1f,
+                                   v => Mathf.Abs(v) < 0.05f ? "LINEAR" : (v > 0 ? "QUICK " : "PRECISE ") + Mathf.RoundToInt(Mathf.Abs(v) * 100f) + "%"), "stick-" + id + "-curve");
+                Help(panel, "The shape of the response. PRECISE: fine control near the centre, the rest comes late. QUICK: most of the response early. LINEAR is the original's.", When.Now, true);
+            }
+
+            Section(panel, "STICK CONFIG");
+            var stickNote = OptUi.Text(_stickNote, "mxa-note", panel); _stickNote = "";
+            void StickShown(string note, string row) { _stickNote = note; ShowOptions(_tab); var e = _layer.Q(row); if (e != null) { e.Focus(); e.GetFirstAncestorOfType<ScrollView>()?.ScrollTo(e); } }
+            Named(OptUi.Button("COPY STICK CODE", "mxa-link", () => { GUIUtility.systemCopyBuffer = ReflexStickResponse.ShareCode(); stickNote.text = "COPIED " + ReflexStickResponse.ShareCode() + ": PASTE IT IN CHAT OR A MESSAGE"; }, panel), "stick-copy");
+            Named(OptUi.Button("PASTE STICK CODE", "mxa-link", () =>
+            {
+                if (!ReflexStickResponse.TryShareText(GUIUtility.systemCopyBuffer, out var pl, out var pr, out string why)) { stickNote.text = why.ToUpperInvariant(); return; }
+                ReflexStickResponse.Set(pl, pr); StickShown("NOW YOURS: " + ReflexStickResponse.Describe(pl, pr), "stick-paste");
+            }, panel), "stick-paste");
+            var stickReset = Named(OptUi.Button("RESET BOTH STICKS", "mxa-link", null, panel), "stick-reset");
+            ((OptNavItem)stickReset.userData).submit = () => ConfirmReset("RESET BOTH STICKS", "Both sticks' SENSITIVITY, DEAD ZONE, FULL AT and CURVE go back to the original game's.",
+                () => { ReflexStickResponse.Set(ReflexStickResponse.Default, ReflexStickResponse.Default); _stickNote = "BOTH STICKS ARE THE ORIGINAL'S AGAIN"; }, "stick-reset");
+            Help(panel, "A stick code (" + ReflexStickResponse.ShareTag + "...) carries both sticks' settings. Online, every rider's settings can be copied from the lobby or while spectating: nobody's are a secret.");
+
+            Section(panel, "MOUSE");
+            Named(OptUi.Toggle("MOUSE LEAN", () => ReflexSettings.MouseLean, v => { ReflexSettings.MouseLean = v; ReflexSettings.Save(); }, panel), "mouse-lean");
+            Help(panel, "ON: moving the mouse leans the rider, as in the original. OFF: the mouse never moves the rider.");
+            Needs(Named(OptUi.Slider(Str("STR_OPT_MOUSE_SENSITIVITY", "MOUSE SENSITIVITY"), () => ReflexSettings.MouseSensitivity / 100f, v =>
+            {
+                int n = Mathf.RoundToInt(v * 100f); ReflexSettings.MouseSensitivity = n; ReflexClientLive.GameSetting("MouseSensitivity", n); ReflexSettings.Save();
+            }, panel, 0f, 1f, 0.1f), "mouse-sensitivity"), () => ReflexSettings.MouseLean, "MOUSE LEAN IS OFF");
+            Help(panel, "How far the mouse leans the rider.", When.Now, true);
+
+            Section(panel, "KEYBOARD AND CONTROLLER MAPPING");
             _ctlStatus = OptUi.Text("", "mxa-note mxa-keep", panel); _ctlStatus.enableRichText = false;
             var head = OptUi.Div("mxa-ctl-row mxa-controls-head", panel);
             head.style.flexDirection = FlexDirection.Row;
@@ -89,22 +128,24 @@ namespace Reflex.Port.Options
                     OptUi.Item(cell, () => StartListening(rr, cc));
                 }
             }
-            Named(OptUi.Button(Str("STR_OPT_DEFAULT", "DEFAULTS"), "mxa-link", RemapDefaults, panel), "remap-defaults");
-            Note(panel, "Restores the default controls (SPAWN MARKERS: hold Y or F to set, B or V to ride back; RESET TRACK unbound).");
-            Note(panel, "Enter on a cell, then press the key or pad input for it (Esc cancels). As in the game: Q, E, 3 and Alt are refused, and an input that is already used elsewhere in the table is refused. Core controls are saved separately for this user; in a race (the pause page's OPTIONS) a change applies at once and stays for the next races, exactly as one made in the menus. " +
-                        "SET / RIDE TO SPAWN MARKER (ours, Free Ride and PRACTICE): hold SET to keep your place as the marker, press RIDE to respawn there at once; they apply at once. " +
-                        "By default they are the inputs of the game's own reset-point flag (Y / F: set it, B / V: back to it), which the spawn marker replaces in Free Ride and PRACTICE; in races those inputs stay the game's. " +
-                        "They cannot share an input with the game's other actions, the D-pad (the game's look back and quick looks), START or the stick clicks. The same input on both rows: hold it to set, tap it to ride back. " +
-                        "RESET TRACK (ours, Free Ride, PRACTICE and races without AI, offline): the ruts and tyre tracks back to the untouched track, the rider stays where he is (also on the pause page). Unbound by default; Backspace clears its cell.");
+            // (the mapping table's help: the cells are the items, so it comes right after the table)
+            Help(panel, "Press SELECT on a cell, then the key or controller input for it; Esc cancels. An input already used elsewhere in the table is refused, as are Q, E, 3 and Alt. Backspace clears RESET TRACK.",
+                 CoreControls && !ReflexClientLive.Runtime ? When.NextEvent : When.Now);
+            var remapDefaults = Named(OptUi.Button(Str("STR_OPT_DEFAULT", "DEFAULTS"), "mxa-link", null, panel), "remap-defaults");
+            ((OptNavItem)remapDefaults.userData).submit = () => { if (!ControlsListening) ConfirmReset("DEFAULT CONTROLS", "Every key and controller input in the table goes back to its default.", RemapDefaults, "remap-defaults"); };
+            Help(panel, "Puts every control back to its default. SPAWN MARKERS: hold Y or F to set, B or V to ride back. RESET TRACK: unbound.", When.None);
+            Keep(panel, "SET / RIDE TO SPAWN MARKER work in Free Ride and PRACTICE (in races those inputs stay the original's reset flag). RESET TRACK puts the ruts back in Free Ride, PRACTICE and races without AI.");
             // in a race the table comes from the game's profile session, which a race does not start by itself: on request
             if (!CoreControls && ReflexClientLive.Runtime && !ReflexProfile.IsOpen && _remap == null && _remapLoading == null)
             {
                 _ctlMessage = "The game's controls come from its profile (about a second to start in a race).";
                 Named(OptUi.Button("SHOW THE GAME'S CONTROLS", "mxa-link", () => { LoadRemap(); RefreshRemap(); }, panel), "remap-load");
-                Note(panel, "Reads the game's controller table from its profile.");
+                Help(panel, "Reads the game's control table from its profile; it takes about a second in a race.", When.None, true);
             }
             else LoadRemap();
             RefreshRemap();
+            ResetSection(panel, "CONTROLS", "reset-controls", "Puts every row of this page back to its default: RUMBLE, STICK LAYOUT, INVERT LEAN, both sticks' response, the mouse and the whole mapping table.",
+                         "RUMBLE, STICK LAYOUT, INVERT LEAN, both sticks' response, MOUSE LEAN and SENSITIVITY and every key and controller input go back to their defaults.", ResetControls);
             return first;
         }
 

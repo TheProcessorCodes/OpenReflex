@@ -128,6 +128,10 @@ namespace Reflex.Port.OriginalWorld
             // the game camera
             v.hasCamera = b.hasCamera; v.camera = b.camera;
             if (a.hasCamera && b.hasCamera) v.camera = PoseBlend.Camera(a.camera, b.camera, t);
+            // SPLIT SCREEN: the second local rider's camera (blended as the first's) and bundle (BlendView2)
+            v.hasCamera2 = b.hasCamera2; v.camera2 = b.camera2;
+            if (a.hasCamera2 && b.hasCamera2) v.camera2 = PoseBlend.Camera(a.camera2, b.camera2, t);
+            if (b.view2.valid) BlendView2(a.view2, b.view2, t); else if (v.view2.valid) v.view2.Clear();
             // scenery the original moves (start gate)
             if (v.objects.Length != b.objects.Length) { v.objects = new float[b.objects.Length]; v.objectsValid = new bool[b.objectsValid.Length]; }
             Array.Copy(b.objectsValid, v.objectsValid, b.objectsValid.Length);
@@ -153,6 +157,45 @@ namespace Reflex.Port.OriginalWorld
             if (b.simTime != vehicleAudioTime) { v.vehicleAudio.CopyFrom(b.vehicleAudio); vehicleAudioTime = b.simTime; }
             v.slotMilliseconds = b.slotMilliseconds; v.milliseconds = b.milliseconds; v.simTime = Time; v.dt = PresentedDt;
             v.gameDt = b.gameDt; v.gameTime = Mathf.Lerp(a.gameTime, b.gameTime, t);
+        }
+
+        // SPLIT SCREEN (w-split): the second local rider's bundle: the bike and the vehicle's bodies blended exactly as the first rider's
+        // are in Blend, the rest as the newer frame has it. The view keeps arrays of its own (a / b are recycled frames).
+        void BlendView2(OriginalSimulation.View2 a, OriginalSimulation.View2 b, float t)
+        {
+            var v = view.view2;
+            v.valid = true;
+            v.hasBike = b.hasBike;
+            if (b.hasBike)
+            {
+                var bs = v.bike; var sb = b.bike; var sa = a.valid && a.hasBike ? a.bike : b.bike;   // (no older bike: the newer one as it is)
+                bs.speed = Mathf.Lerp(sa.speed, sb.speed, t); bs.gear = sb.gear; bs.frames = sb.frames; bs.reserved = sb.reserved;
+                PoseBlend.Bodies(sa.renderPosition, sa.renderOrientation, sb.renderPosition, sb.renderOrientation, t, bs.renderPosition, bs.renderOrientation, 4);
+                PoseBlend.Bodies(sa.position, sa.orientation, sb.position, sb.orientation, t, bs.position, bs.orientation, 4);
+                PoseBlend.Lerp(sa.velocity, sb.velocity, t, bs.velocity, 4); PoseBlend.Lerp(sa.inputs, sb.inputs, t, bs.inputs, 8);
+                v.bike = bs;
+            }
+            v.hasVehicle = b.hasVehicle; var vb = b.vehicle; var va = a.vehicle; bool older = a.valid && a.hasVehicle;
+            if (v.vehicle.renderPosition == null) { v.vehicle.renderPosition = new float[24]; v.vehicle.renderOrientation = new float[24]; }
+            var vp = v.vehicle.renderPosition; var vo = v.vehicle.renderOrientation;
+            v.vehicle = vb; v.vehicle.renderPosition = vp; v.vehicle.renderOrientation = vo;
+            if (vb.renderPosition != null)
+            {
+                if (older && va.renderPosition != null && va.type == vb.type) PoseBlend.Bodies(va.renderPosition, va.renderOrientation, vb.renderPosition, vb.renderOrientation, t, vp, vo, 6);
+                else { Array.Copy(vb.renderPosition, vp, 24); Array.Copy(vb.renderOrientation, vo, 24); }
+                v.vehicle.speed = older ? Mathf.Lerp(va.speed, vb.speed, t) : vb.speed; v.vehicle.rpm = older ? Mathf.Lerp(va.rpm, vb.rpm, t) : vb.rpm;
+            }
+            v.onboardState = b.onboardState;
+            v.race = b.race; v.hasRace = b.hasRace; v.hud = b.hud; v.hasHud = b.hasHud;
+            v.waypoint = b.waypoint; v.hasWaypoint = b.hasWaypoint;
+            v.raceFormat = b.raceFormat; v.hasRaceFormat = b.hasRaceFormat;
+            v.raceHud = b.raceHud; v.hasRaceHud = b.hasRaceHud;
+            v.stuntHud = b.stuntHud; v.hasStuntHud = b.hasStuntHud;
+            v.reflexHud = b.reflexHud; v.hasReflexHud = b.hasReflexHud;
+            v.challenge = b.challenge; v.hasChallenge = b.hasChallenge;
+            v.compass = b.compass; v.hasCompass = b.hasCompass;
+            v.powercross = b.powercross; v.hasPowercross = b.hasPowercross;
+            v.slot = b.slot; v.finished = b.finished; v.drivingCamera = b.drivingCamera;
         }
 
         void BlendSlots(OriginalSimulation.Results a, OriginalSimulation.Results b, float t)

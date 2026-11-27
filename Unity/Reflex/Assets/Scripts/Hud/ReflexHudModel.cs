@@ -200,10 +200,10 @@ namespace Reflex.Port.Hud
         string profileName; bool profileRead;
 
         /// From the runtime's last completed frame (dt: real time since the last fill, for the penalty's 3 s).
-        public void Fill(OriginalWorldRuntime rt, float dt)
+        public void Fill(IReflexHudSource rt, float dt)
         {
             Version++;
-            if (!rt) { valid = inRace = false; mode = HudMode.None; return; }
+            if (rt == null || !rt.Alive) { valid = inRace = false; mode = HudMode.None; return; }
             var race = rt.Race; var hud = rt.HudState; haveHud = rt.HasHud;
             waypoint = rt.IsWaypoint; hasWaypoint = rt.HasWaypoint;
             var wp = rt.Waypoint;
@@ -222,7 +222,7 @@ namespace Reflex.Port.Hud
             riders = Mathf.Max(1, race.riders);
             lap = Mathf.Clamp(lapsCompleted + 1, 1, Mathf.Max(1, laps));
             endless = laps >= 0x61;
-            if (endless) lap = Mathf.Max(lap, Reflex.Port.Practice.RxPractice.LapNumber);
+            if (endless && rt.LocalSlot == -1) lap = Mathf.Max(lap, Reflex.Port.Practice.RxPractice.LapNumber);   // (PRACTICE's lap log is player 1's: never for SPLIT SCREEN's player 2)
             lapTime = race.lap_time; lastLap = race.last_lap; bestLap = race.best_lap; raceTime = race.race_time;
             startTimer = race.start_timer; resetTimer = race.reset_timer; countdownStep = race.countdown_step;
             hasBest = bestLap > 0 && bestLap < 3.0e38f;
@@ -258,7 +258,7 @@ namespace Reflex.Port.Hud
         // RESTORED CONTENT (championship weekend TIMED RACES): the clock from the core (rx_session_champ_clock, read on the worker after each
         // frame: the activity's own InProgress clock, the expiry and the flag), else the stage's length against the local race time. The lap total
         // is the placeholder while the clock runs (RxChampWeekend.LapTotalUnknown): no widget may show it.
-        void FillTimed(OriginalWorldRuntime rt)
+        void FillTimed(IReflexHudSource rt)
         {
             champStage = Reflex.Port.RxCore.RxChampWeekend.StageInSession ? StageLabelOf(Reflex.Port.RxCore.RxChampWeekend.SessionStage) : null;
             timed = inRace && (Reflex.Port.RxCore.RxChampWeekend.TimedStageInSession(out timedSeconds, out timedExtra) || Reflex.Port.RxCore.RxChampWeekend.LapTotalUnknown(laps));
@@ -279,19 +279,20 @@ namespace Reflex.Port.Hud
             if (!timedExpired) { finalLap = false; return; }
             // the laps to go: the local rider's own count, but never more than the leader's (a lapped rider is flagged at its crossing after his)
             int leader = lapsCompleted;
+            int own = rt.LocalSlot;   // (SPLIT SCREEN: the second rider is its slot's row; -1 the row the core flags local)
             for (int i = 0; i < rt.DriverCount && i < rt.Drivers.Length; i++)
             {
                 leader = Mathf.Max(leader, rt.Drivers[i].laps_completed);
-                if (rt.Drivers[i].local != 0 && rt.Drivers[i].finished != 0) finished = true;   // (flagged with fewer laps than the total)
+                if ((own != -1 ? rt.Drivers[i].slot == own : rt.Drivers[i].local != 0) && rt.Drivers[i].finished != 0) finished = true;   // (flagged with fewer laps than the total)
             }
             timedToGo = Mathf.Max(0, Mathf.Min(laps - lapsCompleted, laps - leader + (leader > lapsCompleted ? 1 : 0)));
             if (timedFlag && !finished) timedToGo = 1;
             finalLap = racing && !finished && timedToGo == 1;
         }
         /// Only what a timed stage's lap counter needs (the classic HUD, OriginalHud: its lap counter shows TimedText(true)).
-        public void FillTimedOnly(OriginalWorldRuntime rt)
+        public void FillTimedOnly(IReflexHudSource rt)
         {
-            if (!rt) { timed = false; return; }
+            if (rt == null || !rt.Alive) { timed = false; return; }
             var race = rt.Race;
             valid = race.valid != 0; state = race.state; laps = Mathf.Max(0, race.num_laps); inRace = valid && laps > 0; racing = valid && state == 2;
             lapsCompleted = race.laps_completed; finished = inRace && lapsCompleted >= laps; raceTime = race.race_time;
@@ -310,7 +311,7 @@ namespace Reflex.Port.Hud
         bool overtakeArmed; float overtakeClock; int lastRaceState = -1, lastCam = -1; bool lastFinal;
         // MXUIStuntFeedbackOverlay (00603130 / 006032c0): the begins of the local player's tricks (rx_session_stunt_hud) move the slots up and
         // show the newest ("<trick>", "<stunt>" or "<trick> + <stunt>", MXRaven_Stunts); 3 s after the last, or at "Restart", it hides and empties
-        void FillStunts(OriginalWorldRuntime rt, float dt)
+        void FillStunts(IReflexHudSource rt, float dt)
         {
             if (rt.HasStuntHud)
             {
@@ -367,7 +368,7 @@ namespace Reflex.Port.Hud
             bool rose = now > seen; seen = now; return rose;
         }
 
-        void FillModes(OriginalWorldRuntime rt, float dt, float now)
+        void FillModes(IReflexHudSource rt, float dt, float now)
         {
             bool haveFmt = rt.HasRaceFormat, haveRh = rt.HasRaceHud, haveCh = rt.HasChallenge;
             var fmt = haveFmt ? rt.RaceFormat : default;
@@ -506,39 +507,50 @@ namespace Reflex.Port.Hud
             }
 
             // banners and toasts
-            if (lastStateForGo == 1 && state == 2) goUntil = now + 1.2f;
+            // (PRACTICE: the core skips the countdown and starts the gate down, so there is no GO; keyed on the countdown that really ran,
+            // so a practice-flagged session the core runs with its normal start still gets it)
+            if (state == 1 && lastStateForGo != 1) countdownSince = now;
+            if (lastStateForGo == 1 && state == 2 && !(rt.IsPractice && now - countdownSince < 0.5f)) goUntil = now + 1.2f;
             lastStateForGo = state;
             if (finalLap && !lastFinal) finalLapUntil = now + 2.5f;
             lastFinal = finalLap;
             // the camera's name (a custom preset's own) on every switch (ReflexCameraPresets; the CLASSIC HUD's is ReflexCameraToast)
-            int cam = Reflex.Port.Options.ReflexCameraPresets.ViewKey(rt.cameraMode);
+            int cam = rt.CameraViewKey;
             if (lastCam >= 0 && cam != lastCam)
             {
-                cameraToast = Reflex.Port.Options.ReflexCameraPresets.DisplayName(rt.cameraMode);
+                cameraToast = rt.CameraDisplayName;
                 cameraUntil = Reflex.Port.Options.ReflexSettings.CameraToast ? now + 1.8f : -1f;
             }
             lastCam = cam;
         }
-        int lastStateForGo = -1;
+        int lastStateForGo = -1; float countdownSince = -1f;
 
-        void Standings(OriginalWorldRuntime rt)
+        /// SPLIT SCREEN (w-split): the second local rider's name everywhere in the HUD.
+        public const string SecondPlayerName = "Player 2";
+
+        void Standings(IReflexHudSource rt)
         {
             standings.Clear(); youRow = -1; StandingsVersion++;
             int n = Mathf.Min(rt.DriverCount, scratch.Length);
             // the local rider's name: the garage's NAME (the profile's persona); the world's Player List names the local player "Player 1"
             // whatever the profile says
             if (!profileRead) { profileRead = true; profileName = Reflex.Port.Content.ReflexProfile.HasPersona ? Reflex.Port.Content.ReflexProfile.Persona : null; }
+            int own = rt.LocalSlot; string ownName = rt.LocalName;   // (SPLIT SCREEN: the second rider is its slot's row under its own name; -1 / null the first rider)
             for (int i = 0; i < n; i++)
             {
                 var d = rt.Drivers[i];
                 ReflexRoster.Entry entry = null;
                 var roster = rt.Roster;
                 if (roster != null) for (int k = 0; k < roster.entries.Count; k++) if (roster.entries[k].slot.slot == d.slot) { entry = roster.entries[k]; break; }
-                bool you = d.local != 0;
+                bool you = own != -1 ? d.slot == own : d.local != 0;
+                // SPLIT SCREEN (w-split): the names follow the riders, not the board: player 1's row (the core's local flag: the standings are
+                // read with view player 0 for both boards) is the profile's name, player 2's is always "Player 2", on both riders' boards
+                bool first = d.local != 0, second = !first && (entry != null && entry.secondLocal || own >= 0 && d.slot == own);
                 scratch[i] = new HudStanding
                 {
                     position = Mathf.Max(1, d.place), slot = d.slot, laps = d.laps_completed, you = you, ai = entry != null && entry.Computer, finished = d.finished != 0,
-                    name = ShortName(you ? (!string.IsNullOrEmpty(profileName) ? profileName : !string.IsNullOrEmpty(entry?.name) ? entry.name : "Player") : !string.IsNullOrEmpty(entry?.name) ? entry.name : "Rider " + (d.slot + 1)),
+                    name = second ? SecondPlayerName
+                        : ShortName(first ? (!string.IsNullOrEmpty(profileName) ? profileName : !string.IsNullOrEmpty(entry?.name) ? entry.name : "Player") : you && ownName != null ? ownName : !string.IsNullOrEmpty(entry?.name) ? entry.name : "Rider " + (d.slot + 1)),
                     number = entry?.plate?.number ?? "", raceTime = d.race_time, bestLap = d.best_lap,
                     gapText = you ? "---" : d.finished != 0 ? "FIN" : LapText(Mathf.Clamp(d.laps_completed + 1, 1, Mathf.Max(1, laps))),
                 };

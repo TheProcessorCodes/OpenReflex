@@ -41,13 +41,14 @@ namespace Reflex.Port.OriginalWorld
         public static ReflexGarage.Tuning? LastWritten; public static string LastState;
 
         /// PauseMenu.lua's needsVehicleTuning: Free Ride (the real world's FreeRide events; the UI world's test drive never pauses) with the
-        /// player's own vehicle (the Vehicle Select owner Player1 or the profile's, not a pro's).
+        /// player's own vehicle (the Vehicle Select owner Player1 or the profile's, not a pro's). The port's PRACTICE sessions offer it too
+        /// (the own pause page's VEHICLE TUNING; a change in a lap leaves that lap uncounted: RxPractice.TuningChanged).
         public static bool Offered(OriginalWorldRuntime runtime)
         {
             if (!runtime || (!OpenReflexSelector.UseOpenReflex && !ReflexGarage.Available)) return false;
             if (OpenReflexSelector.UseOpenReflex && ReflexProfile.Current == null) return false;
             var ev = ReflexEvents.Find(runtime.level);
-            if (ev == null || ev.spec.type != "FreeRide") return false;
+            if (ev == null || (ev.spec.type != "FreeRide" && !(runtime.IsPractice && !runtime.OwnedCareerActive))) return false;
             var g = runtime.garage;
             if (OpenReflexSelector.UseOpenReflex)
             {

@@ -39,6 +39,9 @@ namespace Reflex.Port.OpenFrontEnd
 
         public OpenRiderPortrait(Transform parent) { this.parent = parent; }
 
+        /// Another rider to picture instead of the player's own (B.R.A.A.P.'s rider editor: OpenShell.Braap.cs); null: the player's.
+        public (RiderSpec rider, string key)? Override;
+
         /// A picture holder: it shows the portrait as soon as there is one (and keeps showing it as the gear changes).
         public void Bind(VisualElement el)
         {
@@ -77,7 +80,7 @@ namespace Reflex.Port.OpenFrontEnd
         /// (its lighting is put back after the portrait's models were built).
         public void Refresh(OpenMenuWorld world)
         {
-            var (rs, k) = OwnRider();
+            var (rs, k) = Override ?? OwnRider();
             if (g != null && rendered && k == key) return;
             var sw = System.Diagnostics.Stopwatch.StartNew();
             try

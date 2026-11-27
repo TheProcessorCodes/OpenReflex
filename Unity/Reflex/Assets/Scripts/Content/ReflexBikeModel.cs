@@ -50,12 +50,14 @@ namespace Reflex.Port.Content
         public RxModBike rx;
         /// The skin (a "skins" .rxmod) painting rx, null: the bike's own maps.
         public RxSkin rxSkin;
+        /// The parts of rx the player wears that are not its defaults (Content/RxParts.cs: its other graphic kits, exhausts ...), null / empty: none.
+        public List<RxPartOption> rxParts;
         public static BikeSpec MarsFLite => new BikeSpec();
         /// Equal keys build equal bikes.
         public string Key => string.Join("|", chassisDb, chassisPkg, chassisModel, kitDb, kitPkg, tireDb, tirePkg, frontModel, rearModel, hierarchyModel,
             string.Join(",", partModels.Select(p => p.db + "/" + p.pkg)), materials == null ? "-" : string.Join(",", materials.Select(p => p.db + "/" + p.pkg)),
             forkStickers == null ? "-" : forkStickers.Value.db + "/" + forkStickers.Value.pkg) + (hierarchyDb == null ? "" : "|h:" + hierarchyDb + "/" + hierarchyPkg)
-            + (rx == null ? "" : "|rx:" + rx.Key) + (rxSkin == null ? "" : "|skin:" + rxSkin.Key);
+            + (rx == null ? "" : "|rx:" + rx.Key) + (rxSkin == null ? "" : "|skin:" + rxSkin.Key) + (rxParts == null || rxParts.Count == 0 ? "" : "|parts:" + RxParts.Signature(rxParts));
         /// A copy (the lists copied too).
         public BikeSpec Clone()
         {
@@ -80,6 +82,10 @@ namespace Reflex.Port.Content
         public RiderLimbRetarget.Offset[] limbOffsets;
         /// A bike of its own size: its fork posed onto the physics axle (OriginalBikePose.ForkFix; .rxmod "pose": "physics"), null: none.
         public OriginalBikePose.ForkFix forkFix;
+        /// A bike of its own size: its swing arm aimed at the simulation's rear wheel (OriginalBikePose.SwingFix), null: none.
+        public OriginalBikePose.SwingFix swingFix;
+        /// A bike of its own size: the drawn rider moved by this in the bike frame's axes (.rxmod "riderOffset"; OriginalWorldRuntime.ApplyRider).
+        public Vector3 riderShift;
         readonly List<Matrix4x4> binds = new List<Matrix4x4>();
         /// The pose hierarchy's bind world matrices (model space, Unity column convention), parallel to hierarchyNodes.
         public Matrix4x4[] hierarchyBind;
@@ -109,7 +115,8 @@ namespace Reflex.Port.Content
         {
             if (s == null) return null;
             var hr = HighResAll(s);
-            return hr.chassisDb == s.chassisDb ? s : hr;
+            hr = hr.chassisDb == s.chassisDb ? s : hr;
+            return hr.rx != null ? RxHighRes(hr) : hr;   // (a .rxmod bike: its own high-res twin, if it has one: ReflexBikeModel.RxMod.cs)
         }
 
         /// HighRes's twins of every package of the spec that has one (the chassis' too when it has none: the spec's own).
@@ -140,7 +147,7 @@ namespace Reflex.Port.Content
                 chassisDb = chassis.db, chassisPkg = chassis.pkg, chassisModel = chassisModel,
                 kitDb = kit.db, kitPkg = kit.pkg,
                 tireDb = tire.db, tirePkg = tire.pkg, frontModel = front, rearModel = rear,
-                hierarchyModel = s.hierarchyModel, atv = s.atv, machine = s.machine, hierarchyDb = s.hierarchyDb, hierarchyPkg = s.hierarchyPkg, modId = s.modId, modName = s.modName, rx = s.rx, rxSkin = s.rxSkin,
+                hierarchyModel = s.hierarchyModel, atv = s.atv, machine = s.machine, hierarchyDb = s.hierarchyDb, hierarchyPkg = s.hierarchyPkg, modId = s.modId, modName = s.modName, rx = s.rx, rxSkin = s.rxSkin, rxParts = s.rxParts,
                 partModels = s.partModels.Select(Twin).ToList(),
                 partMaterials = s.partMaterials.Select(p => p == null ? ((string db, string pkg)?)null : Twin(p.Value)).ToList(),
                 materials = s.materials?.Select(Twin).ToList(),
@@ -148,6 +155,24 @@ namespace Reflex.Port.Content
                 vehicleModelId = s.vehicleModelId, partIds = s.partIds, name = s.name + " (HR)",
             };
         }
+
+        /// BIKE DETAIL (OPTIONS > VIDEO, ReflexSettings.BikeDetail; REFLEX_BIKE_DETAIL overrides it for tests): what a race draws.
+        /// 0 ORIGINAL: the race models. 1 HIGH: the player's own vehicle is the garage's high-res twin (Build's highRes). 2 HIGH: ALL RIDERS:
+        /// the other riders' too (Build's highRes + lods: the twin while near the camera, the race models' further LODs beyond).
+        /// The twin is posed as the race model is: it binds to the same pose hierarchy by node name (the HR packages keep the hierarchy's
+        /// name and nodes; an imported Alive bike's twin is fitted to the original's nodes like its race model), checked 2026-11-16.
+        public static int RaceDetail
+        {
+            get
+            {
+                string e = Environment.GetEnvironmentVariable("REFLEX_BIKE_DETAIL");
+                return e == "0" ? 0 : e == "1" ? 1 : e == "2" ? 2 : Reflex.Port.Options.ReflexSettings.BikeDetail;
+            }
+        }
+        /// The player's own vehicle is built from the high-res twin in a race.
+        public static bool RaceHighRes => RaceDetail >= 1;
+        /// The other riders' vehicles are (the twin as their nearest LOD).
+        public static bool RaceHighResOthers => RaceDetail >= 2;
 
         /// The part databases whose HR twin the player's own vehicle takes while riding (Build's highResParts): the hand guards, handlebars and
         /// exhausts - the parts right under the onboard view and next to the chase camera. The race models of the hand guards are a crude
@@ -180,16 +205,24 @@ namespace Reflex.Port.Content
         /// Builds the bike at the origin in its model space, unparented ("Original MarsF Lite chassis · body 0" and the two wheel groups).
         /// highRes: the garage's HR twin (HighRes). highResParts (the player's own vehicle in a ride): the HR twins of the RideHighResParts
         /// part models (HighResParts), the rest the race models.
-        public static ReflexBikeModel Build(BikeSpec spec = null, bool highRes = false, bool highResParts = false)
+        /// lods (the other riders of a race, OriginalOpponents): the models' further LOD records are kept to be built and switched by distance
+        /// (ReflexBikeModel.Lod.cs; never for a bike mod, which has LOD 0 only).
+        /// highRes + lods (BIKE DETAIL HIGH: ALL RIDERS): the twin is LOD 0 and the race models' further LOD records follow it at their
+        /// own distances (the race model's LOD 0 is never drawn); a .rxmod bike: its twin within RxFarDistance, its race model beyond.
+        /// stand: false (a race): the twin's garage stand (the "Stand" surfaces of the HR chassis and part models) is left out.
+        public static ReflexBikeModel Build(BikeSpec spec = null, bool highRes = false, bool highResParts = false, bool lods = false, bool stand = true)
         {
             spec ??= BikeSpec.MarsFLite;
-            if (spec.rx != null) return BuildRx(spec);   // a .rxmod bike: its own model on the original's hierarchy (ReflexBikeModel.RxMod.cs)
+            if (spec.rx != null) { var rxHr = highRes ? RxHighRes(spec) : spec; return BuildRx(rxHr, lods && rxHr != spec ? spec : null, stand); }   // a .rxmod bike: its own model on the original's hierarchy (ReflexBikeModel.RxMod.cs)
+            var far = spec;   // (the race models: the further LODs of a high-res twin)
             if (highRes) spec = HighRes(spec);
             var partSpec = !highRes && highResParts ? HighResParts(spec) ?? spec : spec;
             var cat = VehicleCatalog.Shared; var install = cat.install;
             var result = new ReflexBikeModel();
             var chosen = spec.materials != null && spec.materials.Count > 0 ? spec.materials
                        : spec.kitPkg != null ? new List<(string db, string pkg)> { (spec.kitDb, spec.kitPkg) } : new List<(string db, string pkg)>();
+            var farChosen = far.materials != null && far.materials.Count > 0 ? far.materials
+                          : far.kitPkg != null ? new List<(string db, string pkg)> { (far.kitDb, far.kitPkg) } : new List<(string db, string pkg)>();
             var stickers = spec.forkStickers != null ? install.Pkg(spec.forkStickers.Value.db, spec.forkStickers.Value.pkg) : null;
 
             var body = Load(install, spec.chassisDb, spec.chassisPkg, spec.chassisModel);
@@ -208,17 +241,40 @@ namespace Reflex.Port.Content
             var partChosen = partSpec == spec ? chosen : partSpec.materials ?? chosen;   // (the HR parts' bindings resolve over the HR pool, as in the garage)
             var materials = new Dictionary<string, UnityEngine.Material>();
             var defs = new Dictionary<string, VehicleMaterialDef>();
+            var byDef = new Dictionary<VehicleMaterialDef, UnityEngine.Material>();   // (the game's definition -> the material made for it: FarMaterial)
+            VehicleMaterialDef DefOf(string binding, (string db, string pkg) own, (string db, string pkg)? partMats, List<(string db, string pkg)> pool)
+                => spec.machine ? ReflexVehicles.Resolve(cat, binding, own, partMats ?? (spec.kitPkg != null ? (spec.kitDb, spec.kitPkg) : ((string, string)?)null))   // FUN_0053d8b0
+                 : GameMaterial(cat, binding, own, pool) ?? (partMats != null ? PartMaterial(cat, binding, partMats.Value) : null) ?? cat.Resolve(binding, own, pool);
             UnityEngine.Material MaterialOf(string binding, (string db, string pkg) own, (string db, string pkg)? partMats = null, List<(string db, string pkg)> pool = null)
             {
                 pool ??= chosen;
                 string key = own.db + "/" + own.pkg + "|" + binding;
                 if (materials.TryGetValue(key, out var m)) return m;
-                var def = spec.machine ? ReflexVehicles.Resolve(cat, binding, own, partMats ?? (spec.kitPkg != null ? (spec.kitDb, spec.kitPkg) : ((string, string)?)null))   // FUN_0053d8b0
-                        : GameMaterial(cat, binding, own, pool) ?? (partMats != null ? PartMaterial(cat, binding, partMats.Value) : null) ?? cat.Resolve(binding, own, pool);
+                var def = DefOf(binding, own, partMats, pool);
                 if (def == null) Debug.LogWarning("Reflex bike: no material for binding " + binding);
+                var game = def;
                 if (spec.rxSkin != null && spec.rx == null) def = RxOriginalSkin(def, spec.rxSkin);   // an original bike's .rxmod skin (ReflexBikeModel.RxMod.cs)
                 defs[key] = def;
-                return materials[key] = cat.Build(def, binding + (def != null && def.name != binding ? " -> " + def.name : ""), null, stickers);
+                m = materials[key] = cat.Build(def, binding + (def != null && def.name != binding ? " -> " + def.name : ""), null, stickers);
+                if (game != null && !byDef.ContainsKey(game)) byDef[game] = m;
+                return m;
+            }
+            // A race model's further LOD under a high-res twin (highRes + lods): the twin's own material of that binding - by its name
+            // ("HR_" + the binding), else the one the binding resolves to over the twin's packages (the kit's plastics, by the game's
+            // material key, which skips "HR_") - so the mud, the number plate and the run-time constants written to the twin's materials
+            // reach its far LODs and the race kit's maps are not loaded beside the twin's. Else the race model's own material.
+            int farOwnMaterials = 0;
+            UnityEngine.Material FarMaterial(string binding, (string db, string pkg) hrOwn, (string db, string pkg) farOwn, (string db, string pkg)? hrPartMats, (string db, string pkg)? farPartMats, List<(string db, string pkg)> hrPool)
+            {
+                if (materials.TryGetValue(hrOwn.db + "/" + hrOwn.pkg + "|HR_" + binding, out var m) || materials.TryGetValue(hrOwn.db + "/" + hrOwn.pkg + "|" + binding, out m)) return m;
+                foreach (string name in new[] { "HR_" + binding, binding })
+                {
+                    VehicleMaterialDef def = null;
+                    try { def = DefOf(name, hrOwn, hrPartMats, hrPool ?? chosen); } catch (Exception e) when (e is InvalidDataException || e is IOException) { }
+                    if (def != null && byDef.TryGetValue(def, out m)) return m;
+                }
+                farOwnMaterials++;
+                return MaterialOf(binding, farOwn, farPartMats, farChosen);
             }
 
             // the chassis (LOD 0): static surfaces carry their node's world matrix, the skinned fenders stay as stored. The original bikes'
@@ -226,6 +282,15 @@ namespace Reflex.Port.Content
             // over their own bone palette (OriginalBikeSkin): its cables, brake lines, rear shock and fork boots are weighted to other
             // nodes than the one the surface is bound to (VenusF's shock in a surface bound to OBJ_UPR_Forks would steer with the bars)
             bool skinMod = BikeMods.NamespaceOf(spec.chassisDb).Length > 0;
+            lods &= !skinMod && partSpec == spec;
+            // highRes + lods: the race models, whose further LOD records hang under the twin's parts
+            bool hrLods = lods && !ReferenceEquals(spec, far);
+            Loaded farBody = null;
+            if (hrLods)
+                try { farBody = Load(install, far.chassisDb, far.chassisPkg, far.chassisModel); }
+                catch (Exception e) when (e is InvalidDataException || e is IOException) { Debug.LogWarning($"Reflex bike {spec.name}: the race model for the far LODs: {e.Message}"); hrLods = false; }
+            // a machine's damage panels (DMG_*) start hidden, as the game's node flag 0x10 has them (OriginalBikePose.ApplyFlags follows the game's)
+            void HideDamage(Transform t, int poseNode) { if (spec.machine && ReflexVehicles.HiddenAtStart(result.hierarchyNodes[poseNode])) t.gameObject.SetActive(false); }
             var boneOf = new Dictionary<int, Transform>();
             Transform Bone(int j)
             {
@@ -236,36 +301,58 @@ namespace Reflex.Port.Content
                 return boneOf[j] = go.transform;
             }
             var chassisParts = new List<(Transform part, string node, string binding, UnityEngine.Material material, VehicleMaterialDef def)>();
-            foreach (var b in body.model.Lod(0))
+            void ChassisParts(int lod, Transform parent)
             {
-                var s = body.surfaces[b.surface];
-                var m = s.skinned ? Matrix4x4.identity : body.model.nodes[b.node].world;
-                string node = body.model.nodes[b.node].name;
-                var mat = MaterialOf(b.material, (spec.chassisDb, spec.chassisPkg));
-                var t = result.AddPart(root.transform, $"{spec.chassisModel}_{b.surface}_{node}", s, m, PoseNode(node), body.model.nodes[b.node].world, b.material, mat);
-                if (skinMod && s.skinned && s.bones != null) result.Skin(t, s, b.node, Bone);
-                if (skinMod) chassisParts.Add((t, node, b.material, mat, defs.TryGetValue(spec.chassisDb + "/" + spec.chassisPkg + "|" + b.material, out var d) ? d : null));
+                var src = lod != 0 && farBody != null ? farBody : body;   // (a twin's further LODs: the race model's)
+                foreach (var b in src.model.Lod(lod))
+                {
+                    var s = src.surfaces[b.surface];
+                    var m = s.skinned ? Matrix4x4.identity : src.model.nodes[b.node].world;
+                    string node = src.model.nodes[b.node].name;
+                    if (!stand && IsStand(b.material, node)) continue;
+                    var mat = src == body ? MaterialOf(b.material, (spec.chassisDb, spec.chassisPkg))
+                            : FarMaterial(b.material, (spec.chassisDb, spec.chassisPkg), (far.chassisDb, far.chassisPkg), null, null, null);
+                    var t = result.AddPart(parent, $"{(src == body ? spec.chassisModel : far.chassisModel)}_{b.surface}_{node}", s, m, PoseNode(node), src.model.nodes[b.node].world, b.material, mat);
+                    if (lod != 0) continue;
+                    if (skinMod && s.skinned && s.bones != null) result.Skin(t, s, b.node, Bone);
+                    if (skinMod) chassisParts.Add((t, node, b.material, mat, defs.TryGetValue(spec.chassisDb + "/" + spec.chassisPkg + "|" + b.material, out var d) ? d : null));
+                }
             }
+            ChassisParts(0, root.transform);
+            if (lods) result.AddLodModel(spec.chassisModel, (farBody ?? body).model.lods, 0, result.parts.Count, ChassisParts);
 
             // the tyres: a tyre model is modelled in its node's space; it hangs on the body's tyre node (its own root placement is ignored)
             var wheels = new List<GameObject>();
             if (spec.atv) { result.frontWheel = new GameObject("Original front wheels · bodies 2, 3").transform; result.rearWheel = new GameObject("Original rear wheels · bodies 4, 5").transform; }
             else if (spec.machine) { result.frontWheel = new GameObject("Original front wheels · bodies 1, 2").transform; result.rearWheel = new GameObject("Original rear wheels · bodies 3, 4").transform; }
-            else foreach (var (asset, nodeName) in new[] { (spec.frontModel, "OBJ_FRT_Tire"), (spec.rearModel, "OBJ_BCK_Tire") })
+            else foreach (var (asset, farAsset, nodeName) in new[] { (spec.frontModel, far.frontModel, "OBJ_FRT_Tire"), (spec.rearModel, far.rearModel, "OBJ_BCK_Tire") })
             {
                 var tire = Load(install, spec.tireDb, spec.tirePkg, asset);
+                Loaded farTire = null;
+                if (hrLods && (spec.tireDb != far.tireDb || asset != farAsset))
+                    try { farTire = Load(install, far.tireDb, far.tirePkg, farAsset); if (farTire.model.nodes.Length != 1) farTire = null; }
+                    catch (Exception e) when (e is InvalidDataException || e is IOException) { farTire = null; }
                 int attach = body.model.NodeIndex(nodeName);
                 Rfx.Check(attach >= 0 && tire.model.nodes.Length == 1, "the tyre's attachment node");
                 var holder = new GameObject(nodeName == "OBJ_FRT_Tire" ? "Original front wheel · body 2" : "Original rear wheel · body 3");
                 var attachWorld = body.model.nodes[attach].world;
                 var meshes = new List<Transform>();
-                foreach (var b in tire.model.Lod(0))
+                void TyreParts(int lod, Transform parent)
                 {
-                    var s = tire.surfaces[b.surface];
-                    var m = s.skinned ? Matrix4x4.identity : attachWorld;
-                    string node = tire.model.nodes[b.node].name;
-                    meshes.Add(result.AddPart(holder.transform, $"{asset}_{b.surface}_{node}", s, m, PoseNode(nodeName), attachWorld, b.material, MaterialOf(b.material, (spec.tireDb, spec.tirePkg))));
+                    var src = lod != 0 && farTire != null ? farTire : tire;   // (a twin's further LODs: the race tyre's)
+                    foreach (var b in src.model.Lod(lod))
+                    {
+                        var s = src.surfaces[b.surface];
+                        var m = s.skinned ? Matrix4x4.identity : attachWorld;
+                        string node = src.model.nodes[b.node].name;
+                        var mat = src == tire ? MaterialOf(b.material, (spec.tireDb, spec.tirePkg)) : FarMaterial(b.material, (spec.tireDb, spec.tirePkg), (far.tireDb, far.tirePkg), null, null, null);
+                        var t = result.AddPart(parent, $"{(src == tire ? asset : farAsset)}_{b.surface}_{node}", s, m, PoseNode(nodeName), attachWorld, b.material, mat);
+                        if (lod == 0) meshes.Add(t);
+                    }
                 }
+                int tyreFirst = result.parts.Count;
+                TyreParts(0, holder.transform);
+                if (lods) result.AddLodModel(asset, (farTire ?? tire).model.lods, tyreFirst, result.parts.Count - tyreFirst, TyreParts);
                 // the group's pivot is the tyre mesh's bounds centre (parts keep their model-space placement)
                 var tireMesh = meshes.FirstOrDefault(t => t.GetComponent<MeshRenderer>().sharedMaterial.name.StartsWith("MX_Tire", StringComparison.Ordinal) || t.GetComponent<MeshRenderer>().sharedMaterial.name.StartsWith("HR_MX_Tire", StringComparison.Ordinal)) ?? meshes[0];
                 holder.transform.position = tireMesh.GetComponent<MeshFilter>().sharedMesh.bounds.center;
@@ -287,20 +374,41 @@ namespace Reflex.Port.Content
                     var part = Load(install, db, pkg, ma.name);
                     string nodeName = part.model.nodes[0].name;
                     if (hier.NodeIndex(nodeName) < 0 && body.model.NodeIndex(nodeName) < 0) { Debug.LogWarning($"Reflex bike {spec.name}: part {ma.name} hangs on {nodeName}, not a node of the bike"); continue; }
-                    var attachWorld = BindOf(nodeName); var rootInv = part.model.nodes[0].world.inverse;
-                    foreach (var b in part.model.Lod(0))
+                    var attachWorld = BindOf(nodeName);
+                    // a twin's further LODs: the race package's model of that name (without "HR_"), on the same node
+                    Loaded farPart = null; (string db, string pkg) farPkg = default;
+                    (string db, string pkg)? farPartMats = hrLods && k < far.partModels.Count ? PartMaterialsOf(far, k) : null;   // (not k in ModelParts: it runs again later, for a further LOD)
+                    if (hrLods && k < far.partModels.Count && far.partModels[k].db != db)
                     {
+                        farPkg = far.partModels[k];
+                        var fp = install.Pkg(farPkg.db, farPkg.pkg);
+                        string fn = ma.name.StartsWith("HR_", StringComparison.OrdinalIgnoreCase) && fp?.Find(ma.name.Substring(3), "model") != null ? ma.name.Substring(3) : fp?.Find(ma.name, "model") != null ? ma.name : null;
+                        if (fn != null)
+                            try { farPart = Load(install, farPkg.db, farPkg.pkg, fn); if (!string.Equals(farPart.model.nodes[0].name, nodeName, StringComparison.OrdinalIgnoreCase)) farPart = null; }
+                            catch (Exception e) when (e is InvalidDataException || e is IOException) { farPart = null; }
+                    }
+                    void ModelParts(int lod, Transform parent)
+                    {
+                      var src = lod != 0 && farPart != null ? farPart : part;
+                      var rootInv = src.model.nodes[0].world.inverse;
+                      foreach (var b in src.model.Lod(lod))
+                      {
                         if (b.material.IndexOf("Stand", StringComparison.OrdinalIgnoreCase) >= 0) continue;   // (the HR models' garage stand)
-                        var s = part.surfaces[b.surface];
+                        var s = src.surfaces[b.surface];
                         // a surface bound to another node of the model than its first (the shock springs' models: a copy of the swingarm's chain
                         // OBJ_Frame > OBJ_Swingarm > OBJ_*_ShockSpring, the surface bound to the last) is drawn on that node of the bike, as the game
                         // binds a model's nodes to the vehicle's by name; the node's own world in the part model is not the bike's (the spring
                         // came out beside the bars, 1.3 ft off its shock): its vertices are in the bike's node space
-                        string bound = part.model.nodes[b.node].name;
+                        string bound = src.model.nodes[b.node].name;
                         bool onNode = b.node != 0 && !string.Equals(bound, nodeName, StringComparison.OrdinalIgnoreCase) && (hier.NodeIndex(bound) >= 0 || body.model.NodeIndex(bound) >= 0);
-                        var m = s.skinned ? Matrix4x4.identity : onNode ? BindOf(bound) : attachWorld * rootInv * part.model.nodes[b.node].world;
-                        result.AddPart(root.transform, $"{ma.name}_{b.surface}_{bound}", s, m, PoseNode(onNode ? bound : nodeName), onNode ? BindOf(bound) : attachWorld, b.material, MaterialOf(b.material, (db, pkg), partMats, pool));
+                        var m = s.skinned ? Matrix4x4.identity : onNode ? BindOf(bound) : attachWorld * rootInv * src.model.nodes[b.node].world;
+                        var mat = src == part ? MaterialOf(b.material, (db, pkg), partMats, pool) : FarMaterial(b.material, (db, pkg), farPkg, partMats, farPartMats, pool);
+                        result.AddPart(parent, $"{ma.name}_{b.surface}_{bound}", s, m, PoseNode(onNode ? bound : nodeName), onNode ? BindOf(bound) : attachWorld, b.material, mat);
+                      }
                     }
+                    int partFirst = result.parts.Count;
+                    ModelParts(0, root.transform);
+                    if (lods) result.AddLodModel(ma.name, (farPart ?? part).model.lods, partFirst, result.parts.Count - partFirst, ModelParts);
                 }
             }
 
@@ -311,7 +419,20 @@ namespace Reflex.Port.Content
                 catch (Exception e) when (e is InvalidDataException || e is IOException || e is ArgumentException) { Debug.LogWarning($"Reflex bike {spec.name}: mod number plates: {e.Message}"); }
 
             // a machine's damage panels (DMG_*) start hidden, as the game's node flag 0x10 has them (OriginalBikePose.ApplyFlags follows the game's)
-            if (spec.machine) foreach (var p in result.parts) if (ReflexVehicles.HiddenAtStart(result.hierarchyNodes[p.node])) p.part.gameObject.SetActive(false);
+            foreach (var p in result.parts) HideDamage(p.part, p.node);
+            // a twin with the race models' further LODs: a posed, empty carrier on every hierarchy node the twin draws nothing on (a race
+            // LOD's part on such a node hangs under it: ReflexBikeModel.Lod.cs AddLodPart)
+            if (hrLods)
+            {
+                var used = new HashSet<int>(result.parts.Select(p => p.node));
+                for (int i = 0; i < hier.nodes.Length; i++)
+                {
+                    if (used.Contains(i)) continue;
+                    var go = new GameObject("lod carrier " + hier.nodes[i].name); go.transform.SetParent(root.transform, false);
+                    result.bones.Add((go.transform, i, hier.nodes[i].world));
+                }
+                result.highResLods = true;
+            }
             // OriginalBikePose: every part by its original node (the node's bind world inverse, in Unity's column convention)
             // (+ a mod's skin bones after the parts: posed the same way, they carry no mesh)
             var pose = root.AddComponent<OriginalBikePose>();
@@ -319,8 +440,14 @@ namespace Reflex.Port.Content
             pose.nodes = result.parts.Select(p => p.node).Concat(result.bones.Select(x => x.node)).ToArray();
             pose.inverseBind = result.binds.Concat(result.bones.Select(x => x.bind)).Select(w => w.inverse).ToArray();
             result.pose = pose;
+            result.lodMaterials = materials.Count;
+            result.LodNewMaterials = () => { if (materials.Count == result.lodMaterials) return false; result.lodMaterials = materials.Count; return true; };
+            result.FarOwnMaterials = () => farOwnMaterials;
             return result;
         }
+
+        /// A surface of the garage's stand under a high-res twin (its material or its node is named for it).
+        static bool IsStand(string material, string node) => (material != null && material.IndexOf("Stand", StringComparison.OrdinalIgnoreCase) >= 0) || (node != null && node.IndexOf("Stand", StringComparison.OrdinalIgnoreCase) >= 0);
 
         /// A bike mod's locators of the rider's hands and feet against the pose hierarchy's (the original's; BikeMods.Apply keeps it): the
         /// translation change of each in its parent's frame (the rotations and parents must agree; the mod's lean animations move the same
@@ -421,9 +548,10 @@ namespace Reflex.Port.Content
         /// * inverse(bind)).
         Transform AddPart(Transform parent, string name, Rfx.Surface s, Matrix4x4 m, int node, Matrix4x4 bind, string binding, UnityEngine.Material material)
         {
-            var go = new GameObject(name); go.transform.SetParent(parent, false);
+            var go = new GameObject(name); if (parent) go.transform.SetParent(parent, false);
             go.AddComponent<MeshFilter>().sharedMesh = ReflexMeshes.Build(name, s, m, false);
             var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = material;
+            if (lodSink != null) return AddLodPart(go, mr, node, bind);   // (a further LOD's part, under LOD 0's part of that node: ReflexBikeModel.Lod.cs)
             parts.Add((name, go.transform, node, binding)); binds.Add(bind);
             return go.transform;
         }

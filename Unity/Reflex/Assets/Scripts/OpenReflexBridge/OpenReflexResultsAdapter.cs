@@ -47,7 +47,7 @@ namespace Reflex.Port.RxCore.Bridge
             dst.hasActivation = false; dst.activation = default; dst.hasChallenge = false; dst.challenge = default; dst.hasCompass = false; dst.compass = default; dst.hasRaceFormat = false; dst.raceFormat = default; dst.hasRaceHud = false; dst.raceHud = default; dst.hasModeResults = false; dst.modeResults = default; dst.hasStuntHud = false; dst.stuntHud = default; dst.hasReflexHud = false; dst.reflexHud = default;
             dst.vehicleAudio.Clear(); dst.sound.Clear();
             dst.eventUi = default;
-            dst.hasCamera = false;
+            dst.hasCamera = false; dst.hasCamera2 = false; dst.view2.Clear();
             dst.particleCount = 0;
             dst.riderBones = 0;
             dst.bikeNodes = 0;
@@ -96,7 +96,7 @@ namespace Reflex.Port.RxCore.Bridge
         static unsafe void CopyPodium(OriginalSimulation.Results dst, OpenReflexSimulation.Results src)
         {
             var f = dst.podium ??= new OriginalPodium.Frame();
-            f.valid = true; f.scenario = src.podium.scenario; f.step = src.podium.step; f.postState = src.podium.post_state;
+            f.valid = true; f.racing = src.podiumRacing; f.scenario = src.podium.scenario; f.step = src.podium.step; f.postState = src.podium.post_state;
             f.riderCount = Math.Min(src.podiumRiderCount, f.riders.Length);
             for (int i = 0; i < f.riderCount; i++)
             {
@@ -190,6 +190,9 @@ namespace Reflex.Port.RxCore.Bridge
 
             // the game camera
             if (src.hasCamera) { dst.hasCamera = true; dst.camera = Camera(src.camera); }
+            // SPLIT SCREEN: the second local rider's
+            if (src.hasCamera2) { dst.hasCamera2 = true; dst.camera2 = Camera(src.camera2); }
+            if (src.view2.valid) CopyView2(dst.view2, src.view2);
 
             // the local vehicle (class, bodies; an ATV's six pose matrices)
             if (src.hasVehicle) { dst.hasVehicle = true; CopyVehicle(ref dst.vehicle, src.vehicle); }
@@ -206,6 +209,8 @@ namespace Reflex.Port.RxCore.Bridge
                 if (dst.tracks == null || dst.tracks.Length < floats) dst.tracks = new float[Math.Max(floats, 65536 * 18)];
                 Array.Copy(src.tracks, dst.tracks, floats);
                 dst.trackTriangles = src.trackTriangles; dst.tracksChanged = true;
+                // WEATHER, SNOW: the same fetch with its strips, for the snow trail map (nothing kept unless snow lies)
+                Reflex.Port.Rendering.ReflexSnowTrails.Feed(src.tracks, src.trackTriangles, src.trackRibbons, src.trackRibbonCount);
             }
 
             // particles: the info block and the live array (the renderer reads at most particleCount)
@@ -329,6 +334,37 @@ namespace Reflex.Port.RxCore.Bridge
             if (count <= 0) return;
             if (dst == null || dst.Length < count) dst = new float[count];
             Array.Copy(src, dst, count);
+        }
+
+        // SPLIT SCREEN (w-split): the second local rider's bundle, each value converted as the first rider's is above (dst was cleared by Reset)
+        static void CopyView2(OriginalSimulation.View2 dst, OpenReflexSimulation.View2 src)
+        {
+            dst.valid = true;
+            if (src.hasBike) { dst.hasBike = true; CopyBike(ref dst.bike, src.bike); }
+            dst.onboardState = src.onboardState;
+            if (src.hasRace) { dst.hasRace = true; CopyRace(ref dst.race, src.race); } else dst.race = default;
+            if (src.hasHud)
+            {
+                dst.hasHud = true;
+                dst.hud = new ReflexHudState
+                {
+                    valid = src.hud.valid, activity_state = src.hud.activity_state, on_track = src.hud.on_track, wrong_way = src.hud.wrong_way,
+                    speed = src.hud.speed, time_behind = src.hud.time_behind, time_ahead = src.hud.time_ahead,
+                    hold_clock = src.hud.hold_clock, hold_until = src.hud.hold_until, penalty = src.hud.penalty,
+                };
+            }
+            else dst.hud = default;
+            dst.waypoint = src.waypoint; dst.hasWaypoint = src.hasWaypoint;
+            dst.raceFormat = src.raceFormat; dst.hasRaceFormat = src.hasRaceFormat;
+            dst.raceHud = src.raceHud; dst.hasRaceHud = src.hasRaceHud;
+            dst.stuntHud = src.stuntHud; dst.hasStuntHud = src.hasStuntHud;
+            dst.reflexHud = src.reflexHud; dst.hasReflexHud = src.hasReflexHud;
+            dst.challenge = src.challenge; dst.hasChallenge = src.hasChallenge;
+            dst.compass = src.compass; dst.hasCompass = src.hasCompass;
+            dst.powercross = src.powercross; dst.hasPowercross = src.hasPowercross;
+            if (src.hasVehicle) { dst.hasVehicle = true; CopyVehicle(ref dst.vehicle, src.vehicle); }
+            else if (dst.vehicle.renderPosition != null) { Array.Clear(dst.vehicle.renderPosition, 0, dst.vehicle.renderPosition.Length); Array.Clear(dst.vehicle.renderOrientation, 0, dst.vehicle.renderOrientation.Length); dst.vehicle.type = -1; }
+            dst.slot = src.slot; dst.finished = src.finished; dst.drivingCamera = src.drivingCamera;
         }
 
         static unsafe void CopyBike(ref ReflexBikeState dst, in RxBikeState src)

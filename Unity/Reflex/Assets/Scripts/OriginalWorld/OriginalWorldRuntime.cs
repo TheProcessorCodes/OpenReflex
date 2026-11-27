@@ -11,7 +11,7 @@ using UnityEngine.InputSystem;
 namespace Reflex.Port.OriginalWorld
 {
     // Runs the original game's input + physics update via libreflexworld and draws the result.
-    public sealed class OriginalWorldRuntime : MonoBehaviour
+    public sealed class OriginalWorldRuntime : MonoBehaviour, Reflex.Port.Hud.IReflexHudSource
     {
         // The bike and rider are built at run time from the player's own Reflex install (Content/ReflexBikeModel, ReflexRiderModel;
         // nothing of the game is in the scene): EnsureVehicle makes them before Create() needs them, unless a scene assigns its own.
@@ -32,6 +32,12 @@ namespace Reflex.Port.OriginalWorld
         public int cameraMode = 0;
         public OriginalOnboardCamera onboard;
         ReflexCamera gameCamera; bool haveGameCamera;
+        ReflexSplitScreenView splitView;   // SPLIT SCREEN (w-split): made by the first frame of a two-rider world
+        ReflexPlayerView view1, view2;   // each local rider's own camera (ReflexPlayerView.cs): the first rider's on chaseCamera, the second's on the split view's
+        ReflexPlayerView View1 => view1 ??= new ReflexPlayerView(cameraRig) { learnChase = LearnChase };
+        OriginalSimulation.View2 presented2; ReflexCamera gameCamera2; bool haveGameCamera2;   // SPLIT SCREEN: the presented frame's second rider (the presentation's own object)
+        bool view1Moved;   // SPLIT SCREEN: ReflexPlayerView.Move placed the first rider's camera in this LateUpdate
+        bool replayCameraOn, splitSameCamera;   // SPLIT SCREEN: the game's replay placed the camera this frame / both riders' cameras are the same one (a scenario's)
         readonly OriginalSceneryModels sceneryModels = new OriginalSceneryModels();   // the static models a scenario script hides / shows
         /// The open core's scrolling textures run on the game's own offsets (OriginalSceneryModels); OriginalProps keeps its formula otherwise.
         public bool GameScrolling => sceneryModels.GameScrolling;
@@ -182,12 +188,24 @@ namespace Reflex.Port.OriginalWorld
         ReflexRaceState race;
         /// The race state of the last completed frame.
         public ReflexRaceState Race => race;
+        // SPLIT SCREEN (w-split): the MODERN HUD's model fills from a source (Hud/IReflexHudSource.cs): this runtime is the first rider's
+        // (the row the core flags local, the profile's name), SplitHud the second rider's (the last completed frame's View2)
+        bool Reflex.Port.Hud.IReflexHudSource.Alive => this;
+        int Reflex.Port.Hud.IReflexHudSource.CameraMode => cameraMode;
+        int Reflex.Port.Hud.IReflexHudSource.CameraViewKey => Reflex.Port.Options.ReflexCameraPresets.ViewKey(cameraMode);
+        string Reflex.Port.Hud.IReflexHudSource.CameraDisplayName => Reflex.Port.Options.ReflexCameraPresets.DisplayName(cameraMode);
+        int Reflex.Port.Hud.IReflexHudSource.LocalSlot => -1;
+        string Reflex.Port.Hud.IReflexHudSource.LocalName => null;
+        bool Reflex.Port.Hud.IReflexHudSource.PadOnly => false;
+        ReflexDriverResult[] Reflex.Port.Hud.IReflexHudSource.Drivers => Drivers;
+        Reflex.Port.Hud.SplitHudSource splitHud;
+        /// SPLIT SCREEN: the second local rider's HUD source (Valid once a two-rider frame was collected in this world).
+        public Reflex.Port.Hud.SplitHudSource SplitHud => splitHud ??= new Reflex.Port.Hud.SplitHudSource(this);
         /// PRACTICE (w-lb-practice): this world's session is a practice session (an endless lap race: rx_session_practice).
         public bool IsPractice => simulation?.Open?.Practice == true;
         readonly byte[] keys = new byte[256];
         readonly ReflexPad[] pads = new ReflexPad[4];
         Quaternion frontBind, rearBind, riderBind;
-        Vector3 cameraVelocity;
         bool calibrated, haveState;
         string failure, missingFiles;
         string statusText = "Starting";
@@ -368,6 +386,8 @@ namespace Reflex.Port.OriginalWorld
         void OnDestroy()
         {
             if (preInputOwner == this) preInputOwner = null; Release(); DestroyVehicle(); PadRouting.Dispose();
+            RxSplitScreen.Active = false; RxSplitScreen.SingleView = false;   // SPLIT SCREEN: no world, one view
+            if (gameAudio) gameAudio.SetSecondListener(false, default, Quaternion.identity);   // (and one listener: the audio object can outlive the world)
             // the static references to this world let go of it (they kept the whole destroyed world, its replay rings included, alive in
             // the menus until the next race: w-gcspikes)
             ControllerInputDiagnostics.Forget(this);
@@ -422,7 +442,8 @@ namespace Reflex.Port.OriginalWorld
         void EnsureVehicle(ReflexRoster.Entry local = null)
         {
             var bikeSpec = Reflex.Port.Content.BikeMods.ForPlayer(local?.bike); var riderSpec = local?.rider;   // (the bike model the player chose: Original or a bike mod)
-            string bk = (bikeSpec ?? Reflex.Port.Content.BikeSpec.MarsFLite).Key, rk = (riderSpec ?? Reflex.Port.Content.RiderSpec.AnswerRed()).Key;
+            bool bikeHighRes = Reflex.Port.Content.ReflexBikeModel.RaceHighRes;   // BIKE DETAIL HIGH: the garage's high-res twin on the track
+            string bk = (bikeSpec ?? Reflex.Port.Content.BikeSpec.MarsFLite).Key + (bikeHighRes ? "|hr" : ""), rk = (riderSpec ?? Reflex.Port.Content.RiderSpec.AnswerRed()).Key + (bikeHighRes ? "|hr" : "");
             if (bikeModel != null && bk != bikeKey) { bikeModel.Destroy(); bikeModel = null; chassis = frontWheel = rearWheel = null; bikePose = null; }
             if (riderModel != null && rk != riderKey) { riderModel.Destroy(); riderModel = null; rider = null; }
             if (chassis && frontWheel && rearWheel && rider && riderProxy) return;
@@ -431,13 +452,13 @@ namespace Reflex.Port.OriginalWorld
             {
                 if (!chassis || !frontWheel || !rearWheel)
                 {
-                    bikeModel = Reflex.Port.Content.ReflexBikeModel.Build(bikeSpec, highResParts: true); bikeKey = bk;   // (the player's own: the garage's hand guards, bars and pipe, ReflexBikeModel.RideHighResParts)
+                    bikeModel = Reflex.Port.Content.ReflexBikeModel.Build(bikeSpec, highRes: bikeHighRes, highResParts: true, stand: false); bikeKey = bk;   // (the player's own: the garage's hand guards, bars and pipe, ReflexBikeModel.RideHighResParts)
                     chassis = bikeModel.chassis.transform; frontWheel = bikeModel.frontWheel; rearWheel = bikeModel.rearWheel; bikePose = bikeModel.pose;
                 }
                 if (!riderProxy) { proxyModel = Reflex.Port.Content.ReflexRiderModel.BuildProxy(); riderProxy = proxyModel.proxyRoot; }
                 if (!rider)
                 {
-                    riderModel = Reflex.Port.Content.ReflexRiderModel.Build(riderSpec, proxyModel?.proxyArt); riderKey = rk;
+                    riderModel = Reflex.Port.Content.ReflexRiderModel.Build(riderSpec, proxyModel?.proxyArt, highRes: bikeHighRes); riderKey = rk;
                     rider = riderModel.rider;
                 }
             }
@@ -464,7 +485,7 @@ namespace Reflex.Port.OriginalWorld
             { Debug.LogWarning("Select a career event explicitly in a new world; this career launch was already consumed."); return; }
             Release(); WorldGeneration++; failure = null; missingFiles = null; calibrated = false; haveState = false; RideDistance = 0; odoHave = false;
             state = ReflexBikeState.Create(); race = default; onboardState = default; openDrivingCamera = -1; soundFirstPersonKnown = soundFirstPerson = false; DriverCount = 0; Roster = null;
-            haveHud = hasVehicleInfo = hasEngine = haveGameCamera = false; cameraRig.Reset();
+            haveHud = hasVehicleInfo = hasEngine = haveGameCamera = haveViewRoot = false; cameraRig.Reset(); splitHud?.Clear(); view2?.NewWorld(); presented2 = null; haveGameCamera2 = false;
             SetVehicleActive(false); Array.Clear(keys, 0, keys.Length);
             if (ownedCareerLaunch != null || OpenReflexSelector.UseOpenReflex) { CreateOpen(); return; }
             // Everything comes from the player's install: the executable, the VC90 runtime (from its vcredist) and the
@@ -525,12 +546,21 @@ namespace Reflex.Port.OriginalWorld
 
         // The Heat format's next round (OpenReflexSimulation.TakeRosterData): the riders the core re-created behind the AAA loading page
         // replace the previous round's opponents, results roster and podium characters.
+        /// B.R.A.A.P. per-rider skill: the roster riders' own skill tiers go to the core (the next frame runs with them).
+        void ApplyBraapSkill()
+        {
+            var open = simulation?.Open; if (open == null || Roster == null) return;
+            var tiers = new List<(int slot, int tier)>();
+            foreach (var e in Roster.entries) if (!e.Local && e.Computer && e.aiTier >= 0) tiers.Add((e.slot.slot, e.aiTier));
+            if (tiers.Count > 0) open.SetAiTiers(tiers.ToArray());
+        }
         void PollOpenRoster()
         {
             if (pendingOpen || simulation == null || simulation.Open == null || Roster == null) return;
             var data = simulation.Open.TakeRosterData();
             if (data == null) return;
-            Roster = ReflexRoster.ReadOpen(data.slots, data.appearances);
+            Roster = ReflexRoster.ReadOpen(data.slots, data.appearances, data.secondLocalSlot);
+            ApplyBraapSkill();
             resultRosterSlots.Clear(); resultRosterNames.Clear();
             foreach (var entry in Roster.entries) { resultRosterSlots.Add(entry.slot.slot, entry.Local); resultRosterNames.Add(entry.slot.slot, entry.name); }
             if (!opponentRiders && Roster.entries.Count > 1) opponentRiders = gameObject.AddComponent<OriginalOpponents>();
@@ -706,13 +736,16 @@ namespace Reflex.Port.OriginalWorld
                         var music = FindAnyObjectByType<OriginalMusic>();
                         if (music) { music.level = openLevel; music.activity = CareerMusicActivity; }
                     }
-                    Roster = ReflexRoster.ReadOpen(data.slots, data.appearances);
+                    // B.R.A.A.P. (Content/ReflexBraap.cs): a new event draws its computer riders from the roster in use (offline, outside the career)
+                    Reflex.Port.Content.ReflexBraap.BeginEvent(!OwnedCareerActive && Reflex.Port.Content.ReflexCareer.Current == null);
+                    Roster = ReflexRoster.ReadOpen(data.slots, data.appearances, data.secondLocalSlot);
+                    ApplyBraapSkill();
                     int humanCount = 0, localCount = 0;
                     foreach (var entry in Roster.entries)
                     {
                         resultRosterSlots.Add(entry.slot.slot, entry.Local);
                         resultRosterNames.Add(entry.slot.slot, entry.name);
-                        if (!entry.Computer) humanCount++;
+                        if (!entry.Computer && !entry.secondLocal) humanCount++;   // SPLIT SCREEN (w-split): the second local rider is no remote human, the race keeps its own results page
                         if (entry.Local) localCount++;
                     }
                     openExhibitionLaunch &= humanCount == 1 && localCount == 1;
@@ -1062,9 +1095,22 @@ namespace Reflex.Port.OriginalWorld
             ReadEngine(v.vehicleAudio);
             if (hasVehicleInfo) Reflex.Port.Content.ReflexObjectShading.ApplyVehicleConstants(vehicleInfo.vehicle, bikeModel);   // run-time shader constants (belt scroll, flywheel blur)
             if (v.hasCamera) { gameCamera = v.camera; haveGameCamera = true; }
+            RxSplitScreen.Active = simulation?.Open != null && simulation.Open.SplitPlayers;   // SPLIT SCREEN: this world's session decides
+            if (RxSplitScreen.Active || splitView)   // SPLIT SCREEN (w-split): the second local rider's view (ReflexSplitScreenView.cs)
+            {
+                if (!splitView) splitView = gameObject.AddComponent<ReflexSplitScreenView>();
+                splitView.Bind(chaseCamera); splitView.Present(v);   // (one view or two: UpdateSplitViews, every Unity frame)
+                splitSameCamera = v.hasCamera && v.hasCamera2 && SameCamera(v.camera, v.camera2);
+                presented2 = v.view2; if (v.hasCamera2) { gameCamera2 = v.camera2; haveGameCamera2 = true; }
+                if (RxSplitScreen.Active && view2 == null) view2 = new ReflexPlayerView(new ReflexCameraRig());   // (once: the second rider's view, kept across worlds)
+                // (the second rider's Dynamic FPV: the same game time; the first rider's race line stands in for its corner anticipation:
+                // the same track, the slice ahead of the first rider, so TRACK works while the two ride near each other)
+                if (splitView.Onboard) splitView.Onboard.OnSimFrame(v.dt, v.raceLine, v.raceLinePoints, v.raceLineClosed);
+            }
             if (onboard) onboard.OnSimFrame(v.dt, v.raceLine, v.raceLinePoints, v.raceLineClosed);
             haveState = true; Odometer(); Apply();
-            if (bikePose) { bikePose.Apply(v.bikePose, v.bikeNodes); bikePose.ApplyFlags(v.bikeNodeFlags, v.bikeNodeFlagCount); }   // a machine's damage panels (the game's node flags)
+            if (bikePose) { bikePose.rearAxle = rearWheel ? rearWheel.position : (Vector3?)null; bikePose.Apply(v.bikePose, v.bikeNodes); bikePose.ApplyFlags(v.bikeNodeFlags, v.bikeNodeFlagCount); }   // a machine's damage panels (the game's node flags)
+            if (v.bikePose != null && v.bikeNodes > 0 && v.bikePose.Length >= 16) { viewRoot = new Vector3(v.bikePose[12], v.bikePose[13], v.bikePose[14]); viewRootForward = OriginalBikePose.FromRows(v.bikePose, 0).GetColumn(2); haveViewRoot = true; }   // (w-watchghost: the vehicle model's root, a ghost's root)
             if (animatedObjects) animatedObjects.Apply(v.objects, v.objectsValid);
             ApplyRider(v);
             var am = Reflex.Port.Platform.ReflexAllocMeter.Begin();
@@ -1097,7 +1143,7 @@ namespace Reflex.Port.OriginalWorld
             bool riderOn = true, vehicleOn = true;
             if (gateHide) { riderOn = vehicleOn = false; }
             else
-            if (f != null && f.valid && Roster?.Local != null) f.TryDrawn(Roster.Local.slot.slot, out riderOn, out vehicleOn);
+            if (f != null && f.valid && !f.racing && Roster?.Local != null) f.TryDrawn(Roster.Local.slot.slot, out riderOn, out vehicleOn);   // (a race frame: opponents only)
             if (!calibrated) return;   // not shown yet (SetVehicleActive(true) at the first state)
             if (riderOn && vehicleOn && !podiumHidLocal) return;
             if (bikeModel != null) { bikeModel.chassis.SetActive(vehicleOn); bikeModel.frontWheel.gameObject.SetActive(vehicleOn); bikeModel.rearWheel.gameObject.SetActive(vehicleOn); }
@@ -1207,7 +1253,16 @@ namespace Reflex.Port.OriginalWorld
             var am = Reflex.Port.Platform.ReflexAllocMeter.Begin();
             if (originalHud && failure == null) originalHud.Tick(paused ? 0f : Time.unscaledDeltaTime, race, hudState, haveHud, Reflex.Port.Options.ReflexCameraPresets.ViewKey(cameraMode), CameraName(cameraMode));
             Reflex.Port.Platform.ReflexAllocMeter.End(Reflex.Port.Platform.ReflexAllocMeter.Hud, am); am = Reflex.Port.Platform.ReflexAllocMeter.Begin();
-            if (gameAudio && failure == null) gameAudio.Tick(paused && !advanceCareerPost && !ViewerAudio ? 0f : ViewerAudio ? Time.unscaledDeltaTime : Time.deltaTime, chaseCamera ? chaseCamera.transform.position : Vector3.zero);
+            if (gameAudio)   // SPLIT SCREEN (w-split): the second rider's camera is the audio's second listener while two views are shown
+            {
+                if (splitView && splitView.TryListener(out var ear2, out var earRot2))
+                {   // (a view of its own - Dynamic FPV, a custom preset, the follow camera - is heard from where it was placed, as the first rider's is)
+                    if (view2 != null && view2.Pose != 0 && splitView.Second) splitView.Second.transform.GetPositionAndRotation(out ear2, out earRot2);
+                    gameAudio.SetSecondListener(true, ear2, earRot2);
+                }
+                else if (gameAudio.SecondListener) gameAudio.SetSecondListener(false, default, Quaternion.identity);
+            }
+            if (gameAudio && failure == null) gameAudio.Tick(paused && !advanceCareerPost && !ViewerAudio ? 0f : ViewerAudio ? Time.unscaledDeltaTime : Time.deltaTime, chaseCamera ? chaseCamera.transform.position : Vector3.zero, chaseCamera ? chaseCamera.transform.rotation : Quaternion.identity);
             if (failure == null) VehicleSound?.Tick(Time.deltaTime);   // w-audio: the engine packs' voices
             Reflex.Port.Platform.ReflexAllocMeter.End(Reflex.Port.Platform.ReflexAllocMeter.Sound, am);
             RefreshHud();
@@ -1249,6 +1304,7 @@ namespace Reflex.Port.OriginalWorld
             {
                 soundFirstPersonKnown = done.sound.firstPersonKnown; soundFirstPerson = done.sound.firstPersonView;
                 race = done.race; DriverCount = Math.Min(done.driverCount, Drivers.Length); Array.Copy(done.drivers, Drivers, DriverCount); hudState = done.hud; haveHud = done.hasHud;
+                if (done.view2.valid) SplitHud.Take(done.view2, done.vehicleAudio); else splitHud?.Clear();   // SPLIT SCREEN (w-split): the second rider's HUD source, unblended as the first's
                 // PRACTICE (w-lb-practice): the completed frame's laps to the lap dispatcher (the lap list), once per completed result, before
                 // the view is applied; it never fails the world
                 var am = Reflex.Port.Platform.ReflexAllocMeter.Begin();
@@ -1351,7 +1407,7 @@ namespace Reflex.Port.OriginalWorld
                 padHeld[i] &= b; b = (ushort)(b & ~padHeld[i]);   // buttons still held from a menu that just closed
                 // unprocessed: XInput's raw ranges (the Input System's stick deadzone would rescale them; the game applies its own, 7864)
                 pads[i] = OriginalPadConvert.Convert(g, b);
-                if (captureCamera && i == 0) OriginalInput.FilterCameraPad(ref pads[i]);
+                if (captureCamera && (i == 0 || i == 1 && RxSplitScreen.Active)) OriginalInput.FilterCameraPad(ref pads[i]);   // (SPLIT SCREEN: the second pad's Camera input is the second rider's own cycle, OriginalInput.CameraCycleTick)
             }
             return mask;
         }
@@ -1390,89 +1446,186 @@ namespace Reflex.Port.OriginalWorld
         }
 
         // The game's own rider skeleton for the completed frame (69 world matrices, completed as the renderer does).
+        float[] shiftedRiderPose;
         void ApplyRider(OriginalSimulation.Results done)
         {
             if (!rider || !rider.CanUseOriginalPose) return;
             if (done.riderBones < 0) { Fail("reflex_world_rider_pose failed"); return; }
-            if (done.riderBones != OriginalRider.OriginalBoneCount || !rider.ApplyBoneMatrices(done.riderPose, done.riderBones)) return;
+            var riderPose = done.riderPose;
+            if (bikeModel != null && bikeModel.riderShift != Vector3.zero && done.bikeNodes > 0 && done.riderBones > 0)
+            {   // a bike of its own size: the rider drawn on its seat (ReflexBikeModel.riderShift, the frame's axes); a copy: the core's pose
+                // goes on as it is (online, ghosts)
+                int n = done.riderBones * 16;
+                if (shiftedRiderPose == null || shiftedRiderPose.Length < n) shiftedRiderPose = new float[n];
+                Array.Copy(done.riderPose, shiftedRiderPose, n);
+                Vector3 d = OriginalBikePose.FromRows(done.bikePose, 0).MultiplyVector(bikeModel.riderShift);
+                for (int o = 0; o < n; o += 16) { shiftedRiderPose[o + 12] += d.x; shiftedRiderPose[o + 13] += d.y; shiftedRiderPose[o + 14] += d.z; }
+                riderPose = shiftedRiderPose;
+            }
+            if (done.riderBones != OriginalRider.OriginalBoneCount || !rider.ApplyBoneMatrices(riderPose, done.riderBones)) return;
             if (bikeModel?.limbOffsets != null) RiderLimbRetarget.Apply(rider, bikeModel.limbOffsets, done.bikePose, done.bikeNodes);   // a bike mod's grips and pegs (w-bikemods)
             if (bikeModel != null && bikePose && bikePose.HasPose) RiderGripIK.Apply(rider, bikeModel);   // OPEN REFLEX: the hands closed on the grips (w-grips)
+            if (RiderLooseMotion.Loose && done.bikeNodes > 0)
+            {   // OPEN REFLEX: RIDER MOTION LOOSE (drawing only): not wrecked / off the bike, eased in a stunt, not in the first-person view (the camera rides the original head)
+                bool known = done.onboardState.valid != 0;
+                float w = known && (done.onboardState.wrecked != 0 || done.onboardState.rider_active == 0) || cameraMode == 1 && onboard && onboard.Active ? 0f
+                        : known && done.onboardState.trick_active != 0 ? RiderLooseMotion.TrickWeight : 1f;
+                RiderLooseMotion.Apply(rider, done.bikePose, done.gameTime, w);
+            }
         }
 
         void LateUpdate()
         {
+            view1Moved = false;
             if (gateView != null && gateView.ApplyCamera()) { }   // the Gate Selection page's camera (before the race's world is running too)
             else if (calibrated) MoveCamera(false);
+            if (splitView && chaseCamera)
+            {   // SPLIT SCREEN (w-split): the first rider's camera was placed before the screen is cut (or put back): its field of view again when that changed its view
+                bool two = RxSplitScreen.TwoViews; float aspect = chaseCamera.aspect;
+                UpdateSplitViews();
+                if (view1Moved && (two != RxSplitScreen.TwoViews || chaseCamera.aspect != aspect)) View1.Refov();
+            }
+            else UpdateSplitViews();
+            MoveSecondView();
             if (!double.IsNaN(updateStart)) busyEnd = Time.realtimeSinceStartupAsDouble;   // Original pacing: rendering, if any, moves it on
         }
 
-        Vector3 cameraTarget, cameraForward = Vector3.forward;
+        // SPLIT SCREEN (w-split): one view or two, decided once per Unity frame (paused or not) after the camera move, and applied here (the
+        // split view has no LateUpdate of its own). One view: the REPLAY / PHOTO MODE viewer, Post (the activity's state, the same
+        // for both riders, reached once both finished or 60 s after the first: the finish scenario, the replay, the results board and its
+        // scenario: the first rider's camera), the core's own one-viewport request (the replay renderer holds the rect until it is disposed)
+        // and the intro scenario while both riders' cameras are the scenario's one camera. WindDown keeps two views (a camera each).
+        void UpdateSplitViews()
+        {
+            if (!splitView) { if (RxSplitScreen.SingleView) RxSplitScreen.SingleView = false; return; }
+            bool owns = replayRenderer?.OwnsViewport ?? false;
+            bool single = ViewerActive || race.valid != 0 && race.state == 4 || owns || replayCameraOn
+                || resultsWaiting || raceResults && raceResults.Active || ScenarioKind == 3 && splitSameCamera;
+            RxSplitScreen.SingleView = RxSplitScreen.Active && single;
+            splitView.Hidden = single; splitView.KeepMainRect = owns; splitView.Apply();
+        }
+        static bool SameCamera(ReflexCamera a, ReflexCamera b)
+            => Mathf.Abs(a.px - b.px) < 0.01f && Mathf.Abs(a.py - b.py) < 0.01f && Mathf.Abs(a.pz - b.pz) < 0.01f
+            && Mathf.Abs(a.fx - b.fx) < 0.001f && Mathf.Abs(a.fy - b.fy) < 0.001f && Mathf.Abs(a.fz - b.fz) < 0.001f;
 
         void MoveCamera(bool snap)
         {
+            replayCameraOn = false;
             if (!chaseCamera || !haveState || ViewerActive) return;   // (the replay viewer places the camera; it let the onboard camera go when it opened)
-            if (replayRenderer?.ApplyCamera() == true) { LeaveOnboard(); return; }   // the game's replays (the highlight reels)
+            if (replayRenderer?.ApplyCamera() == true) { LeaveOnboard(); replayCameraOn = true; return; }   // the game's replays (the highlight reels; SPLIT SCREEN: one view, UpdateSplitViews)
             if (hovercraft && hovercraft.ApplyCamera(chaseCamera)) { LeaveOnboard(); return; }   // port extra: the chase camera of the driven hovercraft
-            if (cameraMode == 1 && onboard)
+            // the rider's own view (ReflexPlayerView.Move: Dynamic FPV, the game's camera with a custom preset's rig over it, the follow camera;
+            // the same code places the second local rider's camera: MoveSecondView)
+            int preset = DrivingCameraPreset;
+            var view = View1; view.cam = chaseCamera; view.onboard = onboard;
+            var f = new ReflexPlayerView.Frame
             {
-                var kb = Keyboard.current;
-                Vector3 front = P(state.renderPosition, 2), rear = P(state.renderPosition, 3);
-                if (hasVehicleInfo && vehicleInfo.FourWheels) { front = vehicleInfo.Front; rear = vehicleInfo.Rear; }   // an ATV / a machine: its axles (ATV bodies 2..5, machine bodies 1..4 are its wheels)
-                var velocity = new Vector3(state.velocity[0], state.velocity[1], state.velocity[2]);
-                bool validOnboardState = onboardState.valid != 0;
-                onboard.SetContext(hasVehicleInfo && vehicleInfo.Atv, hasVehicleInfo && vehicleInfo.Machine,
-                    rider && rider.gameObject.activeInHierarchy && (!validOnboardState || onboardState.rider_active != 0),
-                    validOnboardState && onboardState.wrecked != 0, validOnboardState && onboardState.trick_active != 0,
-                    OriginalInput.RightStickRides, validOnboardState && onboardState.front_grounded != 0,
-                    validOnboardState && onboardState.rear_grounded != 0, validOnboardState && onboardState.contacts_valid != 0,
-                    presentation != null ? presentation.Time : double.NaN);
-                // the game's rider-lean inputs: [7] fore / aft (+ forward), [6] side (+ right)
-                if (onboard.Apply(P(state.renderPosition, 0), Q(state.renderOrientation, 0), front, rear, velocity, state.speed,
-                                  state.inputs[7], state.inputs[6], terrain ? terrain.UnityTerrain : null, kb != null && kb.leftAltKey.isPressed || OriginalInput.LookBackHeld)) return;
-                // off the bike (a wreck): the game's camera, as MX Bikes goes external when crashed
+                cameraMode = cameraMode, drivingPreset = preset,
+                preset = Reflex.Port.Options.ReflexCameraPresets.ActiveFor(cameraMode, preset >= 0 ? preset : Reflex.Port.Options.ReflexSettings.DrivingCamera),
+                gameCamera = gameCamera, haveGameCamera = haveGameCamera, state = state, onboardState = onboardState, vehicle = vehicleInfo, hasVehicle = hasVehicleInfo,
+                riderShown = rider && rider.gameObject.activeInHierarchy, customView = CustomCameraView, paused = paused,
+                previewing = Reflex.Port.Options.ReflexCameraPresets.Preview != null, terrain = terrain,
+                renderClock = presentation != null ? presentation.Time : double.NaN,
+            };
+            view.Move(f, snap); view1Moved = true;
+        }
+
+        // SPLIT SCREEN (w-split): the second local rider's camera, every Unity frame after the screen was cut (UpdateSplitViews: the camera
+        // exists and has its half, so its aspect is the half's). The same pose code as the first rider's (ReflexPlayerView.Move) on the
+        // presented frame's second bundle (Results.view2: the bike, the onboard state, the vehicle, the race), with its own selection
+        // (started on the first rider's entry; the second pad's Camera input: CycleSecondCamera), its own rig and its own Dynamic FPV camera,
+        // bound to its rider model among the other riders' (OriginalOpponents: looked up every frame, a rebuilt roster has a new model).
+        // One view (the results, a replay, the viewer): it rests.
+        void MoveSecondView()
+        {
+            if (view2 == null) return;
+            var second = splitView ? splitView.Second : null;
+            var b = presented2;
+            if (!second || !RxSplitScreen.TwoViews || !second.gameObject.activeInHierarchy || !calibrated || b == null || !b.valid)
+            {
+                view2.Rest();
+                if (opponentRiders) opponentRiders.secondLocalOnboard = false;
+                return;
             }
-            if ((cameraMode == 0 || cameraMode == 1) && haveGameCamera && ApplyGameCamera()) return;
-            Vector3 pos = P(state.renderPosition, 0);
-            Vector3 forward = Q(state.renderOrientation, 0) * Vector3.forward; forward.y = 0;
-            if (forward.sqrMagnitude < 0.001f) forward = cameraForward; else forward.Normalize();
-            Vector3 target = pos + Vector3.up * 1.1f;
-            // The game teleports the bike back to the track after a wreck: cut instead of swooping.
-            if ((target - cameraTarget).sqrMagnitude > 30f * 30f) snap = true;
-            cameraTarget = target;
-            // Heading follows the bike smoothly (a tumbling bike would otherwise spin the camera).
-            float dt = Time.unscaledDeltaTime;
-            cameraForward = snap ? forward : Vector3.Slerp(cameraForward, forward, 1f - Mathf.Exp(-4f * dt)).normalized;
-            Vector3 desired = target - cameraForward * 16f + Vector3.up * 7f + Vector3.Cross(Vector3.up, cameraForward) * 3f;
-            if (snap) cameraVelocity = Vector3.zero;
-            chaseCamera.transform.position = snap ? desired : Vector3.SmoothDamp(chaseCamera.transform.position, desired, ref cameraVelocity, 0.13f, 400, dt);
-            chaseCamera.transform.LookAt(target + cameraForward);
+            view2.cam = second; view2.onboard = splitView.Onboard;
+            if (!view2.Started)
+            {   // the first rider's current entry (its mode, its BASE view, its custom preset); nothing of it is saved for the second rider
+                int dc = DrivingCameraPreset >= 0 ? DrivingCameraPreset : Reflex.Port.Options.ReflexSettings.DrivingCamera;
+                view2.Begin(cameraMode, dc, Reflex.Port.Options.ReflexCameraPresets.Current.preset);
+            }
+            bool snap = view2.Resume();
+            ReflexRaceState race2 = b.hasRace ? b.race : default;
+            bool driving = Running && !IntroCardShown && (race2.valid == 0 || race2.state >= 1 && race2.state <= 3);
+            view2.Reconcile(simulation?.Open, b.drivingCamera, driving);
+            OriginalRider rider2 = null;
+            if (opponentRiders) opponentRiders.TryGetRider(b.slot, out rider2);
+            var pad2 = PadRouting.Pad(1);
+            if (view2.onboard) { view2.onboard.Bind(second, rider2); view2.onboard.lookPad = pad2; }
+            var bike = b.bike;
+            if (!b.hasBike || bike.renderPosition == null || float.IsNaN(bike.renderPosition[0] + bike.renderPosition[1] + bike.renderPosition[2]) || float.IsInfinity(bike.renderPosition[0] + bike.renderPosition[1] + bike.renderPosition[2]))
+            {   // no bike of its own (yet): the game's camera as it is
+                view2.LeaveOnboard();
+                if (haveGameCamera2) view2.Raw(gameCamera2);
+            }
+            else
+            {
+                int preset = b.drivingCamera >= 0 ? b.drivingCamera : view2.drivingCamera;   // (the core's own preset when it reports it: the near plane and the rig's BASE are the camera's on screen)
+                var f = new ReflexPlayerView.Frame
+                {
+                    cameraMode = view2.cameraMode, drivingPreset = preset,
+                    preset = view2.ActivePreset(preset >= 0 ? preset : Reflex.Port.Options.ReflexSettings.DrivingCamera),
+                    gameCamera = gameCamera2, haveGameCamera = haveGameCamera2, state = bike, onboardState = b.onboardState, vehicle = b.vehicle, hasVehicle = b.hasVehicle,
+                    riderShown = rider2 && rider2.gameObject.activeInHierarchy, customView = driving && (race2.valid == 0 || race2.state >= 2), paused = paused,
+                    previewing = false, terrain = terrain,
+                    renderClock = presentation != null ? presentation.Time : double.NaN,
+                    pad = pad2, ownPad = true,
+                };
+                view2.Move(f, snap);
+            }
+            if (opponentRiders) opponentRiders.secondLocalOnboard = view2.Pose == 1;
+        }
+
+        /// SPLIT SCREEN: the second pad's Camera input (OriginalInput.CameraCycleTick): the second rider's next camera, while it has a view.
+        public void CycleSecondCamera()
+        {
+            if (view2 == null || !view2.Started || !RxSplitScreen.TwoViews || simulation?.Open == null) return;
+            view2.Cycle(1, simulation.Open);
+        }
+        /// SPLIT SCREEN: the second local rider's camera selection (its HUD's toast, SplitHudSource); the first rider's until it has its own.
+        public int SecondCameraMode => view2 != null && view2.Started ? view2.cameraMode : cameraMode;
+        public int SecondCameraKey => view2 != null && view2.Started ? view2.ViewKey : Reflex.Port.Options.ReflexCameraPresets.ViewKey(cameraMode);
+        public string SecondCameraName => view2 != null && view2.Started ? view2.DisplayName : Reflex.Port.Options.ReflexCameraPresets.DisplayName(cameraMode);
+        /// SPLIT SCREEN: the second rider's view is first person while its race runs (FirstPersonView's rule on its own selection): its rider's
+        /// sounds sit on its camera (OriginalGameSound.FirstPersonView2).
+        public bool FirstPersonView2
+        {
+            get
+            {
+                var b = presented2;
+                if (view2 == null || !view2.Started || !RxSplitScreen.TwoViews || b == null || !b.valid || !Running) return false;
+                if (!b.hasRace || b.race.valid == 0 || b.race.state < 1 || b.race.state > 3) return false;
+                if (view2.cameraMode == 1) return view2.Pose == 1;
+                return view2.cameraMode == 0 && (b.drivingCamera >= 0 ? b.drivingCamera : view2.drivingCamera) == 3;
+            }
         }
 
         /// Another camera than the rider's own view has the screen (a replay, the hovercraft): the Dynamic FPV camera lets go, so the whole rider is
         /// drawn again instead of its cockpit rider (arms and legs only). Driving in first person again puts the cockpit rider back (Publish).
         void LeaveOnboard() { if (onboard && onboard.Active) onboard.Deactivate(); }
 
-        // The original render camera: rows right/up/forward in native axes (= Unity axes), vertical FOV in radians. A custom camera preset
-        // (OPTIONS > CAMERA & HUD; ReflexCameraPresets) moves it over the driving camera (ReflexCameraRig).
-        bool ApplyGameCamera()
+        // (the game's camera itself, a custom preset's rig over it, the near plane: ReflexPlayerView.ApplyGameCamera, for both local riders)
+
+        // (w-watchghost) The game's chase camera measured while it chases the riding bike (ReflexChaseProfile): WATCH GHOST's camera (Leaderboards/
+        // RxGhostWatchCamera.cs) stands where this one would. Relative to the vehicle model's root of the presented frame (a ghost's root is that node).
+        Vector3 viewRoot, viewRootForward = Vector3.forward; bool haveViewRoot;
+        void LearnChase(Vector3 camPos, Vector3 camForward, float fov)
         {
-            var c = gameCamera;
-            var forward = new Vector3(c.fx, c.fy, c.fz); var up = new Vector3(c.ux, c.uy, c.uz); var pos = new Vector3(c.px, c.py, c.pz);
-            if (forward.sqrMagnitude < 0.5f || up.sqrMagnitude < 0.5f || !(c.fov > 0.05f && c.fov < 3f) || float.IsNaN(pos.x)) return false;
-            var preset = Reflex.Port.Options.ReflexCameraPresets.ActiveFor(cameraMode, DrivingCameraPreset >= 0 ? DrivingCameraPreset : Reflex.Port.Options.ReflexSettings.DrivingCamera);
-            if (preset != null && haveState && cameraRig.Apply(preset, RigFrame(pos, forward, up, c.fov), out var rigPos, out var rigRot, out float rigFov))
-            {
-                chaseCamera.transform.SetPositionAndRotation(rigPos, rigRot);
-                chaseCamera.fieldOfView = rigFov;
-            }
-            else
-            {
-                if (preset == null) cameraRig.Reset();
-                chaseCamera.transform.SetPositionAndRotation(pos, Quaternion.LookRotation(forward, up));
-                chaseCamera.fieldOfView = Reflex.Port.Options.ReflexClientLive.ChaseFov(c.fov) * Mathf.Rad2Deg;   // CHASE CAMERA FOV (Options; 100 %: the game's)
-            }
-            if (c.nearPlane > 0 && c.farPlane > c.nearPlane) { chaseCamera.nearClipPlane = DrivingNear(c.nearPlane); chaseCamera.farClipPlane = c.farPlane; }
-            return true;
+            int dc = DrivingCameraPreset >= 0 ? DrivingCameraPreset : Reflex.Port.Options.ReflexSettings.DrivingCamera;
+            if (dc < 0 || dc > 2 || !haveViewRoot || state.velocity == null) return;   // (a third-person BASE view only: 1ST PERSON is not a chase camera)
+            bool settled = Running && !paused && !IntroCardShown && (race.valid == 0 || race.state == 2);
+            bool wrecked = onboardState.valid != 0 && onboardState.wrecked != 0;
+            ReflexChaseProfile.Observe(ReflexCameraRig.HoldKey(hasVehicleInfo ? vehicleInfo.type : 0, dc), camPos, camForward, fov, viewRoot, viewRootForward,
+                new Vector3(state.velocity[0], state.velocity[1], state.velocity[2]), state.speed, settled, wrecked, paused ? 0f : Time.unscaledDeltaTime);
         }
 
         /// The game's third-person cameras clip at 2 ft (the gate and chase cameras' near plane, read headless: core/tools/camera_distance_probe.c;
@@ -1481,7 +1634,6 @@ namespace Reflex.Port.OriginalWorld
         /// renderer's depth is reversed float (Metal, D3D11 / 12, Vulkan), so the near plane is 0.25 ft (3 in) and nothing opens up until it
         /// touches the lens (w-camfix). The game's first-person camera keeps its own 0.5 (the rider's head is not drawn into the view).
         public const float ThirdPersonNear = 0.25f;
-        float DrivingNear(float gameNear) => cameraMode == 0 && DrivingCameraPreset == 3 ? gameNear : Mathf.Min(gameNear, ThirdPersonNear);
 
         readonly ReflexCameraRig cameraRig = new ReflexCameraRig();
         /// The custom camera preset's rig (its shake, blend: tests and the showcase).
@@ -1493,22 +1645,6 @@ namespace Reflex.Port.OriginalWorld
         /// Ride). Until then the game's own gate camera (w-camfix: a preset over the gate camera, 6.8 ft from the bike, put the view inside the rider);
         /// the camera editor's preview also shows it at the gate.
         public bool CustomCameraView => DrivingView && (race.valid == 0 || race.state >= 2 || Reflex.Port.Options.ReflexCameraPresets.Preview != null);
-
-        ReflexCameraRig.Frame RigFrame(Vector3 pos, Vector3 forward, Vector3 up, float fov)
-        {
-            bool known = onboardState.valid != 0 && onboardState.contacts_valid != 0;
-            float real = Time.unscaledDeltaTime;
-            return new ReflexCameraRig.Frame
-            {
-                gamePos = pos, gameForward = forward, gameUp = up, gameFov = fov, aspect = chaseCamera.aspect,
-                bike = P(state.renderPosition, 0), bikeRot = Q(state.renderOrientation, 0),
-                velocity = state.velocity != null ? new Vector3(state.velocity[0], state.velocity[1], state.velocity[2]) : Vector3.zero, speed = state.speed,
-                riding = CustomCameraView, contactsKnown = known,
-                holdKey = ReflexCameraRig.HoldKey(hasVehicleInfo ? vehicleInfo.type : 0, DrivingCameraPreset >= 0 ? DrivingCameraPreset : Reflex.Port.Options.ReflexSettings.DrivingCamera), grounded = known && (onboardState.front_grounded != 0 || onboardState.rear_grounded != 0),
-                wrecked = onboardState.valid != 0 && onboardState.wrecked != 0, terrain = terrain,
-                dt = paused ? 0f : real, preview = Reflex.Port.Options.ReflexCameraPresets.Preview != null ? real : 0f,
-            };
-        }
 
         public OriginalOptionsMenu optionsMenu;
         public OriginalPauseMenu pauseMenu;

@@ -56,11 +56,18 @@ namespace Reflex.Port.Content
             var d = Rfx.ParseTexture(b);
             if (d == null)
             {
-                // block texture the GPU path refuses (dimension not a multiple of 4 ...) or an unobserved format: decode level 0 exactly
+                // a texture Rfx.ParseTexture refuses (a level's size is not what its format and dimensions say ...): decoded exactly, every
+                // level the file holds whole (a single level shimmers when it is drawn small)
                 if (fmt != Dxt1 && fmt != Dxt3 && fmt != Dxt5 && fmt != A8R8G8B8 && fmt != X8R8G8B8) return null;
                 var rgba = DecodeExactRgba(b, out int dw, out int dh);
                 var t = new LevelTexture { name = name, width = dw, height = dh, d3dFormat = fmt, format = TextureFormat.RGBA32, alpha = true };
                 t.mips.Add(FlipRows(rgba, dw, dh, 4));
+                for (int l = 1; l < levels && Math.Max(dw >> l, dh >> l) >= 1; l++)
+                {
+                    var level = DecodeExactRgba(b, l, out int lw, out int lh);
+                    if (level == null) break;
+                    t.mips.Add(FlipRows(level, lw, lh, 4));
+                }
                 return t;
             }
             var r = new LevelTexture { name = name, width = d.width, height = d.height, d3dFormat = fmt, format = d.format, alpha = d.alpha };
@@ -149,10 +156,21 @@ namespace Reflex.Port.Content
 
         /// Level 0 as RGBA bytes, rows in the file's D3D order (row 0 = top). The DXT rules of level_export.decode_block_texture;
         /// A8R8G8B8 / X8R8G8B8 swizzled to RGBA.
-        public static byte[] DecodeExactRgba(byte[] b, out int w, out int h)
+        public static byte[] DecodeExactRgba(byte[] b, out int w, out int h) => DecodeExactRgba(b, 0, out w, out h);
+
+        /// The same for any level of the file; a level after the first that the file does not hold whole (its size in the level table,
+        /// its bytes) is null.
+        public static byte[] DecodeExactRgba(byte[] b, int level, out int w, out int h)
         {
-            int fmt = D3dFormat(b), levels = Rfx.I32(b, 40); w = Rfx.I32(b, 44); h = Rfx.I32(b, 48);
+            int fmt = D3dFormat(b), levels = Rfx.I32(b, 40); w = Math.Max(1, Rfx.I32(b, 44) >> level); h = Math.Max(1, Rfx.I32(b, 48) >> level);
             int p = 56 + levels * 8;
+            if (level > 0)
+            {
+                if (level >= levels) return null;
+                for (int l = 0; l < level; l++) p += Rfx.I32(b, 56 + l * 8);
+                int want = fmt == A8R8G8B8 || fmt == X8R8G8B8 ? w * h * 4 : fmt == Dxt1 || fmt == Dxt3 || fmt == Dxt5 ? ((w + 3) / 4) * ((h + 3) / 4) * (fmt == Dxt1 ? 8 : 16) : -1;
+                if (want < 0 || Rfx.I32(b, 56 + level * 8) != want || p < 0 || p + want > b.Length) return null;
+            }
             var o = new byte[w * h * 4];
             if (fmt == A8R8G8B8 || fmt == X8R8G8B8)
             {

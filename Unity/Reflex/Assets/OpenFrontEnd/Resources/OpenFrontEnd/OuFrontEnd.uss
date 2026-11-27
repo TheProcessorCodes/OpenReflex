@@ -481,6 +481,25 @@
     color: rgba(255, 255, 255, 0.82);
 }
 
+/* (w-lan) ONLINE and LAN share one row of the rows' 600 px: ONLINE ~80 %, LAN the ~20 % on its right */
+.ou-hub-split {
+    flex-direction: row;
+    width: 600px;
+    flex-shrink: 0;
+}
+
+.ou-frontend .ou-hub-split > .ou-hub-button {
+    width: 476px;
+    margin-right: 8px;
+}
+
+.ou-frontend .ou-hub-split > .ou-hub-button.ou-hub-side {
+    width: 116px;
+    margin-right: 0;
+    padding-left: 0;
+    align-items: center;
+}
+
 .ou-hub-small {
     flex-direction: row;
     margin: 26px 0 0 26px;

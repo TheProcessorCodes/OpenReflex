@@ -65,6 +65,14 @@ namespace Reflex.Port.OriginalWorld
             if (list.Count == 0) list.Add(t);
             return list.ToArray();
         }
+        // SPLIT SCREEN (w-split): the nearest point for whichever of the two listeners is nearer to the line (one listener: Nearest)
+        Vector3 NearestHeard(Vector3[] pts, Vector3 L)
+        {
+            var a = Nearest(pts, L);
+            if (!audio.SecondListener) return a;
+            var L2 = audio.Listener2; var b = Nearest(pts, L2);
+            return (b - L2).sqrMagnitude < (a - L).sqrMagnitude ? b : a;
+        }
         /// 00680470: the point of the polyline nearest the listener (per segment t = (L - a).(b - a) / |b - a|^2; above 1 b, below 0 or NaN a)
         internal static Vector3 Nearest(Vector3[] pts, Vector3 L)
         {
@@ -182,8 +190,8 @@ namespace Reflex.Port.OriginalWorld
             {
                 if (c.amb == null) { c.amb = NewEv(); c.neg = NewEv(); c.pos = NewEv(); c.posEnd = NewEv(); Selector(c.amb, 0); Selector(c.neg, 1); Selector(c.pos, 2); Selector(c.posEnd, 3); }
                 if (!active) { Stop(c.amb); Stop(c.neg); Stop(c.pos); Stop(c.posEnd); c.inRange = false; continue; }
-                c.at = Nearest(c.pts, L);
-                c.inRange = (c.at - L).sqrMagnitude < c.max * c.max;
+                c.at = NearestHeard(c.pts, L);
+                c.inRange = (audio.Hear(c.at) - L).sqrMagnitude < c.max * c.max;
                 if (!c.inRange) { Stop(c.amb); Stop(c.neg); Stop(c.pos); Stop(c.posEnd); continue; }
                 if (!c.sized) { foreach (var e in new[] { c.amb, c.neg, c.pos, c.posEnd }) MinMax(e, c.min, c.max); c.sized = true; }
                 Pos(c.amb, c.at); Pos(c.neg, c.at); Pos(c.pos, c.at); Pos(c.posEnd, c.at);
@@ -224,8 +232,8 @@ namespace Reflex.Port.OriginalWorld
             foreach (var a in ambient)
             {
                 a.ev ??= NewEv();
-                var at = a.line ? Nearest(a.pts, L) : a.pts[0];
-                float d = (at - L).magnitude;
+                var at = a.line ? NearestHeard(a.pts, L) : a.pts[0];
+                float d = (audio.Hear(at) - L).magnitude;
                 if (!a.sized)
                 {
                     Channel(a.ev, ReflexChannel.Effects);

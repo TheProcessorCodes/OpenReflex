@@ -68,6 +68,13 @@ namespace Reflex.Port.Content
     /// The game's plate rasteriser (engine-free; levels are A8R8G8B8 texels, D3D row order: row 0 on top).
     public static class ReflexPlateRaster
     {
+        /// The longest jersey name (not the original's: its PC entry takes 8 letters, its riders' P+0x200 holds 15). A name the box
+        /// cannot hold at NameMinScale (about 14 letters) stays centred and runs off the jersey at both ends.
+        public const int MaxName = 25;
+        /// The narrowest the name squeezes (the 128 plate; the 256 one twice it): the original's widest 8-letter name ("WWWWWWWW",
+        /// 0.33) still draws exactly as the original does.
+        const double NameMinScale = 0.30;
+
         sealed class Img { public int w, h; public float[] p; public Img(int w, int h) { this.w = w; this.h = h; p = new float[w * h * 4]; } }
 
         /// FUN_006d5a80: a string's width in font texels (unscaled).
@@ -119,7 +126,10 @@ namespace Reflex.Port.Content
 
         /// FUN_006d5af0 (pass 1: outline bitmap, rgb lerp to the colour, alpha max) / FUN_006d6000 (pass 2: core bitmap, rgb
         /// lerp, alpha kept). rect: pen x, y, box w, h; clip: x0, y0, x1, y1; flags: &3 0 centre / 2 right, &12 0 centre / 8 bottom.
-        static void Draw(bool pass2, ReflexFontPack pack, int font, Img img, int[] rect, int[] clip, byte[] s, float col, int flags)
+        /// minScale (not the original's; 0: the original): the text squeezes into the box no further than this; past it the text stays
+        /// centred at this scale and runs off both sides, its first and last letters cut at the clip (a jersey name longer than the
+        /// original's 8 letters: MaxName).
+        static void Draw(bool pass2, ReflexFontPack pack, int font, Img img, int[] rect, int[] clip, byte[] s, float col, int flags, double minScale = 0)
         {
             var f = pack.fonts[font]; byte[] d = pack.data;
             int W = Measure(s, f), H = f.lineHeight;
@@ -130,10 +140,12 @@ namespace Reflex.Port.Content
             double qx = (double)rect[2] / W;
             float sx = (float)qx; double st;   // st: the x87 stack's scale (pass 1 reloads the float, pass 2 keeps the quotient)
             if (pass2 ? 1.0 > qx : 1f > sx) st = pass2 ? qx : sx; else { sx = 1f; st = 1.0; }
+            bool overflow = st < minScale;
+            if (overflow) { sx = (float)minScale; st = sx; }
             int x = rect[0], y = rect[1];
             if ((flags & 3) == 0) x -= (int)(float)(Wf * sx) / 2; else if ((flags & 3) == 2) x -= (int)(float)(Wf * sx);
             if ((flags & 0xc) == 0) y -= (int)((uint)H >> 1); else if ((flags & 0xc) == 8) y -= H;
-            if (x <= clip[0]) x = clip[0];
+            if (!overflow && x <= clip[0]) x = clip[0];   // (overflowing: the pen stays left of the clip, the texels left of it are cut below)
             if (y <= clip[1]) y = clip[1];
             int space = (int)((double)f.space * st);
             for (int i = 0; s[i] != 0; i++)
@@ -160,7 +172,7 @@ namespace Reflex.Port.Content
                     {
                         if (!Sample(d, cx, r, stepx, stepy, g, bitmap, stride, out float v)) continue;
                         int px = x + cx;
-                        if (px < 0 || row < 0 || px >= img.w || row >= img.h) continue;
+                        if (px < 0 || row < 0 || px >= img.w || row >= img.h || overflow && px < clip[0]) continue;
                         int o = (row * img.w + px) * 4;
                         float one = (float)(1f - v), sc = (float)(v * col);
                         float pa = img.p[o + 3];
@@ -246,6 +258,7 @@ namespace Reflex.Port.Content
                 numRect = len == 2 ? new[] { 0x40, 0x25, 0x5a, 0x50 } : len == 3 ? new[] { 0x40, 0x25, 0x6e, 0x5a } : new[] { 0x40, 0x25, 0x2d, 0x50 };
             }
             int[] nameClip = { 9, 0, size - 9, size }, numClip = { 0, 0, size - 9, size - 9 };
+            double nameMin = hr ? 2 * NameMinScale : NameMinScale;
             float c1 = invert ? 0.9f : 0.1f, c2 = invert ? 0.1f : 0.9f;
             byte[][] Make(bool text)
             {
@@ -254,8 +267,8 @@ namespace Reflex.Port.Content
                 {
                     Draw(false, Pack, 1, img, numRect, numClip, num, c1, 4);
                     Draw(true, Pack, 1, img, numRect, numClip, num, c2, 4);
-                    Draw(false, Pack, 0, img, nameRect, nameClip, nm, c1, 8);
-                    Draw(true, Pack, 0, img, nameRect, nameClip, nm, c2, 8);
+                    Draw(false, Pack, 0, img, nameRect, nameClip, nm, c1, 8, nameMin);
+                    Draw(true, Pack, 0, img, nameRect, nameClip, nm, c2, 8, nameMin);
                 }
                 return Levels(img);
             }
@@ -291,24 +304,25 @@ namespace Reflex.Port.Content
         /// The player's HIDE NUMBER choices (GARAGE > RIDER > NAME & NUMBER): the bike's plates / the jersey or chest protector without the
         /// number (the jersey name stays). Only the player's own rider carries them (the garage previews, the local race rider); every other
         /// rider keeps the original's plates.
-        public bool hideBikeNumber, hideRiderNumber;
-        public string Key => name + "|" + number + "|" + bikeDark + onJersey + invert + (hideBikeNumber ? "|nobike" : "") + (hideRiderNumber ? "|norider" : "");
+        public bool hideBikeNumber, hideRiderNumber, hideRiderName;   // (hideRiderName: HIDE NAME, the jersey / chest protector without the name: custom gear skins that print their own)
+        public string Key => name + "|" + number + "|" + bikeDark + onJersey + invert + (hideBikeNumber ? "|nobike" : "") + (hideRiderNumber ? "|norider" : "") + (hideRiderName ? "|noname" : "");
         public override string ToString() => $"'{name}' #{number} plate {(bikeDark ? "dark" : "light")} text on {(onJersey ? "jersey" : "chest protector")}{(invert ? " inverted" : "")}"
-            + (hideBikeNumber ? ", bike number hidden" : "") + (hideRiderNumber ? ", gear number hidden" : "");
+            + (hideBikeNumber ? ", bike number hidden" : "") + (hideRiderNumber ? ", gear number hidden" : "") + (hideRiderName ? ", gear name hidden" : "");
 
         /// The client save's HIDE NUMBER choices (off by default: the original shows the number everywhere).
-        public const string HideBikeKey = "Garage.HideBikeNumber", HideRiderKey = "Garage.HideRiderNumber";
+        public const string HideBikeKey = "Garage.HideBikeNumber", HideRiderKey = "Garage.HideRiderNumber", HideNameKey = "Garage.HideRiderName";
+        public static bool HideNameSetting { get => Reflex.Port.Options.ReflexSave.GetBool(HideNameKey, false); set { Reflex.Port.Options.ReflexSave.SetBool(HideNameKey, value); Reflex.Port.Options.ReflexSave.Save(); } }
         public static bool HideBikeSetting { get => Reflex.Port.Options.ReflexSave.GetBool(HideBikeKey, false); set { Reflex.Port.Options.ReflexSave.SetBool(HideBikeKey, value); Reflex.Port.Options.ReflexSave.Save(); } }
         public static bool HideRiderSetting { get => Reflex.Port.Options.ReflexSave.GetBool(HideRiderKey, false); set { Reflex.Port.Options.ReflexSave.SetBool(HideRiderKey, value); Reflex.Port.Options.ReflexSave.Save(); } }
         /// The player's own plates: the HIDE NUMBER choices applied (bike: not on a pro's vehicle; gear: not on a pro's gear).
-        public ReflexPlateText Own(bool bike = true, bool rider = true) { hideBikeNumber = bike && HideBikeSetting; hideRiderNumber = rider && HideRiderSetting; return this; }
+        public ReflexPlateText Own(bool bike = true, bool rider = true) { hideBikeNumber = bike && HideBikeSetting; hideRiderNumber = rider && HideRiderSetting; hideRiderName = rider && HideNameSetting; return this; }
 
         /// The plate flags as one number (tests): 1 dark bike plate, 2 text on the jersey, 4 inverted,
         /// 8 bike number hidden, 16 gear number hidden. WithFlags reads them back (without the new bits both numbers show).
-        public int Flags => (bikeDark ? 1 : 0) | (onJersey ? 2 : 0) | (invert ? 4 : 0) | (hideBikeNumber ? 8 : 0) | (hideRiderNumber ? 16 : 0);
+        public int Flags => (bikeDark ? 1 : 0) | (onJersey ? 2 : 0) | (invert ? 4 : 0) | (hideBikeNumber ? 8 : 0) | (hideRiderNumber ? 16 : 0) | (hideRiderName ? 32 : 0);   // (32: gear name hidden)
         public ReflexPlateText WithFlags(int flags)
         {
-            bikeDark = (flags & 1) != 0; onJersey = (flags & 2) != 0; invert = (flags & 4) != 0; hideBikeNumber = (flags & 8) != 0; hideRiderNumber = (flags & 16) != 0;
+            bikeDark = (flags & 1) != 0; onJersey = (flags & 2) != 0; invert = (flags & 4) != 0; hideBikeNumber = (flags & 8) != 0; hideRiderNumber = (flags & 16) != 0; hideRiderName = (flags & 32) != 0;
             return this;
         }
 
@@ -330,7 +344,7 @@ namespace Reflex.Port.Content
                 var table = ReflexProfile.Current?.T("PlayerRider");
                 name = table?.Str("Name", 0); number = table?.Str("Number", 0);
             }
-            t.name = Clip(name ?? "RIDER", 15); t.number = Clip(number ?? "998", 3);
+            t.name = Clip(name ?? "RIDER", ReflexPlateRaster.MaxName); t.number = Clip(number ?? "998", 3);
             if (rider == null || rider.plateRider <= 0) t.Own();   // the player's own rider: the HIDE NUMBER choices (a pro's preview keeps his number)
             if (bike != null && bike.vehicleModelId >= 0)
             {   // 0054bec0: dark unless a motocross bike / ATV of the 125cc engine class
@@ -358,6 +372,17 @@ namespace Reflex.Port.Content
             return t;
         }
         static string Clip(string s, int n) => s.Length <= n ? s : s.Substring(0, n);
+
+        /// The player's jersey name in full: the running game keeps 15 characters of it (P+0x200, strncpy 15; the core's plate_name[16]),
+        /// the profile's PlayerRider Name up to ReflexPlateRaster.MaxName. When the game's text is the start of the profile's name (the
+        /// player's own rider, not a pro's), the plates draw the whole name.
+        public ReflexPlateText FullName()
+        {
+            string full = ReflexProfile.Current?.T("PlayerRider")?.Str("Name", 0);
+            if (name != null && name.Length >= 15 && full != null && full.Length > name.Length && full.StartsWith(name, StringComparison.OrdinalIgnoreCase))
+                name = Clip(full.ToUpperInvariant(), ReflexPlateRaster.MaxName);
+            return this;
+        }
         static Dictionary<string, object> Find(string table, string column, int value)
         {
             if (KitPacks.IsKitId(value))
@@ -428,6 +453,7 @@ namespace Reflex.Port.Content
             }
             t.wrapMode = TextureWrapMode.Clamp; t.filterMode = FilterMode.Trilinear;
             t.Apply(false, true);
+            Reflex.Port.Rendering.ReflexTextureFiltering.Register(t);   // TEXTURE FILTERING (ORIGINAL: the state above, then the material's: Bind)
             return t;
         }
 
@@ -458,12 +484,23 @@ namespace Reflex.Port.Content
                 else if (isBike) holder.bike = ToTexture(ReflexPlateRaster.Bike(bikeNumber, text.bikeDark, hr), size, "Numbers " + bikeNumber);
                 else
                 {
-                    var (j, cp) = ReflexPlateRaster.Rider(text.name, riderNumber, text.onJersey, text.invert, hr);
+                    var (j, cp) = ReflexPlateRaster.Rider(text.hideRiderName ? "" : text.name, riderNumber, text.onJersey, text.invert, hr);
                     holder.jersey = ToTexture(j, size, "Rider_NamNum_Plate " + text.name);
                     holder.chestProtector = ToTexture(cp, size, "Rider_CP_NamNum_Plate " + text.name);
                 }
                 holder.key = key;
             }
+            BindMaterials(root, holder);
+        }
+
+        /// A model got further materials (a distance LOD built later: ReflexBikeModel.Lod.cs): the plates it already has, on them too.
+        public static void Rebind(GameObject root)
+        {
+            if (root && root.TryGetComponent<ReflexPlateTextures>(out var holder) && holder.key != null) BindMaterials(root, holder);
+        }
+
+        static void BindMaterials(GameObject root, ReflexPlateTextures holder)
+        {
             foreach (var r in root.GetComponentsInChildren<Renderer>(true))
                 foreach (var m in r.sharedMaterials)
                 {
@@ -477,6 +514,7 @@ namespace Reflex.Port.Content
                     {
                         TextureWrapMode Wrap(int a) => a == 3 ? TextureWrapMode.Clamp : a == 2 ? TextureWrapMode.Mirror : TextureWrapMode.Repeat;
                         t.wrapModeU = Wrap(u); t.wrapModeV = Wrap(v); t.filterMode = mip >= 2 ? FilterMode.Trilinear : FilterMode.Bilinear;
+                        t.anisoLevel = 1; Reflex.Port.Rendering.ReflexTextureFiltering.Register(t);   // (the material's own state, then TEXTURE FILTERING on it)
                     }
                     if (p[0].StartsWith("_Tex", StringComparison.Ordinal)) m.SetTexture(p[0], t);   // Reflex/Vehicle: the plate's sampler (ReflexObjectShading.Build)
                     else if (p[0] == "decal") { m.SetTexture("_DecalMap", t); m.SetFloat("_DecalOn", 1); }

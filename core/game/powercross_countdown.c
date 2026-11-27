@@ -10,6 +10,7 @@
 #include "world_misc.h"
 #include "race_activity_misc.h"
 #include "crt.h"
+#include "practice.h"
 #include <string.h>
 #include <float.h>
 static struct {rx_addr component,activity,channel;uint32_t wanted,subscribed,visible,events;int32_t step;} pc;
@@ -25,7 +26,7 @@ RX_FUNCTION(0x005fb880,rx_powercross_countdown_step)
 /*005fb830,RET8 (the old-state argument is ignored by the original).*/
 void rx_powercross_countdown_enter(rx_addr self,rx_addr activity,uint32_t old){
  (void)old;rx_powercross_countdown_step(self,activity,3);
- pc.visible=U32(activity,0x238)!=6;SU32(self,0x3a0,0);
+ pc.visible=U32(activity,0x238)!=6&&!rx_practice_applies(activity);SU32(self,0x3a0,0);   /* (PRACTICE: no countdown, practice.h) */
 }
 #ifndef RX_ORACLE   /* product-only presentation adapter (needs the managed component): the oracle runs the original */
 RX_FUNCTION(0x005fb830,rx_powercross_countdown_enter)

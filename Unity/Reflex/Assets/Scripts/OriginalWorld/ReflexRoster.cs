@@ -17,19 +17,23 @@ namespace Reflex.Port.OriginalWorld
     //                 when the list has none)
     //   the local     PlayerVehicle (-> VehicleModelId) + PlayerVehicleParts of OwnerVehicleId, PlayerRiderGear (the profile
     //                 tables; with one local player reflex_world_table answers profile 0's)
-    public sealed class ReflexRoster
+    public sealed partial class ReflexRoster
     {
         public sealed class Entry
         {
             public ReflexSlot slot;
             public bool Local => slot.local != 0;
             public bool Computer => slot.type == 1;
+            /// SPLIT SCREEN (w-split): the second local rider (the core's slots name only the viewed one local; drawn with the other riders).
+            public bool secondLocal;
             public string name;
             public int riderOwner = -1, ownerRiderId = -1, gearSetId = -1, vehicleOwner = -1, ownerVehicleId = -1, vehicleModelId = -1;
             public int[] partIds = new int[0], gearIds = new int[0];
             public BikeSpec bike; public RiderSpec rider;
             /// The gear / kit pack pieces drawn on this rider (KitPacks tokens: the local player's choices); empty: stock only.
             public string[] kits = new string[0];
+            /// B.R.A.A.P.: the skill tier the roster rider asks for (0 All Time .. 3 Rookie; the runtime gives it to the core); -1: the event's.
+            public int aiTier = -1;
             public ReflexPlateText plate;   // the name / number plates' text and colours as the game made them (ReflexPlates)
             public override string ToString() =>
                 $"slot {slot.slot} {(Local ? "local" : Computer ? "AI" : "human")} '{name}' rider {ownerRiderId} gear set {gearSetId} [{string.Join(",", gearIds)}] vehicle {ownerVehicleId} model {vehicleModelId} parts [{string.Join(",", partIds)}]" +
@@ -61,7 +65,9 @@ namespace Reflex.Port.OriginalWorld
         /// Resolves a core startup snapshot on the main thread. Each appearance belongs to the slot at the same index.
         /// The snapshot is read before the worker advances the session; this method never accesses either native world.
         /// Missing metadata or assets fail explicitly, so the model builders cannot silently draw their default outfit.
-        public static ReflexRoster ReadOpen(RxSlot[] slots, RxAppearance[] appearances)
+        /// secondLocalSlot (SPLIT SCREEN, w-split): the second local rider's seat slot (-1 none): the player's own look as the first's is
+        /// (HIDE NUMBER, the kit packs, the chosen gear, the chosen bike mod), and never a remote rider's stock stand-in.
+        public static ReflexRoster ReadOpen(RxSlot[] slots, RxAppearance[] appearances, int secondLocalSlot = -1)
         {
             if (slots == null || appearances == null || slots.Length != appearances.Length || slots.Length == 0 || slots.Length > RxRiderCap.Max)
                 throw new InvalidOperationException("Open core roster: an aligned slot / appearance snapshot is required.");
@@ -88,11 +94,19 @@ namespace Reflex.Port.OriginalWorld
                     plate = new ReflexPlateText { name = appearance.PlateName, number = appearance.PlateNumber,
                         bikeDark = appearance.bike_dark != 0, onJersey = appearance.on_jersey != 0, invert = appearance.invert != 0 }
                 };
-                if (slot.local != 0) e.plate.Own(appearance.vehicle_owner != 4, appearance.rider_owner != 4);   // the player's HIDE NUMBER choices (not on a pro's bike / gear)
+                e.secondLocal = secondLocalSlot >= 0 && slot.slot == secondLocalSlot && slot.local == 0 && slot.type == 0;
+                bool own = slot.local != 0 || e.secondLocal;   // SPLIT SCREEN (w-split): the second local rider rides the player's profile too
+                if (own) e.plate.Own(appearance.vehicle_owner != 4, appearance.rider_owner != 4).FullName();   // the player's HIDE NUMBER choices (not on a pro's bike / gear) and jersey name past the core's 15 letters
                 if (e.partIds == null || e.partIds.Length != appearance.part_count || e.gearIds == null || e.gearIds.Length != appearance.gear_count)
                     throw new InvalidOperationException($"Open core roster: slot {slot.slot} appearance arrays disagree with their counts.");
                 Resolve(tables, e, slot.slot);
-                if (e.Local) ApplyKits(e);   // (w-gearmods) the gear / kit pack pieces the player chose, over the core's stock ones
+                var ownGear = e.rider;   // (the profile's own gear, before the pack pieces: what an Alive piece's type goes back to)
+                if (own) ApplyKits(e);   // (w-gearmods) the gear / kit pack pieces the player chose, over the core's stock ones
+                if (own && e.rider != null && e.riderOwner >= 0 && e.riderOwner <= 3) RxGear.ApplyChosen(e.rider, ownGear);   // the player's "gear" .rxmod pieces (the MX vs ATV Alive gear: Content/RxGear.cs), on the player's own rider
+                // SPLIT SCREEN (w-split): the bike model the player chose (Original or a bike mod), as EnsureVehicle gives the first rider's:
+                // with an own-physics .rxmod bike the core gives both local vehicles the mod's nodes, so the drawn model must be the mod's
+                if (e.secondLocal) e.bike = BikeMods.ForPlayer(e.bike);
+                if (!e.Local) ApplyBraap(e);   // B.R.A.A.P. (ReflexRoster.Braap.cs): the roster in use names and dresses the computer riders
                 roster.entries.Add(e);
             }
             if (roster.entries.Count(e => e.Local) != 1)
@@ -262,7 +276,7 @@ namespace Reflex.Port.OriginalWorld
                 int pr = t.Find("Player List", "RiderId", e.slot.rider_row);
                 e.name = t.Str("Player List", "PlayerName", pr >= 0 ? pr : k) ?? "Rider " + (k + 1);
                 try { e.plate = ReflexPlateText.Read(world, e.slot.slot); } catch (Exception x) { Debug.LogWarning($"Reflex roster: slot {e.slot.slot} plates: {x.Message}"); }
-                if (e.slot.local != 0) e.plate?.Own(e.vehicleOwner != 4, e.riderOwner != 4);   // the player's HIDE NUMBER choices (not on a pro's bike / gear)
+                if (e.slot.local != 0) e.plate?.Own(e.vehicleOwner != 4, e.riderOwner != 4).FullName();   // the player's HIDE NUMBER choices (not on a pro's bike / gear) and jersey name past the game's 15 letters
                 List<int> parts, gear;
                 // by the rows' owners (MXVehicleOwner / MXRiderOwner 4 = AI): a pro chosen on Vehicle Select rides his own AIVehicle
                 // and gear set on the local (human) slot (_re/notes/vehicle-select.md)

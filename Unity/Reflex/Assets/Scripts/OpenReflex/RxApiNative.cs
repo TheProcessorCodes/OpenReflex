@@ -48,11 +48,22 @@ namespace Reflex.Port.RxCore
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int SetFreeAirLoosenessFn(IntPtr session, float looseness);
         static readonly RxNativeLoader.Fn<SetFreeAirLoosenessFn> setFreeAirLooseness = F<SetFreeAirLoosenessFn>("rx_session_set_free_air_looseness");
         public static int rx_session_set_free_air_looseness(IntPtr session, float looseness) => setFreeAirLooseness.Get()(session, looseness);
+        // LIP PULL (port addition, w-lippull): 0 .. 1, the original's rear-wheel-only wheelie limiter on a steep face for the local players (1 = the original)
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int SetLipPullFn(IntPtr session, float lipPull);
+        static readonly RxNativeLoader.Fn<SetLipPullFn> setLipPull = F<SetLipPullFn>("rx_session_set_lip_pull");
+        public static int rx_session_set_lip_pull(IntPtr session, float lipPull) => setLipPull.Get()(session, lipPull);
         // FREE RIDE WITHOUT BORDERS (port addition, w-frnowalls): no reset zones / reset triggers (but deep water) / edge resets in Free Ride (0 = the original's)
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int SetFreeRideBordersFn(IntPtr session, int mode);
         static readonly RxNativeLoader.Fn<SetFreeRideBordersFn> setFreeRideBorders = F<SetFreeRideBordersFn>("rx_session_set_free_ride_borders");
         public const int FreeRideBordersOriginal = 0, FreeRideBordersOpen = 1;
         public static int rx_session_set_free_ride_borders(IntPtr session, int mode) => setFreeRideBorders.Get()(session, mode);
+        // AI TIER (port addition, B.R.A.A.P.): a computer rider's skill tier (0 All Time, 1 Pro, 2 Amateur, 3 Rookie), once the event's riders exist
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int SetAiTierFn(IntPtr session, int slot, int tier);
+        static readonly RxNativeLoader.Fn<SetAiTierFn> setAiTier = F<SetAiTierFn>("rx_session_set_ai_tier");
+        public static int rx_session_set_ai_tier(IntPtr session, int slot, int tier) => setAiTier.Get()(session, slot, tier);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int AiTierFn(IntPtr session, int slot);
+        static readonly RxNativeLoader.Fn<AiTierFn> aiTier = F<AiTierFn>("rx_session_ai_tier");
+        public static int rx_session_ai_tier(IntPtr session, int slot) => aiTier.Get()(session, slot);
         // WEATHER GRIP (port addition, 2026-11-07; core/game/weather_grip.h): every tyre's static rolling and cornering grip times the factor
         // (rain / snow; 1 = the original's, nothing touched), any time between frames; 0 ok, 2 refused (outside 0.1 .. 1.5)
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int SetWeatherGripFn(IntPtr session, float factor);
@@ -71,6 +82,18 @@ namespace Reflex.Port.RxCore
         /// 0 = the game tables (the original), else 13 .. 32 (0 ok, 1 invalid session, 2 out of range)
         public static int rx_session_set_field_size(IntPtr session, int riders) => setFieldSize.Get()(session, riders);
         public static int rx_session_field_size(IntPtr session) => fieldSize.Get()(session);
+        // SPLIT SCREEN (w-split; core/include/rx_api.h): two local riders, the getters' view of one of them
+        static readonly RxNativeLoader.Fn<SetFieldSizeFn> setLocalPlayers = F<SetFieldSizeFn>("rx_session_set_local_players");
+        static readonly RxNativeLoader.Fn<SessionIntGetFn> localPlayers = F<SessionIntGetFn>("rx_session_local_players");
+        static readonly RxNativeLoader.Fn<SetFieldSizeFn> setViewPlayer = F<SetFieldSizeFn>("rx_session_set_view_player");
+        /// 1 or 2, before the event loads (0 ok, 1 invalid session, 2 out of range / wrong state)
+        public static int rx_session_set_local_players(IntPtr session, int players) => setLocalPlayers.Get()(session, players);
+        public static int rx_session_local_players(IntPtr session) => localPlayers.Get()(session);
+        /// which local rider the "local player" getters read (0 the first, 1 the second)
+        public static int rx_session_set_view_player(IntPtr session, int player) => setViewPlayer.Get()(session, player);
+        static readonly RxNativeLoader.Fn<SetAiTierFn> setDrivingCameraPlayer = F<SetAiTierFn>("rx_session_set_driving_camera_player");
+        /// rx_session_set_driving_camera for one local rider (0 the first, 1 the second; 0 ok, 1 invalid session, 2 no such rider / preset / refused)
+        public static int rx_session_set_driving_camera_player(IntPtr session, int player, int preset) => setDrivingCameraPlayer.Get()(session, player, preset);
         // PRACTICE / LAP LOG / the local vehicle's physics class (port additions, w-lb-practice; core/include/rx_api.h)
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int SetPracticeFn(IntPtr session, int on);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int SessionIntGetFn(IntPtr session);
@@ -79,6 +102,10 @@ namespace Reflex.Port.RxCore
         static readonly RxNativeLoader.Fn<SessionIntGetFn> practice = F<SessionIntGetFn>("rx_session_practice");
         static readonly RxNativeLoader.Fn<LapLogFn> lapLog = F<LapLogFn>("rx_session_lap_log");
         static readonly RxNativeLoader.Fn<SessionIntGetFn> localPhysClass = F<SessionIntGetFn>("rx_session_local_phys_class");
+        static readonly RxNativeLoader.Fn<SetPracticeFn> setAnyVehicle = F<SetPracticeFn>("rx_session_set_any_vehicle");
+        /// ANY VEHICLE (core/plan/ANY_VEHICLE.md), before rx_session_event_load: the event rides a vehicle or class its type never offered: no
+        /// offline records, best laps or highlights; the laps' mods bit 32 (0 ok, 1 invalid session, 2 wrong state).
+        public static int rx_session_set_any_vehicle(IntPtr session, bool on) => setAnyVehicle.Get()(session, on ? 1 : 0);
         /// Before rx_session_event_load: the exhibition lap race is endless (0 ok, 1 invalid session, 2 wrong state).
         public static int rx_session_set_practice(IntPtr session, bool on) => setPractice.Get()(session, on ? 1 : 0);
         public static bool rx_session_practice(IntPtr session) => practice.Get()(session) != 0;
@@ -102,6 +129,14 @@ namespace Reflex.Port.RxCore
             float* p = stackalloc float[3]; float* d = stackalloc float[3];
             p[0] = px; p[1] = py; p[2] = pz; d[0] = dx; d[1] = 0f; d[2] = dz;
             return spawnAtInstant.Get()(session, p, d);
+        }
+        // (NOCLIP) the instant respawn, then the vehicle at exactly the spot (not on the ground under it): it falls from there
+        static readonly RxNativeLoader.Fn<SpawnAtFn> spawnAtAir = F<SpawnAtFn>("rx_session_spawn_at_air");
+        public static unsafe int rx_session_spawn_at_air(IntPtr session, float px, float py, float pz, float dx, float dz)
+        {
+            float* p = stackalloc float[3]; float* d = stackalloc float[3];
+            p[0] = px; p[1] = py; p[2] = pz; d[0] = dx; d[1] = 0f; d[2] = dz;
+            return spawnAtAir.Get()(session, p, d);
         }
         // RT_Bump cascade layout (w-rtbumpfit): the game's own RTBump_FitCascadeMatrices for a camera (between frames; 0 ok, 2 no terrain)
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] unsafe delegate int RTBumpFitFn(IntPtr session, float* pos, float* fwd, float* up, float fov, float aspect, float near, float* out12);
@@ -339,6 +374,12 @@ namespace Reflex.Port.RxCore
         /// 2 = first person. 0 ok; 2 refused (no local player, or the game refuses outside an activity state 1..3).
         public static int rx_session_set_driving_camera(IntPtr s, int preset) => setDrivingCamera.Get()(s, preset);
         public static int rx_session_set_camera(IntPtr s, int mode) => setCamera.Get()(s, mode);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate float FunnelFn(IntPtr session, IntPtr solid);
+        static readonly RxNativeLoader.Fn<FunnelFn> funnel = F<FunnelFn>("rx_session_funnel");
+        /// The funnel blockers of an imported Unleashed race level (rx_api.h): 0 the start layout .. 1 raced; -1 none.
+        public static float rx_session_funnel(IntPtr s) => funnel.Get()(s, IntPtr.Zero);
+        /// The last value the simulation thread read (after every frame); -1 without a funnel or with a core that has no such export.
+        public static volatile float FunnelProgress = -1f;
         public static int rx_session_race(IntPtr s, ref RxRaceState state) { fixed (RxRaceState* p = &state) return race.Get()(s, p); }
         public static int rx_session_hud(IntPtr s, ref RxHudState state) { fixed (RxHudState* p = &state) return hud.Get()(s, p); }
         /// The race line ahead of the local player (node centres, 3 floats each); the count written (0 outside a race).
