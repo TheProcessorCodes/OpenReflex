@@ -35,6 +35,7 @@
  *      PROBE_PHYS=<file> (w-physstudio): a PHYSICS STUDIO config (rx_session_phys_set text) set before the load (weak: links
  *      against a core without it too).
  *      PROBE_WEATHER_GRIP=<factor> (weather grip): rx_session_set_weather_grip after the load (0.85 rain / 0.7 snow at HEAVY).
+ *      PROBE_LIP=<0..1> (w-lippull): rx_session_set_lip_pull after the load (1 = the original).
  * Development tool only: reads guest memory through rx_mem.h between frames, writes nothing but PROBE_NODEFORM's gain. */
 #include "rx_api.h"
 #include "rx_mem.h"
@@ -260,6 +261,7 @@ int main(int argc, char** argv) {
     }
     if (getenv("PROBE_LOOSE") && rx_session_set_free_air_looseness(s, (float)envd("PROBE_LOOSE", 0))) { fprintf(stderr, "looseness: %s\n", rx_session_last_error(s)); return 1; }   /* w-freeair2 */
     if (getenv("PROBE_WEATHER_GRIP") && rx_session_set_weather_grip(s, (float)envd("PROBE_WEATHER_GRIP", 1))) { fprintf(stderr, "weather grip: %s\n", rx_session_last_error(s)); return 1; }   /* weather grip (2026-11-07) */
+    if (getenv("PROBE_LIP") && rx_session_set_lip_pull(s, (float)envd("PROBE_LIP", 1))) { fprintf(stderr, "lip pull: %s\n", rx_session_last_error(s)); return 1; }   /* w-lippull: LIP PULL after the load */
     FILE* tf = fopen(argv[3], "w"); if (!tf) return 2;
     const int frames = atoi(argv[2]);
     const float dt = (float)envd("PROBE_DT", 1.0 / 60.0);

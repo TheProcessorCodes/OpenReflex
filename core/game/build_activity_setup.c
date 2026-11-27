@@ -34,8 +34,10 @@ static void act_profile_display_name(int32_t controller, rx_addr wbuf) {
     const uint32_t a[2] = {profile, wbuf};
     rx_call_original(0x00616840, RX_STDCALL, 0, 2, a);
 #else
-    (void)controller;
-    const uint16_t* n = rx_event_spec_get()->player_name;
+    /* w-split: another controller's profile (the split screen's second player) is "Player <n>": the Player List finds its players by
+     * this name, so two local rows must not share the spec's name */
+    uint16_t other[12] = {'P', 'l', 'a', 'y', 'e', 'r', ' ', (uint16_t)('1' + (controller > 0 && controller < 9 ? controller : 0)), 0};
+    const uint16_t* n = controller > 0 ? other : rx_event_spec_get()->player_name;
     uint32_t i = 0;
     for (; i < 0x43 && n[i]; i++) SU16(wbuf, 2 * i, n[i]);
     for (; i < 0x43; i++) SU16(wbuf, 2 * i, 0);

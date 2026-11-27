@@ -36,7 +36,11 @@ int32_t rx_session_local_phys_class(const struct rx_session* s) {
 }
 
 /* the local human's driver in a lap race (rx_practice_lap_type: National, Supercross, Terracross, UTV Moto, Powercross; their drivers'
- * +0xa8 / +0xac are the race rules rx_session_hud reads), else 0 */
+ * +0xa8 / +0xac are the race rules rx_session_hud reads), else 0.
+ * SPLIT SCREEN RULE (w-split): player 2's laps are NEVER saved: the lap log follows player 1 only (local_player() with the view player 0, which is
+ * what it always is while a frame runs: rx_session_set_view_player is set only around the snapshot's reads). Everything that keeps or sends a
+ * lap reads this log (Unity's RxPractice: the lap list, the leaderboard posts, the ghost recorder, YOUR BEST), so player 2's laps are never
+ * timed for records, posted, recorded as ghosts or saved. Keep it that way: never point the log at player 2. */
 static rx_addr lap_log_driver(void) {
     const rx_addr p = local_player();
     rx_addr a = 0;
@@ -56,8 +60,9 @@ static void lap_log_after_frame(void) {
     const int wrong_way = backwards ? U32(backwards, 0xc) != 0 : 0;
     const int resetting = F32(p, 0x116c) > 0.0f;
     uint32_t mods = (uint32_t)rx_ps_active() & (RX_LAP_MOD_PHYS_CONFIG | RX_LAP_MOD_PHYS_RESTORED | RX_LAP_MOD_PHYS_TAINT);
-    if (rx_fa_mask_value || rx_fa_level_value != 1.0f || rx_fa_snap_value != 1.0f || rx_fa_looseness_value != 0.0f) mods |= RX_LAP_MOD_AIR_HELPERS;
+    if (rx_fa_mask_value || rx_fa_level_value != 1.0f || rx_fa_snap_value != 1.0f || rx_fa_looseness_value != 0.0f || rx_fa_lip_value != 1.0f) mods |= RX_LAP_MOD_AIR_HELPERS;   /* (LIP PULL counts with FREER AIR) */
     if (rx_ms_records_off()) mods |= RX_LAP_MOD_MAP_SCALE;   /* (BASE SCALE: not at the track's default scale) */
+    if (rx_ms_any_vehicle()) mods |= RX_LAP_MOD_ANY_VEHICLE;
     float pos[3] = {0, 0, 0};
     if (v) { pos[0] = F32(v, 0xc0); pos[1] = F32(v, 0xc4); pos[2] = F32(v, 0xc8); }
     rx_lap_log_frame(racing, on_track, wrong_way, resetting, mods, v ? pos : NULL);

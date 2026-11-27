@@ -270,6 +270,7 @@ void rx_records_join(uint32_t slot, rx_addr rec, uint32_t vid, uint32_t type, ui
      * update, the leave's commit and its highlight scan do nothing (each of them tests the row) */
     if (rx_ms_records_off()) return;   /* (BASE SCALE: a track at its own default scale keeps them) */
     if (rx_ms_custom_track()) return;   /* MODS/TRACKS (port, map_scale.h): nor does a custom track */
+    if (rx_ms_any_vehicle()) return;   /* ANY VEHICLE (port, map_scale.h): nor a vehicle or class the event type never offered */
     if (rx_ps_records_off()) return;   /* PHYSICS STUDIO (port, phys_studio.h): changed physics keeps no offline records either */
     const rx_addr entry = rx_sp();
     ACT_FRAME(L, 0x100, 4);

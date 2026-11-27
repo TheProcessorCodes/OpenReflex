@@ -56,6 +56,7 @@ static rx_addr tables_and_goal(rx_addr tracking,uint32_t controller,uint32_t ind
 uint32_t rx_highlight_add_progress(rx_addr tracking,uint32_t controller,uint32_t index) {
     if(rx_ms_records_off())return 0;
     if(rx_ms_custom_track())return 0;   /* MODS/TRACKS (port, map_scale.h): nor on a custom track */
+    if(rx_ms_any_vehicle())return 0;   /* ANY VEHICLE (port, map_scale.h): nor on a vehicle or class the event type never offered */
     if(rx_ps_records_off())return 0;   /* PHYSICS STUDIO (port): nor with changed physics */   /* MAP SCALE (port, map_scale.h): no highlight (achievement) progress on a scaled track */
     RACE_FRAME_PLAIN(F,0x118,4);
     const rx_addr key=F+0x14,copy=F+0x20,vec=F+0x2c,set=F+0x44,crit=F+0x78;

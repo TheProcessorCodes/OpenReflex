@@ -45,7 +45,8 @@ void  rx_ps_guard(void);                                   /* before each frame:
  * same place and the same record layout as the original's reader 0043a560 fills: the file's registered names, case-insensitive; a
  * name the file lacks keeps the class file's value; names the original does not register are ignored), for the LOCAL players' vehicles
  * of one VehicleModelId. The vehicle then reports its own physics class (rx_ps_class_of_sim: RX_VP_MX50 / RX_VP_MX650F). Nothing is
- * active until a session sets one (rx_session_vehicle_physics). */
+ * active until a session sets one (rx_session_vehicle_physics). OPEN REFLEX tunes the 50cc and the ATV 1000 as they are read (phys_studio.c
+ * k_vp_tune: the Reflex class file's air records, more torque, the 50cc's taller final drive; ALIVE_BIKES.md "Tune"). */
 enum { RX_VP_MX50 = RX_PS_CLASSES, RX_VP_MX650F, RX_VP_ATV1000, RX_VP_CLASS_END };   /* 9, 10 motorcycles (the mx table); 11 an ATV (the atv table) */
 #define RX_VP_MAX 4
 int   rx_vp_set(int32_t vehicle_model, int32_t cls, const uint8_t* bxml, uint32_t size, char* report, uint32_t cap);   /* records read, < 0 refused */

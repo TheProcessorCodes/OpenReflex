@@ -40,6 +40,12 @@ void  rx_ms_set_base(float base);
 float rx_ms_base(void);
 /* the world's scale is not its track's default: no offline records, best laps, highlights (and the lap log's map scale bit) */
 int   rx_ms_records_off(void);
+/* ANY VEHICLE (port addition, core/plan/ANY_VEHICLE.md; rx_session_set_any_vehicle): the client says this event rides a vehicle type or a
+ * vehicle class the event type's own tables (EventTypeVehicleClasses) never offered. Nothing of the game runs differently: like a scaled
+ * or a custom track the event keeps no offline records, best laps or highlights, and its laps carry RX_LAP_MOD_ANY_VEHICLE. Restored to 0
+ * with the core's statics at destroy. */
+void  rx_ms_set_any_vehicle(int on);
+int   rx_ms_any_vehicle(void);
 /* MODS/TRACKS (port addition, rx_session_mount_level): the event rides a custom track read from a mod's folder. Like a scaled track it
  * keeps no offline records or highlight progress (the profile's records are keyed by level name: a mod's slot name is shared by every
  * mod that ships as that slot). Restored to 0 with the core's statics at destroy. */

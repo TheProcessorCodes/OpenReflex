@@ -196,7 +196,7 @@ void rx_race_grid_from_gate(rx_addr A) {
         return;
     default: break;
     }
-    if(fmt_modtrack_racing()) {
+    if(fmt_modtrack_racing() && !fmt_modtrack_kit()) {   /* (with the Reflex gate kit: the gate's own slots, below) */
         const float* g=fmt_modtrack_gate();const float scale=rx_ms_scale();
         const float width=g[9]*scale;
         int columns=(int)(width/6.f);if(columns<2)columns=2;if(columns>16)columns=16;
@@ -209,7 +209,8 @@ void rx_race_grid_from_gate(rx_addr A) {
             const float x=g[0]*scale+g[6]*across-g[3]*back,z=g[2]*scale+g[8]*across-g[5]*back;
             SF32(slot,0,x);SF32(slot,4,g[1]);SF32(slot,8,z);
             /* Sample the same uniformly scaled terrain used by native physics. */
-            float gx=fminf(2047,fmaxf(0,(x/scale+2047)*.5f)),gz=fminf(2047,fmaxf(0,(2047-z/scale)*.5f));
+            float spacing=(float)fmt_modtrack_spacing(),half=1023.5f*spacing;
+            float gx=fminf(2047,fmaxf(0,(x/scale+half)/spacing)),gz=fminf(2047,fmaxf(0,(half-z/scale)/spacing));
             int ix=(int)gx,iz=(int)gz;SF32(slot,4,fmt_modtrack_height((uint32_t)iz*2048+ix)*scale);
             for(int k=0;k<3;k++)SF32(slot,0x10+4*k,g[3+k]);
             SU32(slot,0x20,sec);SU32(slot,0x24,node);SU32(slot,0x2c,1);

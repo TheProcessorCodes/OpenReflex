@@ -64,11 +64,51 @@ int main(int argc, char** argv) {
     for (int i = 0; i < frames; i++) {
         uint8_t keys[256] = {0};
         if (racing) { if (brake_at >= 0 && racing >= brake_at) keys[0x1f] = 0x80; else keys[0x11] = 0x80; }
-        if (rx_session_set_input(s, keys, NULL, 0) || rx_session_advance_dt(s, 1.f / 60)) { fprintf(stderr, "advance: %s\n", rx_session_last_error(s)); return 1; }
+        rx_pad pad[4] = {{0}}; uint32_t mask = 0;
+        if (getenv("ALIVE_PAD") && racing) {   /* ALIVE_PAD=<period frames>: pad 0, full trigger, both sticks' Y a sine of that period */
+            int per = atoi(getenv("ALIVE_PAD")); if (per < 2) per = 60;
+            short y = (short)(32000 * __builtin_sinf(6.2831853f * (float)racing / (float)per));
+            pad[0].right_trigger = 255; pad[0].ly = y; pad[0].ry = y; mask = 1; keys[0x11] = 0;
+        }
+        if (rx_session_set_input(s, keys, mask ? pad : NULL, mask) || rx_session_advance_dt(s, getenv("ALIVE_DT") ? (float)atof(getenv("ALIVE_DT")) : 1.f / 60)) { fprintf(stderr, "advance: %s\n", rx_session_last_error(s)); return 1; }
         if (rx_session_get_state(s) != RX_SESSION_RACING) continue;
         if (!racing) printf("class %d\n", (int)rx_session_local_phys_class(s));
         racing++;
         rx_vehicle_info v; if (rx_session_vehicle_info(s, -1, &v)) continue;
+        if (getenv("ALIVE_TRACE")) {   /* every frame: the wheels' bodies in the frame body's space (y up, z forward) */
+            rx_bike_state b; if (!rx_session_bike(s, &b)) {
+                const float* q = b.orientation[0];
+                printf("T %d", racing);
+                for (int w = 2; w < 4; w++) {
+                    const int rnd = getenv("ALIVE_RENDER") != NULL;   /* the render bodies (what the client draws by) */
+                    const float (*bp)[4] = rnd ? b.render_position : b.position;
+                    if (rnd) q = b.render_orientation[0];
+                    float d[3] = {bp[w][0] - bp[0][0], bp[w][1] - bp[0][1], bp[w][2] - bp[0][2]};
+                    /* rotate d by the inverse of q (x, y, z, w) */
+                    float x = -q[0], y = -q[1], z = -q[2], qw = q[3];
+                    float tx = 2 * (y * d[2] - z * d[1]), ty = 2 * (z * d[0] - x * d[2]), tz = 2 * (x * d[1] - y * d[0]);
+                    float r0 = d[0] + qw * tx + (y * tz - z * ty), r1 = d[1] + qw * ty + (z * tx - x * tz), r2 = d[2] + qw * tz + (x * ty - y * tx);
+                    printf(" %s %.3f %.3f", w == 2 ? "front" : "rear", r1, r2);
+                    (void)r0;
+                }
+                printf(" speed %.1f\n", v.speed);
+                if (getenv("ALIVE_TRACE")[0] == '3') {   /* ALIVE_TRACE=3: the bike's 18 node worlds, then the rider's 69 bones (16 floats each) */
+                    float pose[64 * 16], rp[80 * 16]; int n = rx_session_bike_pose(s, pose, 64), nr = rx_session_rider_pose(s, rp, 80);
+                    printf("Q %d %d %d", racing, n, nr);
+                    for (int k = 0; k < n; k++) for (int e = 0; e < 16; e++) printf(" %.4f", pose[16 * k + e]);
+                    for (int k = 0; k < nr; k++) for (int e = 0; e < 16; e++) printf(" %.4f", rp[16 * k + e]);
+                    printf(" %.4f %.4f %.4f %.4f %.4f %.4f", b.render_position[3][0], b.render_position[3][1], b.render_position[3][2], b.position[3][0], b.position[3][1], b.position[3][2]);
+                    printf("\n");
+                }
+                if (getenv("ALIVE_TRACE")[0] == '2') {   /* ALIVE_TRACE=2: the posed frame, upper / lower forks and front tyre (16 floats each) */
+                    float pose[64 * 16]; int n = rx_session_bike_pose(s, pose, 64);
+                    printf("P %d", racing);
+                    for (int k = 0; k < 5 && k < n; k++) { if (k == 2) continue; for (int e = 0; e < 16; e++) printf(" %.5f", pose[16 * k + e]); }
+                    for (int w = 2; w < 3; w++) printf(" %.4f %.4f %.4f", b.position[w][0], b.position[w][1], b.position[w][2]);
+                    printf("\n");
+                }
+            }
+        }
         if (v.speed > peak) peak = v.speed;
         if (racing % 30 == 1) {
             float pose[64 * 16]; int n = rx_session_bike_pose(s, pose, 64);

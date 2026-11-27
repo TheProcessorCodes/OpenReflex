@@ -23,9 +23,9 @@ static int name_read(rx_addr p,char* out,size_t n){for(size_t i=0;i<n;i++){out[i
 static int prefix(rx_addr p){static const char s[]="Player";for(uint32_t i=0;i<6;i++)if(U8(p,i)!=(uint8_t)s[i])return 0;return 1;}
 static uint32_t col_count(rx_addr t){return(U32(t,0x14)-U32(t,0x10))/4u;}
 static rx_addr column(rx_addr t,uint32_t i){return U32(U32(t,0x10),4u*i);}
-static int native_schema(native_table* tables,uint32_t* nt,uint32_t* nc,char* e,size_t n){
+static int native_schema(rx_addr db,native_table* tables,uint32_t* nt,uint32_t* nc,char* e,size_t n){
  if(U32(0,0x785bc218u)!=0)return fail(e,n,"Player snapshot requires canonical C locale");
- *nt=*nc=0;rx_addr db=RX_TBL_PLAYER_DB(0);uint32_t count=U32(db,0x1e8);if(count>MAX_TABLES)return fail(e,n,"Player database table bound exceeded");
+ *nt=*nc=0;uint32_t count=U32(db,0x1e8);if(count>MAX_TABLES)return fail(e,n,"Player database table bound exceeded");
  for(uint32_t i=0;i<count;i++){
   rx_addr t=U32(db,0x38+4*i);if(!t||!prefix(t+0x3c))continue;
   uint32_t cols=col_count(t),rows=rx_tbl_row_count(t);if(!cols||cols>MAX_COLS||rows>MAX_ROWS)return fail(e,n,"Player table dimensions unsupported");
@@ -45,9 +45,9 @@ static int layout(snapshot* s,void* blob,uint32_t bytes){
  s->blob=blob;s->tables=(void*)(s->blob+sizeof(s->h));s->columns=(void*)(s->tables+s->h.tables);s->cells=(void*)(s->columns+s->h.columns);s->text=(void*)(s->cells+s->h.cells);return 1;
 }
 static rx_addr text_address(rx_addr str){return U32(str,0x18)<16?str+4:U32(str,4);}
-int rx_player_snapshot_export(void* output,uint32_t capacity,uint32_t* required,char* e,size_t n){
+static int export_db(rx_addr db,void* output,uint32_t capacity,uint32_t* required,char* e,size_t n){
  native_table nt[MAX_TABLES];uint32_t tc,cc;if(!required||(!output&&capacity))return fail(e,n,"Invalid snapshot export output");
- if(native_schema(nt,&tc,&cc,e,n))return -1;
+ if(native_schema(db,nt,&tc,&cc,e,n))return -1;
  uint64_t cells=0,text=0;
  for(uint32_t t=0;t<tc;t++){
   cells+=(uint64_t)nt[t].rows*nt[t].nc;if(cells>MAX_CELLS)return fail(e,n,"Player cell bound exceeded");
@@ -118,7 +118,8 @@ static int validate(snapshot* s,native_table* native,uint32_t tc,uint32_t cc,cha
  }
  if(cell!=s->h.cells||text!=s->h.text_bytes)return fail(e,n,"Unreferenced Player snapshot payload");return 0;
 }
-int rx_player_snapshot_import(const void* input,uint32_t bytes,char* e,size_t n){
+int rx_player_snapshot_export(void* output,uint32_t capacity,uint32_t* required,char* e,size_t n){return export_db(RX_TBL_PLAYER_DB(0),output,capacity,required,e,n);}
+static int import_db(rx_addr db,const void* input,uint32_t bytes,char* e,size_t n){
  if(!input||bytes<sizeof(rx_player_snapshot_header)||bytes>RX_PLAYER_SNAPSHOT_MAX_BYTES)return fail(e,n,"Invalid Player snapshot size");
  snapshot s={0};memcpy(&s.h,input,sizeof s.h);
  if(s.h.magic!=RX_PLAYER_SNAPSHOT_MAGIC||s.h.version!=1||s.h.total_bytes!=bytes||s.h.reserved||s.h.tables>MAX_TABLES||s.h.columns>MAX_TABLES*MAX_COLS||s.h.cells>MAX_CELLS)return fail(e,n,"Invalid Player snapshot header");
@@ -126,7 +127,7 @@ int rx_player_snapshot_import(const void* input,uint32_t bytes,char* e,size_t n)
  unsigned char* copy=(unsigned char*)input; /* aligned immutable public-worker-owned copy */
  if(!layout(&s,copy,bytes)){return fail(e,n,"Invalid Player snapshot layout");}
  native_table nt[MAX_TABLES];uint32_t tc,cc;
- if(native_schema(nt,&tc,&cc,e,n)||validate(&s,nt,tc,cc,e,n)){return -1;}
+ if(native_schema(db,nt,&tc,&cc,e,n)||validate(&s,nt,tc,cc,e,n)){return -1;}
  /* All rejection checks precede the first guest write. Once application starts,
   * native allocation/fault is fatal to the session, not a rollback promise. */
  uint32_t longest=0;for(uint32_t i=0;i<s.h.cells;i++)if(s.cells[i].text_length>longest)longest=s.cells[i].text_length;
@@ -157,4 +158,16 @@ int rx_player_snapshot_import(const void* input,uint32_t bytes,char* e,size_t n)
  }
  if(text_buffer)rx_crt_aligned_free(text_buffer);rx_crt_aligned_free(storage);rx_crt_aligned_free(values);
  RX_FRAME_LEAVE(F,0x20);if(e&&n)*e=0;return 0;
+}
+int rx_player_snapshot_import(const void* input,uint32_t bytes,char* e,size_t n){return import_db(RX_TBL_PLAYER_DB(0),input,bytes,e,n);}
+/* SPLIT SCREEN (w-split): player database `from` copied over player database `to` (every "Player*" table: rider, gear, vehicles, parts,
+ * tuning), so the second local human's EnsureLocalPlayers reads the first one's garage. The four databases share one schema (the
+ * startup's default copy); the import validates before the first guest write. Host buffer only; 0 ok, -1 refused (error text). */
+int rx_player_snapshot_clone(int from,int to,char* e,size_t n){
+ if(from<0||from>3||to<0||to>3||from==to)return fail(e,n,"Invalid Player database clone");
+ uint32_t bytes=0;if(export_db(RX_TBL_PLAYER_DB(from),NULL,0,&bytes,e,n))return -1;
+ void* blob=malloc(bytes);if(!blob)return fail(e,n,"Player clone allocation failed");
+ int rc=export_db(RX_TBL_PLAYER_DB(from),blob,bytes,&bytes,e,n);
+ if(!rc)rc=import_db(RX_TBL_PLAYER_DB(to),blob,bytes,e,n);
+ free(blob);return rc;
 }

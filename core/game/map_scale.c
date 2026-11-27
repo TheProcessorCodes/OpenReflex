@@ -13,6 +13,10 @@ static int g_custom;             /* MODS/TRACKS: the session rides a mounted cus
 void  rx_ms_set_custom_track(int on) { g_custom = on ? 1 : 0; }
 int   rx_ms_custom_track(void) { return g_custom; }
 
+static int g_any_vehicle;        /* ANY VEHICLE (core/plan/ANY_VEHICLE.md): the event rides a vehicle or a class its type never offered */
+void  rx_ms_set_any_vehicle(int on) { g_any_vehicle = on ? 1 : 0; }
+int   rx_ms_any_vehicle(void) { return g_any_vehicle; }
+
 void  rx_ms_set(float s) { g_scale = s; g_depth = 0; }
 float rx_ms_scale(void) { return g_scale; }
 float rx_ms_load(void) { return g_depth > 0 ? g_scale : 1.0f; }

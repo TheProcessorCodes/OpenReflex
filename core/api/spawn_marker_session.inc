@@ -25,6 +25,7 @@
 #include "../game/player_reset_gate.h"
 #include "../game/practice.h"
 #include "../game/loop_player.h"
+#include "../game/build_vehicle.h"
 static rx_addr lap_log_driver(void);   /* practice_session.inc */
 
 /* a refusal says why in last_error WITHOUT putting the session into the error state (session_error does: these are ordinary answers) */
@@ -98,6 +99,30 @@ int rx_session_spawn_at_instant(struct rx_session* s, const float pos[3], const 
     SU32(p, 0x1170, 1);                               /* the reset reason: manual, as the key sets it */
     if (practice_driver) rx_lap_log_marker(practice_driver);   /* PRACTICE: the lap is the marker's (w-lb-markers) */
     rx_player_reset(p, 0);                            /* 0054fff0: what the end of the timer runs */
+    rx_set_sp(sp0);
+    /* PRACTICE: the driver's place on the track is the marker's now, before the next frame's rules see the vehicle there (practice.h) */
+    if (practice_driver) rx_practice_marker_place_now(practice_driver, pos, d);
+    return 0;
+}
+
+/* PORT ADDITION (NOCLIP): the instant respawn, then the vehicle placed at exactly pos instead of on the ground under it. Player_Reset's
+ * placement (00460020 -> the simulation's vf20, rx_sim_moto_ground_place) lifts / lowers the spot onto the terrain; this places the vehicle
+ * again with 0045f600 (rx_vehicle_place: the simulation reset, so its velocity is gone) at pos, upright (the up axis 0x009cb4b0), facing d,
+ * so it falls from where the camera was. Everything else is rx_session_spawn_at_instant's (the gate, the reset, PRACTICE's lap marker). */
+int rx_session_spawn_at_air(struct rx_session* s, const float pos[3], const float dir[3]) {
+    const int rc = rx_session_spawn_at_instant(s, pos, dir);
+    if (rc) return rc;
+    const rx_addr p = local_player();
+    const rx_addr v = p ? U32(p, 0x1ac) : 0;
+    if (!v) return 0;
+    float d[3] = {dir[0], 0.0f, dir[2]};
+    const float len = sqrtf(d[0] * d[0] + d[2] * d[2]);
+    d[0] /= len; d[2] /= len;   /* (the gate refused a zero direction) */
+    const rx_addr sp0 = rx_sp(), S = (sp0 - 0x40u) & ~0xfu;
+    rx_set_sp(S);
+    SF32(S, 0x20, pos[0]); SF32(S, 0x24, pos[1]); SF32(S, 0x28, pos[2]); SF32(S, 0x2c, 1.0f);
+    SF32(S, 0x10, d[0]);   SF32(S, 0x14, 0.0f);   SF32(S, 0x18, d[2]);   SF32(S, 0x1c, 0.0f);
+    rx_vehicle_place(v, S + 0x20, S + 0x10, 0x009cb4b0u);
     rx_set_sp(sp0);
     return 0;
 }

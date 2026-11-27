@@ -24,6 +24,8 @@
 #include "fx.h"
 #include "fx_bind.h"
 #include "loop_platform.h"
+#include "rider_cap.h"
+#include "build_tables.h"
 #include "../src/fmt_bxml.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -326,6 +328,13 @@ static rx_addr particle_entity_create(void) {
 
 /* 00697ce0 ParticleManager2D_Init: the simulation state.  The D3D vertex buffers / vertex declarations / shaders are render
  * resources; the oracle runs the original (exact), the product keeps none (there is no renderer). */
+/* The event's riders for the normal manager's size: the Player List's rows (made by the event's setup before its scene loads), or
+ * the career's FIELD SIZE; 12 or fewer = the original's capacity. */
+static uint32_t particle_riders(void) {
+    uint32_t n = rx_tbl_row_count(0x00ae0e08u /* the Player List */);
+    if (rx_rc_field_size() > n) n = rx_rc_field_size();
+    return n > RX_RC_MAX ? RX_RC_MAX : n;
+}
 static void particle_manager_init(rx_addr mgr, int type) {
 #ifdef RX_ORACLE
     rx_regs in, o; memset(&in, 0, sizeof in); in.r[0] = (uint32_t)type; in.r[6] = mgr;
@@ -335,10 +344,30 @@ static void particle_manager_init(rx_addr mgr, int type) {
     SU32(mgr, 0x24, U32(mgr, 0x24) + 1);
     if (I32(mgr, 0x24) > 1) {
         SU32(mgr, 0xac, 0); SU32(mgr, 0xb0, 0);
+        /* RIDER CAP (port addition): the manager was made before this event's field size was known (an earlier scene's ParticleEntity):
+         * the normal manager's arrays are made again for the field (empty here: the live counts were just cleared). The original's
+         * capacity for fields of 12 or fewer. */
+        if (type == 2) {
+            const uint32_t want = particle_riders() > RX_RC_ORIG ? 10000u * particle_riders() / RX_RC_ORIG : 10000u;
+            if (U32(mgr, 0x1c) != want - 2) {
+                SU32(mgr, 0xb4, rx_reflex_aligned_alloc(want * 4));
+                SU32(mgr, 0x14, rx_reflex_aligned_alloc(want << 8));
+                SU32(mgr, 0x18, rx_reflex_aligned_alloc(want << 8));
+                SU32(mgr, 0xb8, 0);
+                SU32(mgr, 0x1c, want - 2);
+                fprintf(stderr, "rxcore: PARTICLES: the normal manager holds %u for %u riders\n", want - 2, particle_riders());
+            }
+        }
         loop_leave_cs(mgr + 0xf4);
         return;
     }
-    const uint32_t cap = (type != 2) ? 10000u : 3000u;
+    /* 00697d6f: [mgr + 0x1c] = (-(type != 2) & 0xffffe4a8) + 10000: the normal manager (type 2) 10000, the additive one (type 1) 3000.
+     * (These were the other way round until 2026-11-16: a full gate filled the normal manager's 2998 and every later roost, dust and
+     * exhaust particle was given back by SpawnParticle 00698780.) */
+    uint32_t cap = (type == 2) ? 10000u : 3000u;
+    /* RIDER CAP (port addition, rider_cap.h): a field past the original's 12 riders gets the normal manager's room per rider (a gate of
+     * 22 filled the 10000 as a gate of 12 filled the swapped 3000). Fields of 12 or fewer: the original's capacity exactly. */
+    if (type == 2 && particle_riders() > RX_RC_ORIG) cap = 10000u * particle_riders() / RX_RC_ORIG;
     SU32(mgr, 0x1c, cap);
     SU32(mgr, 0xb4, rx_reflex_aligned_alloc(cap * 4));
     SU32(0, 0x00a94280, U32(0, 0x00a94280) + 1);

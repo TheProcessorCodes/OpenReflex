@@ -32,7 +32,15 @@
  *       resets 0, no penalty, off track <= 2 s, |exact - time| <= one frame, its time = the race clock between its crossings) and becomes
  *       the game's best lap; the rules never reset the rider after the jump (the driver was placed at the marker on the track).
  *       PT_INSTANT=1 (w-markerbtns): the respawn is rx_session_spawn_at_instant (the client's SPAWN MARKER): the same checks (the "again"
- *       call is skipped: nothing runs afterwards to refuse it).
+ *       call is skipped: nothing runs afterwards to refuse it) PT_JUMP_AT=<s> moves the jump (default 20 s into lap 2): with PT_MARK_AT late in
+ *       the gate lap and a short PT_JUMP_AT the marker is a little way back (the reset loop of 2026-11-19: RuleBackwards put the rider
+ *       back where the button was pressed; the "no reset after the respawn ran" check catches it).
+ *   practice_test <install root> start
+ *       (2026-11-18) PRACTICE's start: no intro, no countdown, the gate already down. National NAT_Concord, Supercross SX_Kingston and
+ *       Powercross PX_Laguna (no gate, the activity's own 3-2-1), one rider, the throttle held from the first frame. With practice on:
+ *       InProgress within 1 s of the load, no countdown number (3 / 2 / 1) ever shown, and 1 s after InProgress the bike is past 10 m/s (a
+ *       closed gate, collision on, holds it at the line). The National without practice is the control: its start (intro, board, gate)
+ *       takes more than 3 s.
  *   practice_test <install root> scale <type> <type id> <level> <location id> <map scale> <the track's default> <laps>
  *       (w-alivegates) BASE SCALE: a practice on any level (an Alive National at 1.1 / 1.1 and 1.2 / 1.1 ...): rx_session_map_scale_records
  *       is 1 exactly when the scale is the track's default, and the lap log's map scale bit (16) is clear on every lap there, set on every
@@ -276,6 +284,7 @@ static int cmd_markers(const char* root) {
     long jump_frame = -1, settled_frame = -1;
     double lap_start = 0;
     const double mark_at = getenv("PT_MARK_AT") ? atof(getenv("PT_MARK_AT")) : 85.0;   /* seconds into the gate lap the marker is kept */
+    const double jump_at = getenv("PT_JUMP_AT") ? atof(getenv("PT_JUMP_AT")) : 20.0;   /* seconds into lap 2 the rider rides back to the marker */
     int resets_seen_after_jump = 0, was_resetting = 0;
     for (long f = 0; f < 60L * 60 * 12 && n < 3; f++) {
         uint8_t keys[256]; memset(keys, 0, sizeof keys);
@@ -296,7 +305,7 @@ static int cmd_markers(const char* root) {
             }
         }
         /* lap 2, 20 s in: back to the marker */
-        if (n == 1 && kept && !jumped && in_lap >= 20.0) {
+        if (n == 1 && kept && !jumped && in_lap >= jump_at) {
             /* PT_INSTANT=1 (w-markerbtns): the client's INSTANT respawn (rx_session_spawn_at_instant): nothing runs afterwards to refuse a second call */
             jump_rc = instant ? rx_session_spawn_at_instant(s, marker_pos, marker_dir) : rx_session_spawn_at(s, marker_pos, marker_dir);
             again = instant ? 3 : rx_session_spawn_at(s, marker_pos, marker_dir);
@@ -398,12 +407,58 @@ static int cmd_scale(const char* root, const char* type, int type_id, const char
     return g_fail;
 }
 
+/* ---- start (PRACTICE: no intro, no countdown, the gate down) ---------------------------------------------------------------------- */
+static int start_run(const char* root, int practice, const char* type, int type_id, const char* level, int location, int cls, const char* name) {
+    rx_session* s = rx_session_create(root);
+    if (!s) { printf("FAIL create: %s\n", rx_session_last_error(NULL)); return 1; }
+    rx_event_spec e; rx_session_event_default(&e);
+    e.riders = 1; e.ai_difficulty = 0; e.duration = 3; snprintf(e.duration_type, sizeof e.duration_type, "Laps");
+    if (type) {
+        snprintf(e.event_type, sizeof e.event_type, "%s", type); e.event_type_id = type_id;
+        snprintf(e.location, sizeof e.location, "%s", level); e.location_id = location;
+        if (cls >= 0) e.vehicle_class = cls;
+    }
+    if (rx_session_set_practice(s, practice) != 0 || rx_session_event_load(s, &e) != 0) { printf("FAIL %s load: %s\n", name, rx_session_last_error(s)); rx_session_destroy(s); return 1; }
+    rx_race_state race; memset(&race, 0, sizeof race);
+    long racing_at = -1; int steps_shown = 0; float speed_1s = -1.0f;
+    for (long f = 0; f < 3000 && (racing_at < 0 || f <= racing_at + 60); f++) {
+        uint8_t keys[256]; memset(keys, 0, sizeof keys);
+        rx_pad pad; memset(&pad, 0, sizeof pad); pad.right_trigger = 255;
+        rx_session_set_input(s, keys, &pad, 1);
+        if (rx_session_advance(s) != 0) { printf("FAIL %s advance: %s\n", name, rx_session_last_error(s)); rx_session_destroy(s); return 1; }
+        rx_session_race(s, &race);
+        if (race.state == 1 && race.countdown_step >= 1 && race.countdown_step <= 3) steps_shown++;
+        if (racing_at < 0 && race.valid && race.state == 2) racing_at = f;
+        if (racing_at >= 0 && f == racing_at + 60) { rx_bike_state bike; if (rx_session_bike(s, &bike) == 0) speed_1s = bike.speed; }
+    }
+    rx_session_destroy(s);
+    printf("%s, practice %d: InProgress at frame %ld, countdown frames shown %d, speed 1 s later %.2f m/s\n", name, practice, racing_at, steps_shown, (double)speed_1s);
+    char what[160];
+    if (practice) {
+        snprintf(what, sizeof what, "%s practice: InProgress within 1 s of the load", name); check(racing_at >= 0 && racing_at <= 60, what);
+        snprintf(what, sizeof what, "%s practice: no 3-2-1 shown", name); check(steps_shown == 0, what);
+        snprintf(what, sizeof what, "%s practice: free to go (past 10 m/s 1 s after the start)", name); check(speed_1s > 10.0f, what);
+    } else {
+        snprintf(what, sizeof what, "%s race (control): the gate start takes more than 3 s", name); check(racing_at > 180, what);
+    }
+    return 0;
+}
+static int cmd_start(const char* root) {
+    if (start_run(root, 1, NULL, 0, NULL, 0, -1, "National NAT_Concord")) return 1;
+    if (start_run(root, 1, "Supercross", 8, "SX_Kingston", 78, -1, "Supercross SX_Kingston")) return 1;
+    if (start_run(root, 1, "Powercross", 16, "PX_Laguna", 58, 22, "Powercross PX_Laguna")) return 1;
+    if (start_run(root, 0, NULL, 0, NULL, 0, -1, "National NAT_Concord")) return 1;
+    printf("%s\n", g_fail ? "FAIL" : "PASS");
+    return g_fail;
+}
+
 int main(int argc, char** argv) {
     if (argc >= 10 && !strcmp(argv[2], "scale"))
         return cmd_scale(argv[1], argv[3], atoi(argv[4]), argv[5], atoi(argv[6]), (float)atof(argv[7]), (float)atof(argv[8]), atoi(argv[9]));
     if (argc >= 3 && !strcmp(argv[2], "practice")) return cmd_practice(argv[1], argc > 3 ? atoi(argv[3]) : 10);
     if (argc >= 3 && !strcmp(argv[2], "markers")) return cmd_markers(argv[1]);
+    if (argc >= 3 && !strcmp(argv[2], "start")) return cmd_start(argv[1]);
     if (argc >= 3 && !strcmp(argv[2], "finish")) return cmd_finish(argv[1], argc > 3 ? atoi(argv[3]) : 2);
-    fprintf(stderr, "usage: practice_test <install root> practice [laps] | finish [laps] | markers\n");
+    fprintf(stderr, "usage: practice_test <install root> practice [laps] | finish [laps] | markers | start\n");
     return 2;
 }

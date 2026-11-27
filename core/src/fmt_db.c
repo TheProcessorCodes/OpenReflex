@@ -63,7 +63,12 @@ fmt_database* fmt_db_open(const fmt_vfs* vfs, const char* name)
     fmt_database* db = (fmt_database*)fmt_alloc(sizeof *db);
     if (!db) { fmt_bxml_free(d); return NULL; }
     db->bxml = d;
-    db->name = fmt_strdup(name);
+    const char* asset_source = fmt_bxml_attr_str(d, 0, "assetSource");
+    if (asset_source) {
+        if (!*asset_source || strlen(asset_source)>128) { fmt_db_free(db); fmt_fail("invalid assetSource"); return NULL; }
+        for (const char* p=asset_source;*p;p++) if (!((*p>='A'&&*p<='Z')||(*p>='a'&&*p<='z')||(*p>='0'&&*p<='9')||*p=='_')) { fmt_db_free(db); fmt_fail("invalid assetSource"); return NULL; }
+    }
+    db->name = fmt_strdup(asset_source ? asset_source : name);
     if (!db->name) { fmt_db_free(db); return NULL; }
     int handles = fmt_bxml_find_child(d, 0, "Handles"), packages = fmt_bxml_find_child(d, 0, "Packages");
     if (fmt_stricmp(fmt_bxml_tag(d, 0), "Database") != 0 || packages < 0) { fmt_fail("%s: not a database document", path); fmt_db_free(db); return NULL; }

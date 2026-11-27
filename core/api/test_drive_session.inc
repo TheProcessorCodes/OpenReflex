@@ -93,6 +93,7 @@ int rx_session_test_drive_start(struct rx_session* s, const rx_event_spec* spec)
         return 2;
     }
     rx_ms_set(1.0f);   /* MAP SCALE (port): the garage's test ride is always at 100 % */
+    rx_ms_set_any_vehicle(0);   /* ANY VEHICLE (port): nor a flagged event */
     if (!U32(s->game, 0x20c8) || !U32(s->game, 0x15b54)) {
         snprintf(s->error, sizeof s->error, "the test drive needs the UI world (MXGame + 0x20c8 ready)");
         return 2;
