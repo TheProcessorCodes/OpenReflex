@@ -179,7 +179,7 @@ namespace Reflex.Port.Content
         {
             volume = Mathf.Clamp01(v);
             binkVolume = (int)Math.Round(volume * 32768.0);   // 00595440: _ftol(copysign(0.5, x) + x), x = v * 32768
-            if (source) source.volume = ReflexBink.Gain(binkVolume);
+            if (source) source.volume = Reflex.Port.Options.ReflexSettings.StreamerMode ? 0f : ReflexBink.Gain(binkVolume);   // (STREAMER MODE: the videos' music too)
             lock (gate) commands.Enqueue(1000 + binkVolume);
             wake.Set();
         }
@@ -320,7 +320,7 @@ namespace Reflex.Port.Content
             if (inf.audioRate > 0)
             {
                 source = gameObject.AddComponent<AudioSource>();
-                source.playOnAwake = false; source.spatialBlend = 0; source.loop = true; source.volume = ReflexBink.Gain(binkVolume); source.bypassReverbZones = true;
+                source.playOnAwake = false; source.spatialBlend = 0; source.loop = true; source.volume = Reflex.Port.Options.ReflexSettings.StreamerMode ? 0f : ReflexBink.Gain(binkVolume); source.bypassReverbZones = true;
                 clip = AudioClip.Create(video + " (Bink sound)", (int)inf.audioRate * 3600, (int)inf.audioChannels, (int)inf.audioRate, true, OnRead);
                 source.clip = clip;
                 if (playing && !waitingFirst) source.Play();

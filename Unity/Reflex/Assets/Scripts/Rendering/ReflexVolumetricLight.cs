@@ -97,6 +97,10 @@ namespace Reflex.Port.Rendering
         [TextArea(3, 10)] public string report;
 
         ReflexRenderPipeline pipeline; ReflexEnhancedLighting enhanced;
+        // SPLIT SCREEN (w-split): the second view's component (on the camera of a mirrored pipeline) marches the first view's medium: its
+        // level, profile, lights and ground texture (source), with its own pass, history and ground height. It finds, hides and restores
+        // no fake shafts (the first's does: Renderer.forceRenderingOff is one state for both views).
+        ReflexVolumetricLight source;
         OriginalLevel level; ReflexLevelContent content; string levelName;
         ReflexVolumetricPass pass;
         Profile profile; int profileDensity = -1;
@@ -150,6 +154,12 @@ namespace Reflex.Port.Rendering
         void LateUpdate()
         {
             if (!pipeline) pipeline = GetComponent<ReflexRenderPipeline>();
+            if (pipeline && pipeline.mirror)
+            {
+                if (!source) source = pipeline.mirror.GetComponent<ReflexVolumetricLight>();
+                active = source && source.active && pipeline.enhanced != null;
+                return;
+            }
             if (!enhanced) enhanced = GetComponent<ReflexEnhancedLighting>();
             var lvl = enhanced ? enhanced.level : null;
             bool enh = pipeline && pipeline.enhanced != null && lvl && lvl.Loaded;
@@ -260,8 +270,9 @@ namespace Reflex.Port.Rendering
         // the ground under the camera (the height fog's base) and a 128 x 128 height texture of the terrain (the dust layer)
         void UpdateGround(Vector3 camPos)
         {
-            var t = level && level.terrain ? level.terrain.UnityTerrain : null;
-            if (!groundTried && t && t.terrainData)
+            var lv = source ? source.level : level;
+            var t = lv && lv.terrain ? lv.terrain.UnityTerrain : null;
+            if (!source && !groundTried && t && t.terrainData)
             {
                 groundTried = true;
                 const int N = 128;
@@ -287,6 +298,28 @@ namespace Reflex.Port.Rendering
             groundY = float.IsNaN(groundY) || Mathf.Abs(gy - groundY) > 60f ? gy : Mathf.Lerp(groundY, gy, 0.05f);
         }
 
+        [Serializable] sealed class ImportedLamp { public float x,y,z,ground; }
+        [Serializable] sealed class ImportedLamps { public int version; public ImportedLamp[] lights; }
+        void AddImportedLamps()
+        {
+            if(scans!=1||!profile.stadium||UnleashedLevels.Bound?.level!=levelName)return;
+            string path=System.IO.Path.Combine(UnleashedLevels.Folder(levelName),"stadium-lights.json");
+            if(!RxFiles.Exists(path))return;
+            var data=JsonUtility.FromJson<ImportedLamps>(System.Text.Encoding.UTF8.GetString(RxFiles.ReadAllBytes(path)));
+            if(data?.version!=1||data.lights==null||data.lights.Length>1000)return;
+            var root=level.transform.Find("Imported scenery: "+UnleashedLevels.Bound.display_name);
+            var anchor=root?root.GetComponentsInChildren<MeshRenderer>().FirstOrDefault():null;
+            if(!anchor)return;
+            foreach(var p in data.lights)
+            {
+                var from=new Vector3(p.x,p.y,p.z);var target=new Vector3(p.x*.5f,p.ground,p.z*.5f);
+                var delta=target-from;float length=delta.magnitude;
+                if(!float.IsFinite(length)||length<10||length>3000)continue;
+                shafts.Add(new Shaft { renderer=anchor,name="Unleashed stadium lamp",narrow=from,dir=delta/length,
+                    length=length,r0=2,r1=length*.35f,colour=new Color(1,.96f,.88f),brightness=.35f });
+            }
+        }
+
         // ------------------------------------------------------------------------------------------------ fakes
         static readonly int ModeId = Shader.PropertyToID("_Mode"), ProgramId = Shader.PropertyToID("_Program");
 
@@ -309,6 +342,7 @@ namespace Reflex.Port.Rendering
             var names = new Dictionary<Material, string>();
             foreach (var kv in content.SceneryMaterials) if (kv.Value) names[kv.Value] = kv.Key;
             int added = 0;
+            AddImportedLamps();
             foreach (var r in level.GetComponentsInChildren<MeshRenderer>(true))
             {
                 if (fakes.ContainsKey(r)) continue;
@@ -537,20 +571,22 @@ namespace Reflex.Port.Rendering
         /// Fills the frame's parameters (main thread, before the camera renders); false: nothing to draw.
         bool Prepare(Camera cam)
         {
-            if (!active || profile == null || content == null || pass == null) return false;
+            var src = source ? source : this;   // (SPLIT SCREEN: the first view's medium and lights)
+            if (!active || src.profile == null || src.content == null || pass == null) return false;
             int tier = Tier;
             var f = frame;
             f.scale = tier == 0 ? 4 : 2; f.steps = tier == 0 ? 10 : tier == 1 ? 12 : 18; f.spotSamples = tier == 0 ? 3 : tier == 1 ? 4 : 6;
             f.debug = DebugView;
-            var p = profile;
+            var p = src.profile; var shafts = src.shafts;
             UpdateGround(cam.transform.position);
             float shadowDistance = GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset urp ? urp.shadowDistance : 150f;
             int cascades = GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset u2 ? u2.shadowCascadeCount : 1;
             float maxDist = p.stadium ? 220f : Mathf.Clamp(shadowDistance, 60f, 140f);
             f.medium = new Vector4(p.sigma * ReflexWeather.MediumScale, p.heightFalloff, groundY, maxDist);   // (WEATHER: rain and snow thicken the air)
             f.medium2 = new Vector4(0.6f, 0.55f, p.g, p.forward);
+            var ground = src.ground;
             f.dust = new Vector4(p.dust, 1f / Mathf.Max(p.dustHeight, 0.1f), Time.time * 0.02f, ground ? 1f : 0f);
-            f.groundRect = groundRect; f.groundTex = ground ? (Texture)ground : Texture2D.blackTexture;
+            f.groundRect = src.groundRect; f.groundTex = ground ? (Texture)ground : Texture2D.blackTexture;
             var sun = RenderSettings.sun;
             bool sunShadows = sun && sun.shadows != LightShadows.None && shadowDistance > 0f;
             float sg = p.sunScale * p.sunGain * ReflexWeather.SunScale;   // (WEATHER: the clouds dim the sun)
@@ -649,6 +685,14 @@ namespace Reflex.Port.Rendering
 
         public void ResetHistory() { historyValid = false; }
 
+        static bool EnsureHistory(ref RTHandle h, int w, int hgt, string name)
+        {
+            if (h != null && h.rt != null && h.rt.width == w && h.rt.height == hgt) return false;
+            h?.Release();
+            h = RTHandles.Alloc(w, hgt, GraphicsFormat.R16G16B16A16_SFloat, filterMode: FilterMode.Bilinear, wrapMode: TextureWrapMode.Clamp, name: name);
+            return true;
+        }
+
         class PassData
         {
             internal Material material; internal int pass; internal MaterialPropertyBlock mpb;
@@ -676,11 +720,13 @@ namespace Reflex.Port.Rendering
             int w = (W + s - 1) / s, h = (H + s - 1) / s;
             blockIndex = 0;
 
-            if (histA == null || histA.rt == null || histA.rt.width != w || histA.rt.height != h)
+            // the history pair: only the one written this frame must have this frame's size. The temporal pass samples last frame's by uv,
+            // so after a resolution change (DYNAMIC RESOLUTION) the other-sized history still serves: no restart of the accumulation.
+            flip = !flip;
+            ref RTHandle nextHist = ref (flip ? ref histA : ref histB), prevHist = ref (flip ? ref histB : ref histA);
+            if (EnsureHistory(ref nextHist, w, h, "Reflex volumetric history") && (prevHist == null || prevHist.rt == null))
             {
-                histA?.Release(); histB?.Release();
-                histA = RTHandles.Alloc(w, h, GraphicsFormat.R16G16B16A16_SFloat, filterMode: FilterMode.Bilinear, wrapMode: TextureWrapMode.Clamp, name: "Reflex volumetric history A");
-                histB = RTHandles.Alloc(w, h, GraphicsFormat.R16G16B16A16_SFloat, filterMode: FilterMode.Bilinear, wrapMode: TextureWrapMode.Clamp, name: "Reflex volumetric history B");
+                EnsureHistory(ref prevHist, w, h, "Reflex volumetric history");
                 historyValid = false;
             }
 
@@ -714,7 +760,6 @@ namespace Reflex.Port.Rendering
             if (!shadowTex.IsValid()) common.shadowPrm.x = 0f;
 
             var march = rg.CreateTexture(new TextureDesc(w, h) { colorFormat = GraphicsFormat.R16G16B16A16_SFloat, name = "Reflex volumetric march", filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp });
-            flip = !flip;
             var prevH = rg.ImportTexture(flip ? histB : histA);
             var nextH = rg.ImportTexture(flip ? histA : histB);
             if ((PassMask & 1) != 0) Add(rg, "Reflex volumetric march", PassMarch, march, common, depth, default, default, shadowTex.IsValid() ? shadowTex : default, AccessFlags.Write);

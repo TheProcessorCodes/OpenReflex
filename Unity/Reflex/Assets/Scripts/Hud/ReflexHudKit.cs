@@ -25,6 +25,8 @@ namespace Reflex.Port.Hud
         public static float Scale = 1f;
         /// HUD OPACITY as a factor: multiplies the alpha of every panel (HudRect.panel) and the gauge's back disc; text stays opaque.
         public static float PanelOpacity = 1f;
+        /// SPLIT SCREEN (w-split): the factor on HUD SCALE while two views are shown (ApplyScale).
+        public const float SplitScale = 0.7f;
 
         public static readonly Color White = new Color(0.97f, 0.97f, 0.96f, 1f);
         public static readonly Color Dim = new Color(0.97f, 0.97f, 0.96f, 0.62f);
@@ -57,8 +59,8 @@ namespace Reflex.Port.Hud
             return f ? f : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         }
 
-        /// The canvas on go: overlay, 1920 x 1080 reference scaled by height; returns the safe root.
-        public static RectTransform CreateCanvas(GameObject go, int sortingOrder, out Canvas canvas)
+        /// The canvas on go: overlay, 1920 x 1080 reference scaled by height; returns the safe root. half: HudSafeRoot.Init's (SPLIT SCREEN).
+        public static RectTransform CreateCanvas(GameObject go, int sortingOrder, out Canvas canvas, int half = 0)
         {
             canvas = go.GetComponent<Canvas>(); if (!canvas) canvas = go.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -71,14 +73,16 @@ namespace Reflex.Port.Hud
             var root = new GameObject("Safe", typeof(RectTransform)).GetComponent<RectTransform>();
             root.SetParent(go.transform, false);
             Stretch(root);
-            go.AddComponent<HudSafeRoot>().Init(root);
+            go.AddComponent<HudSafeRoot>().Init(root, half);
             return root;
         }
 
         /// HUD SCALE onto a canvas scaler (reference resolution / scale: a larger scale makes every unit bigger on screen).
         public static void ApplyScale(CanvasScaler scaler)
         {
-            float s = Mathf.Clamp(Scale, 0.5f, 2f);
+            // SPLIT SCREEN (w-split): a view is half the height, and the layout (the right column over the gauge, the countdown band) needs
+            // about 0.7 of it to fit: SplitScale while the screen is cut in two
+            float s = Mathf.Clamp(Scale, 0.5f, 2f) * (RxCore.RxSplitScreen.TwoViews ? SplitScale : 1f);
             var r = new Vector2(RefW / s, RefH / s);
             if (scaler.referenceResolution != r) scaler.referenceResolution = r;
         }

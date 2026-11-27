@@ -1,6 +1,9 @@
-// LIGHTING: ORIGINAL / ENHANCED (OPTIONS > VIDEO, ReflexSettings.Lighting; default ORIGINAL). Not part of the original renderer.
+// The game's lighting: ENHANCED, the only lighting a player gets since 2026-11-09 (the user's decision; before, OPTIONS > VIDEO had
+// LIGHTING: ORIGINAL / ENHANCED with ORIGINAL the default). Not part of the original renderer.
 //
-// ORIGINAL is the port of the original renderer pass for pass (_re/notes/render-pipeline.md) and this component changes nothing of it.
+// ORIGINAL, the port of the original renderer pass for pass (_re/notes/render-pipeline.md; this component changes nothing of it), is
+// kept as a developer path only: REFLEX_LIGHTING=original at start, or Override = 0 (the tests, the bench and the lighting showcase
+// compare against it). LIGHTING QUALITY (OPTIONS > VIDEO, ReflexSettings.EnhancedQuality) sets ENHANCED's cost.
 // ENHANCED, live while a level runs (OriginalLevel adds this to the game camera next to ReflexRenderPipeline):
 //   shadows   real-time sun shadows from the level's own sun: 2 / 4 cascades over 70 / 110 / 150 m (2048 px) by SHADOW QUALITY (LOW / MEDIUM / HIGH),
 //             soft filtering, Unity's stable (texel-snapped) cascade fit; the static scenery casts too (in ORIGINAL only the dynamic
@@ -25,12 +28,13 @@ namespace Reflex.Port.Rendering
     [RequireComponent(typeof(Camera))]
     public sealed class ReflexEnhancedLighting : MonoBehaviour
     {
-        /// Tests: forces the mode (0 ORIGINAL, 1 ENHANCED; -1: the option). REFLEX_LIGHTING=original|enhanced sets it at start.
+        /// Developers / tests only: forces the mode (0 ORIGINAL, 1 ENHANCED; -1: ENHANCED, what every player gets).
+        /// REFLEX_LIGHTING=original|enhanced sets it at start. No player option reads or writes it.
         public static int Override = -1;
-        /// The mode the option asks for (OPTIONS > VIDEO > LIGHTING).
-        public static bool Requested => Override >= 0 ? Override == 1 : Options.ReflexSettings.Lighting == 1;
-        /// The quality tier: ENHANCED QUALITY (OPTIONS > VIDEO) when chosen, else AUTO: SHADOW QUALITY (graphics.cfg ShadowQuality 0..2) at most
-        /// AutoTier (what the GPU suits); tests: REFLEX_LIGHTING_TIER.
+        /// ENHANCED is drawn: always, but for the developer override (and edit-mode tests, which compare the original renderer).
+        public static bool Requested => Override >= 0 ? Override == 1 : Application.isPlaying;
+        /// The quality tier: LIGHTING QUALITY (OPTIONS > VIDEO) when chosen, else AUTO: SHADOW QUALITY (graphics.cfg ShadowQuality 0..2) at most
+        /// AutoTier (what the GPU suits), so a weak GPU is never put on HIGH; tests: REFLEX_LIGHTING_TIER.
         public static int Tier
         {
             get
@@ -43,7 +47,7 @@ namespace Reflex.Port.Rendering
             }
         }
         /// The ENHANCED tier this machine's GPU suits (AUTO): integrated graphics or under 3 GB of video memory LOW, under 6 GB MEDIUM,
-        /// else HIGH (a discrete 6 GB+ card, Apple silicon). An estimate from SystemInfo only; ENHANCED QUALITY overrides it.
+        /// else HIGH (a discrete 6 GB+ card, Apple silicon). An estimate from SystemInfo only; LIGHTING QUALITY overrides it.
         public static int AutoTier
         {
             get
@@ -203,7 +207,8 @@ namespace Reflex.Port.Rendering
             {
                 if (r.shadowCastingMode != ShadowCastingMode.Off) continue;
                 var m = r.sharedMaterial;
-                if (!m || m.shader != scenery || m.renderQueue >= 2450 || !m.HasProperty("_ZWrite") || m.GetFloat("_ZWrite") < 0.5f) continue;
+                bool imported = m && m.HasProperty("_ReflexLit") && m.GetFloat("_ReflexLit") > .5f;
+                if (!m || (!imported && (m.shader != scenery || m.renderQueue >= 2450)) || m.renderQueue >= 3000 || !m.HasProperty("_ZWrite") || m.GetFloat("_ZWrite") < 0.5f) continue;
                 r.shadowCastingMode = ShadowCastingMode.On;
                 casters.Add(r);
             }

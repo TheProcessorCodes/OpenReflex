@@ -233,6 +233,12 @@ namespace Reflex.Port.Content
                 if (file == null || !RxFiles.Exists(file)) { _dbs[name] = null; return null; }
                 d = new Database { name = name, baseName = baseName, dir = dir, mod = nameSpace != null, extracted = extracted };
                 var root = Bxml(RxFiles.ReadAllBytes(file));
+                string assetSource = root.S("assetSource");
+                if (assetSource != null) {
+                    Check(assetSource.Length > 0 && assetSource.Length <= 128, "invalid assetSource");
+                    foreach (char c in assetSource) Check(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_', "invalid assetSource");
+                    d.baseName = assetSource;
+                }
                 foreach (var pn in root.All())
                 {
                     if (pn.tag != "Package") continue;
@@ -444,6 +450,7 @@ namespace Reflex.Port.Content
             public Vector2[] uv0, uv1;
             public Color32[] colors;       // D3DCOLOR (usage 10) when declared (scenery vertex colours; alpha = vertex alpha), else null
             public Vector3[] tangents;     // FLOAT3 tangents (usage 6) when declared, else null
+            public float[] tangentW;       // a .rxmod mesh's tangent handedness (-1: a mirrored UV island) when it has one (RxModBikes.ParseMesh), else null: every w is 1
             public int[] bones;      // 4 per vertex: node indices of the model (through the bone palette), -1 unused
             public float[] weights;  // 4 per vertex
             public int[] strip;
@@ -704,8 +711,28 @@ namespace Reflex.Port.Content
                 for (int l = 0; l < t.mips.Count; l++) { int lw = Math.Max(1, w >> l), lh = Math.Max(1, h >> l); FlipBlocks(t.mips[l], lw, lh, false); t.mips[l] = DecodeBlocks(t.mips[l], lw, lh, Dxt1); }
                 t.raw = false; t.format = TextureFormat.RGBA32; t.alpha = true;
             }
-            if (t.raw && (w % 4 != 0 || h % 4 != 0)) return null;
+            // block data goes to the GPU only when every level can be turned upside down as blocks: the first level's size a multiple
+            // of 4 (the GPU's rule), and no level over 4 texels tall whose height is not a multiple of 4 (its last block row is partly
+            // filled: swapped to the top, every row of the level moved up by the missing ones; 34 textures of the game, e.g. the 60 x 100
+            // SpotLightTrailer_LightBeams from its 30 x 50 level, NAT_ST_Rut_Rock 1024 x 768 at 8 x 6). Any other is decoded, every level.
+            if (t.raw && !FlipsAsBlocks(w, h, t.mips.Count))
+            {
+                for (int l = 0; l < t.mips.Count; l++)
+                {
+                    int lw = Math.Max(1, w >> l), lh = Math.Max(1, h >> l);
+                    FlipBlocks(t.mips[l], lw, lh, fmt == Dxt5);   // (back to the file's row order: the flip is its own inverse)
+                    t.mips[l] = DecodeBlocks(t.mips[l], lw, lh, fmt);
+                }
+                t.raw = false; t.format = TextureFormat.RGBA32;
+            }
             return t;
+        }
+
+        static bool FlipsAsBlocks(int w, int h, int levels)
+        {
+            if (w % 4 != 0 || h % 4 != 0) return false;
+            for (int l = 1; l < levels; l++) { int lh = Math.Max(1, h >> l); if (lh > 4 && lh % 4 != 0) return false; }
+            return true;
         }
 
         static bool PunchThrough(byte[] d)

@@ -39,15 +39,19 @@ namespace Reflex.Port.OpenFrontEnd
         /// RESTORATION (w-fresnob): an event on a level cut from the original game (ReflexEvents.Restored), listed under RESTORED.
         public bool Restored => mod == null && ev.restored;
         /// A converted MX vs ATV Alive level's event: its Free Ride, or its AI race (PORT ADDITION, w-aliveai).
+        public bool Unleashed => mod == null && ev != null && UnleashedLevels.Is(ev.location);
         public bool Alive => mod == null && (freeRide || ev.aliveRace) && AliveLevels.Is(ev.location);
         /// MODS/TRACKS (Content/TrackMods.cs): the custom track of the event (Mods/Tracks), null for the original's.
         public TrackMod mod;
         public bool Custom => mod != null;
+        /// A track the MX vs ATV Untamed importer made (Content/UntamedImport: Mods/Tracks/Untamed/<track>): a custom track on disk, listed
+        /// in the browser's own MX vs ATV Untamed section instead of CUSTOM TRACKS.
+        public bool Untamed => mod != null && OpenContent.IsUntamed(mod);
         /// A custom track that cannot be ridden (files missing, an archive to extract): listed with the reason, never started.
         public bool Broken => mod != null && !mod.Ok;
         /// What the cards and pages show after the type and the name: the level ("NAT_CONCORD"), a custom track's kind and author.
         public string Where => mod == null ? ev.location.ToUpperInvariant()
-            : (Broken ? (mod.archive ? ArchiveBadge(mod) : "BROKEN") : "CUSTOM  ·  " + mod.kindLabel) + (string.IsNullOrEmpty(mod.author) ? "" : "  ·  BY " + mod.author.ToUpperInvariant());
+            : (Broken ? (mod.archive ? ArchiveBadge(mod) : "BROKEN") : (Untamed ? "UNTAMED  ·  " : "CUSTOM  ·  ") + mod.kindLabel) + (Untamed || string.IsNullOrEmpty(mod.author) ? "" : "  ·  BY " + mod.author.ToUpperInvariant());
         /// A downloaded archive's state (Content/TrackArchives.cs): INSTALLING while the game extracts it, CANNOT INSTALL (the reason in its
         /// description), ARCHIVE before its install starts.
         public static string ArchiveBadge(TrackMod m) => m.archiveState == "installing" ? "INSTALLING" : m.archiveState == "failed" ? "CANNOT INSTALL" : "ARCHIVE";
@@ -157,19 +161,27 @@ namespace Reflex.Port.OpenFrontEnd
         static OpenEvent CustomEvent(ReflexEvents.Event e, TrackMod m, string desc, int n)
         {
             string activity = e.spec.type;
+            bool untamed = IsUntamed(m);
+            string name = m.name ?? m.level ?? "";
+            if (untamed && name.EndsWith(UntamedSuffix, StringComparison.OrdinalIgnoreCase)) name = name.Substring(0, name.Length - UntamedSuffix.Length);   // (its section says it)
             var oe = new OpenEvent
             {
                 ev = e, key = e.key, activity = activity, typeId = e.spec.typeId, freeRide = activity == "FreeRide", mod = m,
                 typeName = Str("STR_MXACTIVITYTYPE_" + activity.ToUpperInvariant(), (e.typeName ?? activity)).ToUpperInvariant(),
-                locationName = (m.name ?? m.level ?? "").ToUpperInvariant(), description = desc,
-                order = 50000 + n * 10 + (activity == "FreeRide" ? 0 : 1), group = CustomGroup,
+                locationName = name.ToUpperInvariant(), description = desc,
+                order = 50000 + n * 10 + (activity == "FreeRide" ? 0 : 1), group = untamed ? UntamedGroup : CustomGroup,
             };
             if (TypeTexts.TryGetValue(activity, out var tt)) { oe.typeDescription = Str(tt.desc, ""); oe.typeVehicles = Str(tt.vehicles, ""); }
-            oe.haystack = string.Join(" ", oe.typeName, oe.locationName, m.level, m.id, m.author, m.kindLabel, activity, "custom mod mods track", m.Ok ? "" : "broken").ToLowerInvariant();
+            oe.haystack = string.Join(" ", oe.typeName, oe.locationName, m.level, m.id, m.author, m.kindLabel, activity, untamed ? "untamed mx vs atv untamed" : "custom mod mods track", m.Ok ? "" : "broken").ToLowerInvariant();
             return oe;
         }
         /// The browser group of the custom tracks (OpenShell.Browser's CUSTOM TRACKS filter; never an event type of Types).
         public const string CustomGroup = "*custom";
+        /// The browser group of the imported MX vs ATV Untamed tracks (OpenShell.Browser's MX vs ATV Untamed filter).
+        public const string UntamedGroup = "*untamed";
+        const string UntamedSuffix = " (Untamed)";   // the importer's mod.ini name: "<track> (Untamed)" (UxPackage.MenuName)
+        /// A custom track in the importer's folder, Mods/Tracks/Untamed/ (UntamedImporter.TracksSubfolder).
+        public static bool IsUntamed(TrackMod m) => m?.id != null && m.id.StartsWith(Reflex.Port.Content.UntamedImport.UntamedImporter.TracksSubfolder + "/", StringComparison.OrdinalIgnoreCase);
 
         /// The install's events (cached until Reset).
         static List<OpenEvent> BaseEvents()
@@ -230,6 +242,8 @@ namespace Reflex.Port.OpenFrontEnd
         /// "NAT_Concord" -> "CONCORD", "SX_FreightYardB" -> "FREIGHT YARD B" (a location the tables do not name).
         static string LocationFallback(string level)
         {
+            string unleashed = UnleashedLevels.Get(level)?.display_name;
+            if (unleashed != null) return unleashed;
             string alive = AliveLevels.DisplayName(level);
             if (alive != null) return alive;
             string s = level; int us = s.IndexOf('_'); if (us >= 0) s = s.Substring(us + 1);
@@ -350,7 +364,16 @@ namespace Reflex.Port.OpenFrontEnd
         {
             pending = false;
             if (ev == null) return null;
-            if (ev.mod != null) return TrackMods.Thumbnail(ev.mod);   // a custom track: its own picture (Mods/Tracks), or none
+            if (ev.mod != null)
+            {   // a custom track: its own picture (Mods/Tracks); without one, the top-down picture the game draws of it (Content/TrackPictures.cs:
+                // made on a worker, so a caller that cannot wait gets it on a later call), or none
+                var own = TrackMods.Thumbnail(ev.mod);
+                if (own) return own;
+                var drawn = TrackPictures.Card(ev.mod, out bool drawing);
+                pending = later && drawing;
+                return drawn;
+            }
+            if (ev.ev != null && UnleashedLevels.Is(ev.ev.location)) return UnleashedLevels.Picture(ev.ev.location);
             if (ev.ev != null && AliveLevels.Is(ev.ev.location)) return AlivePreview(ev.ev.location);   // an Alive level: Alive's own picture
             Texture2D best = null;
             if (later)
@@ -371,7 +394,9 @@ namespace Reflex.Port.OpenFrontEnd
         public static Texture2D MapPicture(OpenEvent ev)
         {
             if (ev == null) return null;
+            if (ev.ev != null && UnleashedLevels.Is(ev.ev.location)) return UnleashedLevels.Picture(ev.ev.location, true);
             if (ev.mod == null && ev.ev != null && AliveLevels.Is(ev.ev.location)) return AlivePicture(ev.ev.location, true);
+            if (ev.mod != null && TrackPictures.Map(ev.mod, out _) is Texture2D line && line) return line;   // a custom track: its race line, drawn (Content/TrackPictures.cs)
             return Icon(ev.mapIcon);
         }
 
@@ -380,7 +405,14 @@ namespace Reflex.Port.OpenFrontEnd
         {
             pending = false;
             if (ev == null) return null;
+            if (ev.ev != null && UnleashedLevels.Is(ev.ev.location)) return UnleashedLevels.Picture(ev.ev.location, true);
             if (ev.mod == null && ev.ev != null && AliveLevels.Is(ev.ev.location)) return AlivePicture(ev.ev.location, true);
+            if (ev.mod != null)
+            {   // a custom track: its race line, drawn on a worker the first time (Content/TrackPictures.cs)
+                var line = TrackPictures.Map(ev.mod, out pending);
+                if (pending) return null;
+                if (line) return line;
+            }
             return IconLater(ev.mapIcon, out pending);
         }
 
@@ -450,6 +482,7 @@ namespace Reflex.Port.OpenFrontEnd
         /// then cached). Null when the tables have no picture. Set it with OpenBackdrop.Apply to get the slow drift.
         public static Texture2D Backdrop(OpenEvent ev)
         {
+            if (ev?.mod != null && !TrackMods.Thumbnail(ev.mod)) return null;   // (a custom track's drawn top-down picture is the browser's, never a full-screen backdrop)
             var src = Picture(ev);
             if (!src) return null;
             int id = src.name.StartsWith("ou_icon") && int.TryParse(src.name.Substring(7), out int n) ? n : src.name.GetHashCode();
@@ -464,6 +497,7 @@ namespace Reflex.Port.OpenFrontEnd
         /// The vehicle type's name (VehicleType.Name, "STR_VEHICLE_ATV" -> ATV).
         public static string VehicleTypeName(int typeId)
         {
+            if (OpenSetup.OwnTypeOf(typeId) is OpenSetup.OwnType own) return own.name;   // (an Alive class: "50CC")
             var r = FeTables.Shared.Rows("VehicleType").FirstOrDefault(x => FeTables.I(x, "VehicleTypeId") == typeId);
             string s = Str(FeTables.S(r, "Name"), null);
             if (string.IsNullOrEmpty(s) || s.StartsWith("STR_")) s = typeId switch { 2 => "MX LITE", 3 => "MX", 4 => "ATV", 11 => "UTV", 12 => "SUPER BUGGY", 14 => "PRO LITE", 15 => "PRO 2", _ => "TYPE " + typeId };
@@ -508,8 +542,17 @@ namespace Reflex.Port.OpenFrontEnd
         /// any setup page, ReflexWeather.DefaultSetting / DefaultIntensity), else 0 CLEAR, 1 RAIN, 2 SNOW, 3 DYNAMIC and 0 LIGHT, 1 MEDIUM, 2 HEAVY.
         /// PRACTICE always rides CLEAR.
         public int weather = -1, weatherIntensity = -1;
+        /// SPLIT SCREEN (w-split, RxCore/RxSplitScreen.cs): a second local rider, the screen cut in two, when a controller joined as player 2 on the
+        /// setup page's PLAYERS tab (OpenShell.Setup.cs; for the whole session, not saved per event). PRACTICE too (only player 1's laps are timed,
+        /// kept and posted: the core's lap log follows player 1); not with the tab hidden.
+        public bool SplitScreen => Reflex.Port.Options.ReflexSettings.PlayersTab && Reflex.Port.OriginalWorld.LocalGamepadRouting.Player2Pad != null;
         public int Weather => practice ? 0 : weather >= 0 ? Mathf.Clamp(weather, 0, 3) : Reflex.Port.Rendering.ReflexWeather.DefaultSetting;
         public int WeatherIntensity => weatherIntensity >= 0 ? Mathf.Clamp(weatherIntensity, 0, 2) : Reflex.Port.Rendering.ReflexWeather.DefaultIntensity;
+
+        /// ONLINE: this setup keeps the event's own vehicle and class lists whatever ANY VEHICLE ON ANY TRACK says (OpenHistory.OnlineSetupOf:
+        /// online play is as it was, the host's VEHICLES rule decides there). Not saved.
+        [NonSerialized] public bool ownLists;
+        bool Any(ReflexEvents.Event e) => !ownLists && AnyVehicle(e);
 
         public OpenSetup Clone() => (OpenSetup)MemberwiseClone();
 
@@ -568,15 +611,78 @@ namespace Reflex.Port.OpenFrontEnd
             return i >= 0 ? d[i] : 0;
         }
 
-        /// The vehicle types the event's raceable classes have (Vehicle Select's order), each with a rider to race it.
-        public static List<int> VehicleTypes(ReflexEvents.Event e)
+        // ---------------------------------------------------------------------------------------- the Alive classes of their own
+        /// ALIVE CLASSES (core/plan/ALIVE_BIKES.md): an imported Alive vehicle on physics of its own (the 50cc, the MXFR650, the ATV 1000) is a
+        /// VEHICLE choice of its own on the setup page: id OwnTypeBase + its index, raced in its base model's slot (the Reflex vehicle it is drawn
+        /// over: its VehicleType's classes, the player's PlayerVehicle of that model, else a pro's vehicle of the model under the player's rider)
+        /// with that .rxmod bike forced for the ride (BikeMods.RideModel / RideMod), so its own physics and board come along.
+        public const int OwnTypeBase = 1000;
+        public sealed class OwnType { public int id, baseType, model; public string modId, name; }
+        static List<OwnType> s_own; static object s_ownFor;
+        public static List<OwnType> OwnTypes()
+        {
+            if (s_own != null && ReferenceEquals(s_ownFor, BikeMods.All)) return s_own;
+            var o = new List<OwnType>();
+            try
+            {
+                foreach (var m in BikeMods.All.Where(m => m.rx != null && m.rx.type == "bikes").OrderBy(m => m.id, StringComparer.Ordinal))
+                    foreach (var b in BikeMods.Bikes(m).Where(b => b.physicsClass >= 0 && !string.IsNullOrEmpty(b.garageClass) && b.sharedInto == null))   // (a shared bike joined into another: that one's)
+                    {
+                        int type = FeTables.I(RowIndex.First(FeTables.Shared.Rows("VehicleModel"), "VehicleModelId", b.vehicleModelId), "VehicleTypeId");
+                        if (type < 0 || o.Any(x => x.model == b.vehicleModelId)) continue;
+                        o.Add(new OwnType { id = OwnTypeBase + o.Count, baseType = type, model = b.vehicleModelId, modId = m.id, name = b.garageClass });
+                    }
+            }
+            catch (Exception ex) { Debug.LogWarning("[Setup] Alive classes: " + ex.Message); }
+            s_ownFor = BikeMods.All; return s_own = o;
+        }
+        public static OwnType OwnTypeOf(int type) => type >= OwnTypeBase ? OwnTypes().FirstOrDefault(x => x.id == type) : null;
+        /// The game's VehicleType a choice rides (an Alive class's: its base model's type).
+        public static int BaseType(int type) => OwnTypeOf(type)?.baseType ?? type;
+
+        // ---------------------------------------------------------------------------------------- ANY VEHICLE ON ANY TRACK
+        /// ANY VEHICLE ON ANY TRACK (core/plan/ANY_VEHICLE.md, after Open Unleashed's MACHINES ON ANY TRACK, MxaAnyTrack.cs): with the option on
+        /// (ReflexSettings.AnyVehicle, ON by default; the open core only) the setup of an arcade event offers every vehicle the port drives
+        /// (VehicleTypes) and every class it races (Classes), not only the event type's own (EventTypeVehicleClasses). Single player: the
+        /// career, the challenges, the tutorials, the test ride, the party modes and online play keep the original's lists.
+        public static bool AnyVehicle(ReflexEvents.Event e) => Reflex.Port.Options.ReflexSettings.AnyVehicle && AnyVehicleCould(e);
+        /// The event is one the option applies to (whatever the option says).
+        public static bool AnyVehicleCould(ReflexEvents.Event e) => e != null && Core
+            && string.IsNullOrEmpty(e.spec.activation) && e.spec.type != "Tag" && e.spec.type != "PokerRace" && e.spec.type != "Snake" && e.spec.type != "Infection" && ReflexEvents.RunnableActivities.Contains(e.spec.type);
+
+        /// The vehicle types the event type itself offers (the original's list: its raceable classes' types; Free Ride: every type).
+        static List<int> EventTypesOf(ReflexEvents.Event e)
+        {
+            var types = e.vehicleClasses.SelectMany(ReflexAtv.TypesOfClass).Distinct().ToList();
+            if (types.Count == 0 && ReflexEvents.RulelessActivities.Contains(e.spec.type)) types = ReflexEvents.DrawableVehicleTypes.ToList();   // free ride: any vehicle
+            return types;
+        }
+        /// The event type itself offers this VEHICLE choice (an Alive class: its base model's type).
+        public static bool EventHasType(ReflexEvents.Event e, int type) => e != null && EventTypesOf(e).Contains(BaseType(type));
+
+        /// The setup rides a vehicle type or a class the event type never offered (ANY VEHICLE): the event keeps no offline records, best laps or
+        /// highlights and its laps are not kept or posted (RxAnyVehicle, the core's rx_session_set_any_vehicle). Never a Free Ride (no rules).
+        public bool OffEvent(ReflexEvents.Event e)
+        {
+            if (e == null || !Rules(e) || !Any(e)) return false;
+            if (!EventHasType(e, Type(e))) return true;
+            int cls = Class(e);
+            return cls >= 0 && !e.vehicleClasses.Contains(cls);
+        }
+
+        /// The event type's own vehicle types (the original's list, whatever ANY VEHICLE says): the boards an event has.
+        public static List<int> EventVehicleTypes(ReflexEvents.Event e) => VehicleTypes(e, false);
+        /// The vehicle types the setup offers, each with a rider to race it (Vehicle Select's order): the event's raceable classes' types; with
+        /// ANY VEHICLE every type the port drives.
+        public static List<int> VehicleTypes(ReflexEvents.Event e) => VehicleTypes(e, AnyVehicle(e));
+        static List<int> VehicleTypes(ReflexEvents.Event e, bool any)
         {
             var o = new List<int>();
             if (e == null) return o;
-            var types = e.vehicleClasses.SelectMany(ReflexAtv.TypesOfClass).Distinct().ToList();
-            if (types.Count == 0 && ReflexEvents.RulelessActivities.Contains(e.spec.type)) types = ReflexEvents.DrawableVehicleTypes.ToList();   // free ride: any vehicle
+            var types = any ? ReflexEvents.DrawableVehicleTypes.ToList() : EventTypesOf(e);
             foreach (int t in ReflexEvents.DrawableVehicleTypes)
                 if (types.Contains(t) && Riders(e, t).Count > 0) o.Add(t);
+            if (Core) foreach (var x in OwnTypes()) if (types.Contains(x.baseType)) o.Add(x.id);   // (ALIVE CLASSES: after the game's types)
             return o;
         }
 
@@ -621,13 +727,26 @@ namespace Reflex.Port.OpenFrontEnd
         }
         public int Type(ReflexEvents.Event e)
         {
-            var ts = VehicleTypes(e);
+            var ts = VehicleTypes(e, Any(e));
             if (vehicleType >= 0 && ts.Contains(vehicleType)) return vehicleType;
             int d = DefaultType(e);
             return ts.Contains(d) || ts.Count == 0 ? d : ts[0];
         }
         /// LocationSelect's classes for the type (the first is its default).
-        public int[] Classes(ReflexEvents.Event e) => e == null || !Rules(e) ? new int[0] : MixedFirst(e, e.ClassesFor(Type(e)));
+        /// ANY VEHICLE: after the event's own classes for the type come the game's other classes with the type (fewest vehicle types first: its
+        /// Single class, so the default field of a vehicle the event never had rides what the player rides), then every other class the port
+        /// races (the field alone rides those: MXUIManager_AddAIRiderOfClass draws each AI rider's vehicle from the class's types).
+        public int[] Classes(ReflexEvents.Event e)
+        {
+            if (e == null || !Rules(e)) return new int[0];
+            int type = BaseType(Type(e));
+            var own = MixedFirst(e, e.ClassesFor(type));
+            if (!Any(e)) return own;
+            var all = ReflexEvents.RaceableClasses.Where(c => !own.Contains(c)).Select(c => (c, ts: ReflexAtv.TypesOfClass(c))).ToList();
+            var with = all.Where(x => x.ts.Contains(type)).Select(x => (x.c, n: x.ts.Length)).ToList();
+            FeTables.LuaSort(with, (a, b) => a.n < b.n);   // (LocationSelect's order, as ClassesFor)
+            return own.Concat(with.Select(x => x.c)).Concat(all.Where(x => !x.ts.Contains(type)).Select(x => x.c)).ToArray();
+        }
 
         /// OMNICROSS (Terracross) is the original's every-vehicle race (STR_TERRACROSS_VEHICLES: ATV, MX, MX Lite, UTV, Sport Truck, Sport
         /// Buggy, Sport 2 Truck), but LocationSelect's first class for a vehicle is its own Single class, so the field is all the player's
@@ -653,6 +772,7 @@ namespace Reflex.Port.OpenFrontEnd
         public static List<(int id, string name)> Riders(ReflexEvents.Event e, int type)
         {
             var o = new List<(int, string)>();
+            if (OwnTypeOf(type) != null) { o.Add((-1, "YOUR RIDER")); return o; }   // (an Alive class: your rider, the pros have none)
             if (Core ? OwnedVehicle(type) >= 0 : type == ReflexEvents.DefaultVehicleType && (e == null || !e.MachineOnly)) o.Add((-1, "YOUR RIDER"));
             var t = FeTables.Shared;
             var veh = t.Rows("AIRiderVehicle");
@@ -683,11 +803,19 @@ namespace Reflex.Port.OpenFrontEnd
             if (e == null) return null;
             int type = Type(e), cls = Class(e), who = Rider(e);
             if (!Rules(e)) cls = -1;
+            var ownType = OwnTypeOf(type);
+            if (ownType != null)
+            {   // an Alive class: the player's own vehicle of the base model, else a pro's vehicle of that model ridden by the player's rider
+                int pv = OpenGarageData.PlayerVehicleOfModel(ownType.model);
+                if (pv >= 0) return new ReflexWorldFiles.Garage { riderOwner = ReflexWorldFiles.Garage.Player1, riderId = 0, vehicleOwner = ReflexWorldFiles.Garage.Player1, vehicleId = pv, vehicleTypeId = ownType.baseType, vehicleClass = cls };
+                var ai = RowIndex.All(FeTables.Shared.Rows("AIVehicle"), "VehicleModelId", ownType.model).FirstOrDefault();
+                if (ai != null) return new ReflexWorldFiles.Garage { riderOwner = ReflexWorldFiles.Garage.Player1, riderId = 0, vehicleOwner = ReflexWorldFiles.Garage.AI, vehicleId = FeTables.I(ai, "AIVehicleId", -1), vehicleTypeId = ownType.baseType, vehicleClass = cls };
+            }
             if (Core && !ExplicitChoice)
             {
                 // A class-only choice preserves the saved rider, model, parts and tuning.
                 // Keep it non-null for machine events so their legacy pro-rider fallback cannot replace it.
-                if (e.MachineOnly && type != ProfileType()) return e.GarageFor(type, cls);
+                if (e.MachineOnly && type != ProfileType()) return GarageOfType(e, type, cls);
                 return cls >= 0 && (e.MachineOnly || cls != e.spec.vehicleClass) ? new ReflexWorldFiles.Garage { vehicleClass = cls, vehicleTypeId = type } : null;
             }
             if (Core && who < 0)
@@ -702,13 +830,23 @@ namespace Reflex.Port.OpenFrontEnd
             var t = FeTables.Shared;
             var r = RowIndex.First(t.Rows("AIRider"), "AIRiderId", who);
             var v = RowIndex.All(t.Rows("AIRiderVehicle"), "AIRiderId", who).FirstOrDefault(x => FeTables.I(x, "VehicleTypeId") == type);
-            if (r == null || v == null) return e.GarageFor(type, cls);
+            if (r == null || v == null) return GarageOfType(e, type, cls);
             return new ReflexWorldFiles.Garage
             {
                 riderOwner = ReflexWorldFiles.Garage.AI, riderId = who, riderGearSet = FeTables.I(r, "DefaultRiderGearSetId", -1),
                 vehicleOwner = ReflexWorldFiles.Garage.AI, vehicleId = FeTables.I(v, "AIVehicleId", -1), vehicleTypeId = type,
                 vehicleClass = !Rules(e) ? -1 : cls >= 0 ? cls : ReflexAtv.ClassFor(e.spec.typeId, type),   // LaunchGarage(rulesAvailable ? VehicleClass : -1)
             };
+        }
+
+        /// Event.GarageFor (Vehicle Select's first pro with a vehicle of the type) for any type and class: ANY VEHICLE's too.
+        static ReflexWorldFiles.Garage GarageOfType(ReflexEvents.Event e, int type, int cls)
+        {
+            var g = e.GarageFor(type, cls);
+            if (g != null || !AnyVehicle(e)) return g;
+            g = ReflexAtv.DefaultGarage(e.spec.typeId, type);
+            if (g != null && cls >= 0) g.vehicleClass = cls;
+            return g;
         }
 
         public int Ai(ReflexEvents.Event e) => Rules(e) && !practice ? Mathf.Clamp(ai, 0, ReflexWorldFiles.AiSkills.Length) : 0;   // (practice: you alone)
@@ -742,13 +880,19 @@ namespace Reflex.Port.OpenFrontEnd
             var e = Event; if (e == null) return;
             if (LaunchOverride != null) { LaunchOverride(this); return; }
             var g = Garage(e);
+            var own = OwnTypeOf(Type(e));   // ALIVE CLASSES: the ride's bike forced for this launch (cleared again when the front end comes back)
+            BikeMods.RideModel = own != null ? own.model : -1; BikeMods.RideMod = own?.modId;
+            if (own != null) Debug.Log($"[OpenReflex] {own.name}: {own.modId} in model {own.model}'s slot");
             Debug.Log("[OpenReflex] launching " + e.key + " AI " + Ai(e) + (Ai(e) > 0 ? ", riders " + LaunchRiders(e) : "") + ", duration " + EventDuration(e) + " " + e.spec.durationType + (g != null ? ", vehicle select: " + g : ""));
             int ms = MapScalePercent(e);
             float mapBase = MapScaleBase(e);   // BASE SCALE: the track's default (an Alive race level's); the row's percent is relative to it
             if (ms != Reflex.Port.RxCore.RxMapScale.DefaultPercent) Debug.Log($"[OpenReflex] MAP SCALE {ms} % of the track's default ({e.location}{(mapBase != 1f ? ", its default " + Reflex.Port.RxCore.RxMapScale.Percent(mapBase) + " %" : "")}): the track is scaled; offline records, best laps and highlights are not kept for this event");
             else if (mapBase != 1f) Debug.Log($"[OpenReflex] MAP SCALE: {e.location} rides at its default, {Reflex.Port.RxCore.RxMapScale.Percent(mapBase)} % of the original (records kept)");
             if (practice) Debug.Log("[OpenReflex] PRACTICE: an endless lap race, you alone");
-            ReflexEventSelect.Launch(e.key, Ai(e), true, "Reflex", EventDuration(e), g, Reflex.Port.RxCore.RxMapScale.FromPercent(ms, mapBase), practice, LaunchRiders(e), Weather, WeatherIntensity);
+            if (SplitScreen) Debug.Log("[OpenReflex] SPLIT SCREEN: two local riders (the second on the second pad)");
+            bool off = OffEvent(e);   // ANY VEHICLE (core/plan/ANY_VEHICLE.md)
+            if (off) Debug.Log($"[OpenReflex] ANY VEHICLE: {OpenContent.VehicleTypeName(Type(e))} in class {OpenContent.ClassName(Class(e))} is not one of {e.spec.type}'s own; offline records, best laps and highlights are not kept, laps are not posted");
+            ReflexEventSelect.Launch(e.key, Ai(e), true, "Reflex", EventDuration(e), g, Reflex.Port.RxCore.RxMapScale.FromPercent(ms, mapBase), practice, LaunchRiders(e), Weather, WeatherIntensity, off, SplitScreen);
         }
     }
 

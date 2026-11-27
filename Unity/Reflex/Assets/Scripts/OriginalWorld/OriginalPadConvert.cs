@@ -28,14 +28,25 @@ namespace Reflex.Port.OriginalWorld
         public static ReflexPad Convert(Gamepad g, ushort buttons)
         {
             var l = g.leftStick.ReadUnprocessedValue(); var r = g.rightStick.ReadUnprocessedValue();
+            float lt = g.leftTrigger.ReadUnprocessedValue(), rt = g.rightTrigger.ReadUnprocessedValue();
+            // INVERT LEAN (Options/ReflexLeanInvert.cs): the stick axes that lean the rider, negated (off by default: untouched)
+            int invert = Reflex.Port.Options.ReflexLeanInvert.Mask(buttons, lt, rt);
+            if (invert != 0)
+            {
+                if ((invert & 1) != 0) l.x = -l.x; if ((invert & 2) != 0) l.y = -l.y;
+                if ((invert & 4) != 0) r.x = -r.x; if ((invert & 8) != 0) r.y = -r.y;
+            }
             return new ReflexPad
             {
                 buttons = buttons,
-                leftTrigger = Trigger(g.leftTrigger.ReadUnprocessedValue()),
-                rightTrigger = Trigger(g.rightTrigger.ReadUnprocessedValue()),
-                lx = Stick(l.x), ly = Stick(l.y), rx = Stick(r.x), ry = Stick(r.y)
+                leftTrigger = Trigger(lt),
+                rightTrigger = Trigger(rt),
+                // STICK RESPONSE (Options/ReflexStickResponse.cs): the player's dead zone, sensitivity and curve per stick (the defaults: untouched)
+                lx = Stick(Tuned(l.x, true)), ly = Stick(Tuned(l.y, true)), rx = Stick(Tuned(r.x, false)), ry = Stick(Tuned(r.y, false))
             };
         }
+
+        static float Tuned(float axis, bool left) => Reflex.Port.Options.ReflexStickResponse.Apply(axis, left ? Reflex.Port.Options.ReflexStickResponse.Left : Reflex.Port.Options.ReflexStickResponse.Right);
 
         /// -1..1 to XInput's sThumb (the Input System reports -32768 as -1 and +32767 as +1 for a 16-bit axis).
         public static short Stick(float v) => (short)Mathf.Clamp(Mathf.RoundToInt(v * 32767f), -32768, 32767);

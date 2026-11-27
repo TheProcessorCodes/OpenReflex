@@ -73,7 +73,7 @@ namespace Reflex.Port.Rendering
         public static void Cut(int frames = 2) { suppress = Mathf.Max(suppress, frames); }
 
         internal static ReflexCinematicSettings frame;   // this frame's, taken at BeginCamera (null: the pass is off)
-        static int suppress;
+        static int suppress, suppressFrame = -1;
         static Material material;
         static Texture2D dirt;
         static readonly List<MaterialPropertyBlock> blocks = new List<MaterialPropertyBlock>();
@@ -94,15 +94,19 @@ namespace Reflex.Port.Rendering
         static float vDofZone, vDofZoneNear;
 
         /// Called from ReflexRenderPipeline.OnBegin for the game camera, after the original post pass is queued.
-        internal static void BeginCamera(ScriptableRenderer renderer, Camera cam)
+        /// SPLIT SCREEN (w-split): `own` = the second view's pipeline, which draws `ownSettings` (its SPEED BLUR shutter, null: none) instead of Current.
+        internal static void BeginCamera(ScriptableRenderer renderer, Camera cam, bool own = false, ReflexCinematicSettings ownSettings = null)
         {
-            var s = Override ?? Current;
+            var s = Override ?? (own ? ownSettings : Current);
             if (s != null && !s.Any) s = null;
             if (s == null) { frame = null; ReleaseIdle(); return; }
             if (!EnsureResources()) { frame = null; return; }
             idleFrames = 0;
-            if (suppress > 0 && (s.motionBlur)) { s = s.Clone(); s.motionBlur = false; }
-            if (suppress > 0) suppress--;
+            // (SPLIT SCREEN: the cut counts down once per Unity frame; the first view counts as ever, the second only in a frame the first
+            // drew no pass in (its rider too slow for SPEED BLUR), and it is cut in the frame the first counted to zero too)
+            bool counted = own && suppressFrame == Time.frameCount;
+            if ((suppress > 0 || counted) && (s.motionBlur)) { s = s.Clone(); s.motionBlur = false; }
+            if (suppress > 0 && !counted) { suppress--; suppressFrame = Time.frameCount; }
             frame = s;
             blockIndex = 0;
             var input = ScriptableRenderPassInput.None;

@@ -20,6 +20,10 @@ namespace Reflex.Port.Content.AliveImport
         public readonly List<AliveLevelSource> levels = new List<AliveLevelSource>();
         /// The Alive motorcycles found (AliveBikes.Find): the ones that ride as a Reflex bike are importable.
         public readonly List<AliveBikeSource> bikes = new List<AliveBikeSource>();
+        /// The Alive rider gear found (AliveBikes.FindGear): gear models with their pieces (helmets, goggles, suits, boots, neck braces).
+        public readonly List<AliveGearModel> gear = new List<AliveGearModel>();
+        /// The Alive engine sound sets the vehicles use (AliveEngineSounds.Find).
+        public readonly List<AliveEngineSoundSource> engineSounds = new List<AliveEngineSoundSource>();
         public readonly List<Volume> volumes = new List<Volume>();
         public readonly List<string> warnings = new List<string>();
         /// Levels named from the game's own tables found in the sources (the others carry the built-in names).
@@ -126,6 +130,14 @@ namespace Reflex.Port.Content.AliveImport
             try { r.bikes.AddRange(AliveBikes.Find(r, cancel)); }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { r.warnings.Add("Bikes: " + ex.Message); }
+            status?.Invoke("Finding the rider gear");
+            try { r.gear.AddRange(AliveBikes.FindGear(r, cancel)); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { r.warnings.Add("Rider gear: " + ex.Message); }
+            status?.Invoke("Finding the engine sounds");
+            try { r.engineSounds.AddRange(AliveEngineSounds.Find(r, cancel)); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { r.warnings.Add("Engine sounds: " + ex.Message); }
             status?.Invoke("Finding the levels' pictures");
             var art = new Dictionary<string, Dictionary<string, AlivePictureRef>>();
             try { art = Pictures.Index(r.volumes, cancel); }

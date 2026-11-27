@@ -63,12 +63,12 @@ namespace Reflex.Port.Hud
         const int TLabel = ReflexHudKit.TypeLabel, TBody = ReflexHudKit.TypeBody;
         static readonly Vector2 TL = new Vector2(0, 1), TR = new Vector2(1, 1), TC = new Vector2(0.5f, 1), BL = Vector2.zero, BR = new Vector2(1, 0), BC = new Vector2(0.5f, 0), MC = new Vector2(0.5f, 0.5f), ML = new Vector2(0, 0.5f), MR = new Vector2(1, 0.5f);
 
-        public static ReflexHudView Create(Transform parent, string name, int sortingOrder)
+        public static ReflexHudView Create(Transform parent, string name, int sortingOrder, int half = 0)
         {
             var v = new ReflexHudView();
             v.go = new GameObject(name);
             v.go.transform.SetParent(parent, false);
-            v.root = ReflexHudKit.CreateCanvas(v.go, sortingOrder, out v.canvas);
+            v.root = ReflexHudKit.CreateCanvas(v.go, sortingOrder, out v.canvas, half);   // (half: SPLIT SCREEN, 1 the second rider's bottom view)
             v.scaler = v.go.GetComponent<CanvasScaler>();
             v.BuildPosition(); v.BuildBoard(); v.BuildLap(); v.BuildTimes(); v.BuildTimer(); v.BuildGauge(); v.BuildCentre();
             v.BuildModes();

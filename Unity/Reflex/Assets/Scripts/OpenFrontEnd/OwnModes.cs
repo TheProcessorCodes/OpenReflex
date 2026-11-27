@@ -7,7 +7,7 @@
 //   every mode        RESUME ... TRICK LIBRARY, OPTIONS, QUIT
 //   RESTART           every mode but the Free Ride (needsRestart = FALSE for an eventType of FreeRide); an activated challenge (isAAA) has it again
 //   VEHICLE TUNING    the Free Ride and its challenges (needsVehicleTuning stays TRUE from the FreeRide branch) when the equipped vehicle is the
-//                     player's own (GetEquippedVehicle owner == Player1)
+//                     player's own (GetEquippedVehicle owner == Player1); the port's PRACTICE sessions too (a change in a lap: TUNING, not counted)
 //   VEHICLE LIST      the Free Ride only (needsVehicleSelect; the challenge's isAAA clears it)
 //   the Free Ride map RESUME's container: the location's HUDMapIconId with the rider's arrow ((x + 2048) / 4096 * 388, 388 - (z + 2048) / 4096 * 388);
 //                     an activated challenge shows its title and description instead (ChallengeEventContainer: STR_<ACTIVITY>_TITLE / _DESCRIPTION)
@@ -68,6 +68,8 @@ namespace Reflex.Port.OpenFrontEnd
         public string title = "PAUSED", caption = "", modeName = "";
         public readonly List<OwnTile> tiles = new List<OwnTile>();
         public bool restart, vehicleTuning, vehicleList, map;
+        /// A PRACTICE session's page (w-watchghost: WATCH GHOST is offered when the ride has a ghost to watch).
+        public bool practice;
         /// RESET TRACK (w-fb-hud): the ruts and tyre tracks back to the untouched track, the rider where he is (ReflexTrackReset).
         public bool resetTrack;
         public int mapIcon = -1; public bool hasBike; public float bikeX, bikeZ, heading;
@@ -88,6 +90,7 @@ namespace Reflex.Port.OpenFrontEnd
     public sealed class OwnResultsRow
     {
         public int slot, rank; public string name; public bool you;
+        public bool you2;   // SPLIT SCREEN (w-split): the second local rider's row, marked as the first's
         public string[] cells;
     }
 
@@ -95,6 +98,7 @@ namespace Reflex.Port.OpenFrontEnd
     public sealed class OwnResultsSpec
     {
         public HudMode mode;
+        public int secondSlot = -1;   // SPLIT SCREEN (w-split): the second local rider's slot (its row is marked too)
         public string title = "RACE RESULTS", caption = "";
         /// 0: no place number (Freestyle, a board of one).
         public int place;
@@ -217,7 +221,14 @@ namespace Reflex.Port.OpenFrontEnd
             {
                 Mode = model.mode == HudMode.None || model.mode == HudMode.FreeRide || model.mode == HudMode.Challenge ? HudMode.Race : model.mode,
                 EventLabel = EventLabel(rt), HasModeResults = rt.HasModeResults, ModeResults = rt.ModeResults, HasRaceHud = rt.HasRaceHud, RaceHud = rt.RaceHud,
+                AllowUnfinishedLocal = RxSplitScreen.Active, SecondSlot = RxSplitScreen.Active ? SecondLocalSlot(rt) : -1,   // SPLIT SCREEN (w-split)
             };
+        }
+        static int SecondLocalSlot(OriginalWorldRuntime rt)
+        {
+            var list = rt.Roster?.entries; if (list == null) return -1;
+            for (int i = 0; i < list.Count; i++) if (list[i].secondLocal) return list[i].slot.slot;
+            return -1;
         }
 
         /// The HUD model filled from the paused world and the context the pause page needs (the Free Ride's map and vehicle, the challenge, the career).
@@ -295,7 +306,8 @@ namespace Reflex.Port.OpenFrontEnd
             }
             if (c.practice)
             {   // PRACTICE (w-lb-practice): RESUME, RESTART (a new session from the gate, its lap list empty), END PRACTICE (the practice setup)
-                spec.modeName = "PRACTICE"; spec.caption = "PRACTICE  ·  " + where;
+                spec.modeName = "PRACTICE"; spec.caption = "PRACTICE  ·  " + where; spec.practice = true;
+                spec.vehicleTuning = c.ownVehicle;   // the rider's own vehicle: tuned between laps (a change in a lap leaves it uncounted)
                 spec.quitLabel = "END PRACTICE"; spec.quitTitle = "END PRACTICE?"; spec.quitLead = "YOU RETURN TO THE PRACTICE SETUP";
                 spec.restartLead = "THE PRACTICE STARTS AGAIN FROM THE GATE";
                 var p = Reflex.Port.Practice.RxPractice.Summary();
@@ -407,7 +419,7 @@ namespace Reflex.Port.OpenFrontEnd
         /// The results page of a settled snapshot.
         public static OwnResultsSpec Results(OwnRaceResultsSnapshot s)
         {
-            var spec = new OwnResultsSpec { mode = s.Mode };
+            var spec = new OwnResultsSpec { mode = s.Mode, secondSlot = s.SecondSlot };
             string where = !string.IsNullOrEmpty(s.EventLabel) ? s.EventLabel : ReflexHudModel.ModeName(s.Mode, -1);
             spec.caption = where;
             OwnRaceResultsSnapshot.Row mine = null;
@@ -429,7 +441,7 @@ namespace Reflex.Port.OpenFrontEnd
 
         // POS: the rider's number on the original's page (Index + 1, the standings order), unique; the header's place is the local row's
         static void Own(OwnResultsSpec spec, OwnRaceResultsSnapshot.Row r, string[] cells)
-            => spec.rows.Add(new OwnResultsRow { slot = r.Slot, rank = r.HasValidRank ? r.Position : 0, name = r.Name, you = r.IsLocal, cells = cells });
+            => spec.rows.Add(new OwnResultsRow { slot = r.Slot, rank = r.HasValidRank ? r.Position : 0, name = r.Name, you = r.IsLocal, you2 = !r.IsLocal && r.Slot == spec.secondSlot, cells = cells });
 
         static void RaceResults(OwnResultsSpec spec, OwnRaceResultsSnapshot s, OwnRaceResultsSnapshot.Row mine)
         {

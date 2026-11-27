@@ -3,6 +3,9 @@
 // (ms = round(exact * 1000), the sub-frame time) and its validity (the first failing reason), then raises LapCompleted(lap) in serial
 // order (RxPracticeHud lists them). Every exhibition lap race is dispatched; the career is not.
 // Session holds this world's laps (a RESTART is a new session: the list starts over).
+// SPLIT SCREEN RULE (w-split): player 2's laps are NEVER saved: the core's lap log is player 1's only (core/api/practice_session.inc
+// lap_log_driver), so every RxLap here, every post, ghost and YOUR BEST, is player 1's. Never feed player 2's laps (Results.view2, the
+// standings) into this dispatcher: player 2's HUD shows its own lap clock from rx_session_race and nothing of it is kept.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -33,9 +36,10 @@ namespace Reflex.Port.Practice
         public const int MinLapMs = 5000;
         /// The reasons a lap is not counted (the lap list shows the first one that fails).
         public const string FromTheGate = "FROM THE GATE", Reset = "RESET", OffTrack = "OFF TRACK", Cut = "CUT", WrongWay = "WRONG WAY",
-                            MapScale = "MAP SCALE", TooShort = "TOO SHORT",
+                            MapScale = "MAP SCALE", AnyVehicle = "ANY VEHICLE", TooShort = "TOO SHORT",
                             Marker = "MARKER",   // (w-lb-markers) the rider rode back to the SPAWN MARKER in the lap
-                            TrackReset = "TRACK RESET";   // (w-fb-hud) RESET TRACK in the lap: the track changed under it
+                            TrackReset = "TRACK RESET",   // (w-fb-hud) RESET TRACK in the lap: the track changed under it
+                            Tuning = "TUNING";   // VEHICLE TUNING changed in the lap: it was ridden with two setups
 
         /// A lap the race counted: main thread, in serial order.
         public static event Action<RxLap> LapCompleted;
@@ -77,6 +81,16 @@ namespace Reflex.Port.Practice
         }
         static uint s_trackResetLap;
 
+        /// VEHICLE TUNING changed in this session (the pause page, applied before the next frame): the lap being ridden is not counted
+        /// (TUNING), the timing goes on, and the ghosts of the next laps carry the new values. values: the 8 tuning values.
+        public static void TuningChanged(int[] values)
+        {
+            if (s_world == null) return;
+            s_tuningLap = (uint)LapNumber;
+            Debug.Log("[Practice] VEHICLE TUNING: lap #" + s_tuningLap + " is not counted (TUNING)");
+        }
+        static uint s_tuningLap;
+
         /// Called by OriginalWorldRuntime once per collected result (r: the frames completed since the last call).
         public static void OnFrame(OriginalWorldRuntime rt, OriginalSimulation.Results r)
         {
@@ -106,7 +120,7 @@ namespace Reflex.Port.Practice
         /// A new world: the lap list starts over (also the HUD for a practice session).
         static void Begin(OriginalWorldRuntime rt, object world)
         {
-            s_world = world; s_laps.Clear(); s_array = new RxLap[0]; SessionBest = null; s_physClass = -1; OutLap = false; s_trackResetLap = 0;
+            s_world = world; s_laps.Clear(); s_array = new RxLap[0]; SessionBest = null; s_physClass = -1; OutLap = false; s_trackResetLap = 0; s_tuningLap = 0;
             s_practice = world != null && rt.IsPractice;
             if (world == null) return;
             if (s_practice && !rt.GetComponent<RxPracticeHud>()) rt.gameObject.AddComponent<RxPracticeHud>();
@@ -122,6 +136,7 @@ namespace Reflex.Port.Practice
             };
             lap.invalid = Invalid(lap, RxMapScale.OffDefault);   // (BASE SCALE: an Alive race level's own default counts as unscaled)
             if (lap.invalid == null && s_trackResetLap != 0 && rec.serial == s_trackResetLap) lap.invalid = TrackReset;   // (w-fb-hud)
+            if (lap.invalid == null && s_tuningLap != 0 && rec.serial == s_tuningLap) lap.invalid = Tuning;
             return lap;
         }
 
@@ -136,6 +151,7 @@ namespace Reflex.Port.Practice
             if (r.off_track > OffTrackGrace) return OffTrack;
             if (r.wrong_way != 0) return WrongWay;
             if (mapScaled || (r.mods & RxLapRecord.ModMapScale) != 0) return MapScale;
+            if ((r.mods & RxLapRecord.ModAnyVehicle) != 0 || RxAnyVehicle.Current) return AnyVehicle;   // (ANY_VEHICLE.md: a vehicle or class the event never offered: not kept, not posted)
             if (lap.ms < MinLapMs) return TooShort;
             return null;
         }

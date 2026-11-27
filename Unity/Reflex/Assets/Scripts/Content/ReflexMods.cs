@@ -85,6 +85,28 @@ namespace Reflex.Port.Content
             return ChildIgnoreCase(mods, kind) ?? Path.Combine(mods, kind);
         }
 
+        /// <client root>/Mods (an existing folder in any case, else the path it would have); null without a client root.
+        public static string ModsRoot
+        {
+            get { string root = ClientRoot; return root == null ? null : ChildIgnoreCase(root, ModsName) ?? Path.Combine(root, ModsName); }
+        }
+
+        // MODS ANYWHERE: a mod is what its files are, not where it lies. Each scanner (TrackMods, BikeMods, KitPacks, RxGear) reads its own
+        // folder (Mods/Tracks, Mods/Bikes, Mods/Gear) as before, with the ids it always gave, then the rest of Mods for what is its kind by
+        // content: a .rxtrack and a <stem>.dx9.level set are tracks, a .rxmod is what its manifest says (a kit pack: KitPacks; bikes, skins,
+        // parts: BikeMods; rider gear: RxGear), a folder with an MXTables_* database is a kit pack, any other folder of .dx9.database /
+        // .dx9.package pairs is a bike mod. A mod found outside its kind's folder has the id "../<its path from Mods>": the path from that
+        // folder, so the ids of the mods already installed (saved choices, favourites) stay as they are.
+        public const string OutsideMark = "../";
+        /// The id of a mod outside its kind's folder (path: a file or folder under modsRoot; modsRoot itself: "..").
+        public static string OutsideId(string modsRoot, string path) { string rel = RelativeId(modsRoot, path); return rel == null ? ".." : OutsideMark + rel; }
+        /// What the menus show for a mod's id: "Mods/<Kind>/<id>", or "Mods/<path>" for one found elsewhere in Mods.
+        public static string Shown(string kind, string id)
+            => id == null ? ModsName + "/" + kind : id.StartsWith(OutsideMark, StringComparison.Ordinal) ? ModsName + "/" + id.Substring(OutsideMark.Length) : ModsName + "/" + kind + "/" + id;
+        /// The same folder (either separator, a trailing one, any case).
+        public static bool SameFolder(string a, string b)
+            => a != null && b != null && string.Equals(a.Replace('\\', '/').TrimEnd('/'), b.Replace('\\', '/').TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+
         /// A file or folder name the desktops leave behind (never content): .DS_Store, Thumbs.db, desktop.ini, AppleDouble "._x", __MACOSX,
         /// other hidden dot names.
         public static bool IsJunk(string name)
@@ -228,8 +250,8 @@ Put your own songs in here (.mp3, .ogg or .wav; make your own sub-folders, every
     Mods/Music/Chill/Some Album/01 - Song.ogg
 
 OPTIONS > AUDIO > YOUR MUSIC picks how they play:
-    OFF      the game's soundtrack only
-    MIX IN   your songs are played among the game's tracks in the races (the menus keep the game's themes)
+    OFF      the soundtrack only (OPTIONS > AUDIO > SOUNDTRACK)
+    MIX IN   your songs are played among the soundtrack's songs in the races (the menus keep the game's themes)
     ONLY     your songs replace the game's soundtrack, in the menus and the races (the game's soundtrack
              comes back while this folder has no songs)
 The races keep the game's own timing: the music starts when the game starts it, fades in and out as the
@@ -238,6 +260,10 @@ game does, and ducks under the pause menu. MUSIC and MUSIC VOLUME in the same pa
 The NOW PLAYING pop-up (OPTIONS > AUDIO) shows the title and artist from the file's tags (ID3 for .mp3, the
 comments of an .ogg) or, without tags, from the file name: ""Artist - Title.mp3"". Press N to skip to the next
 song. The songs are shuffled so what you heard lately comes last and no artist plays twice in a row.
+
+GAME LIBRARY > MX vs ATV ALIVE and MX vs ATV UNTAMED put the soundtracks of your own discs in ""MX vs ATV Alive""
+and ""MX vs ATV Untamed"" here. Those two folders are the games' soundtracks, not your music: OPTIONS > AUDIO >
+SOUNDTRACK plays them (ALL SONGS, or ALIVE / UNTAMED SONGS ONLY) whatever YOUR MUSIC is.
 
 Nothing is copied or uploaded: the files are played from here. Songs that Unity cannot decode are skipped
 (copy-protected files, .ogg files with Opus audio, a file that is not what its name says).

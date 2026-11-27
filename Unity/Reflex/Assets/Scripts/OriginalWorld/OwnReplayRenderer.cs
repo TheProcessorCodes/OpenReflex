@@ -46,6 +46,8 @@ namespace Reflex.Port.OriginalWorld
             foreach(var r in done.Result)if(r!=RxCareerResult.Ok&&r!=RxCareerResult.Repeat)throw new InvalidOperationException("Replay paint was rejected: "+r);
             lastAcknowledgedId=receiptLastId;
         }
+        /// SPLIT SCREEN (w-split): the core's one-viewport request holds the camera's rect (full screen) until Dispose; nothing else may write it.
+        public bool OwnsViewport => viewportOwned && !disposed;
         public bool RequiresExactPose => worker.Snapshot is ReplaySnapshot v && (v.View.active!=0 || v.Count!=0 || v.DrawFade);
         public void Tick()
         { Owner();if(disposed)return;if(!current()){Dispose();return;}PollReceipt();if(worker.Snapshot==null){applied=null;fade.RemoveFromHierarchy();} }

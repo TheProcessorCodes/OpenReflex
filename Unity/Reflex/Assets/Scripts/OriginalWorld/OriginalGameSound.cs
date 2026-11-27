@@ -401,9 +401,9 @@ namespace Reflex.Port.OriginalWorld
             {
                 var w = r.s.wheels[g];
                 if ((w.flags & RxSoundWheel.Water) == 0) allWater = false;
-                if (!w.InAir) { float d = (new Vector3(w.px, w.py, w.pz) - L).sqrMagnitude; if (d < best) { best = d; m264 = w.zone; c268 = w.contactId; } }
+                if (!w.InAir) { float d = (audio.Hear(new Vector3(w.px, w.py, w.pz)) - L).sqrMagnitude; if (d < best) { best = d; m264 = w.zone; c268 = w.contactId; } }
                 var p = r.prev.wheels[g];
-                if (!p.InAir) { float d = (new Vector3(p.px, p.py, p.pz) - L).sqrMagnitude; if (d < bestPrev) { bestPrev = d; pm264 = p.zone; } }
+                if (!p.InAir) { float d = (audio.Hear(new Vector3(p.px, p.py, p.pz)) - L).sqrMagnitude; if (d < bestPrev) { bestPrev = d; pm264 = p.zone; } }
             }
             int s = c268 != -1 ? c268 + 8 : m264;
             if (c268 == -1 && m264 != -1 && pm264 != m264 && m264 != set.cur) set.timer = tun.zoneTime;
@@ -581,6 +581,8 @@ namespace Reflex.Port.OriginalWorld
         readonly Dictionary<int, Vector3> pelvisOfSlot = new Dictionary<int, Vector3>();
         /// The player's view is the first-person camera (set by OriginalVehicleSound).
         public Func<bool> FirstPersonView;
+        /// SPLIT SCREEN (w-split): the second local rider's view is first person (null: never; the second rider's camera presets set it).
+        public Func<bool> FirstPersonView2;
         /// A rider's pelvis: the translation of bone 0 (MXRider_Root) of the 69 bone world matrices the core exports (row vectors, elements 12 .. 14).
         public void SetPelvis(int slot, float[] bones, int bone)
         {
@@ -593,7 +595,8 @@ namespace Reflex.Port.OriginalWorld
         /// pelvis node (snapshot + 0x200: FUN_00623bd0 evaluates the node at rider + 0x144, set while the vehicle has a rider), else on the vehicle (+ 0x1c0).
         Vector3 RiderEventPosition(Rider r)
         {
-            if (r.Local && FirstPersonView != null && FirstPersonView()) return audio.Listener;
+            if (r.Local && RxSplitScreen.Active && r.va.pad == 1) { if (FirstPersonView2 != null && FirstPersonView2() && audio.SecondListener) return audio.Listener2; }   // SPLIT SCREEN: on the second rider's own camera, never the first's
+            else if (r.Local && FirstPersonView != null && FirstPersonView()) return audio.Listener;
             return pelvisOfSlot.TryGetValue(r.slot, out var p) ? p : r.Position;
         }
 
@@ -847,7 +850,7 @@ namespace Reflex.Port.OriginalWorld
             foreach (var e in collisionEvents)
             {
                 if (!e.playing) { pick = e; break; }
-                float d = (e.at - L).sqrMagnitude; if (d > fd) { fd = d; pick = e; }
+                float d = (audio.Hear(e.at) - L).sqrMagnitude; if (d > fd) { fd = d; pick = e; }   // (SPLIT SCREEN: from the nearer listener)
             }
             if (pick.playing) Stop(pick, true);
             foreach (var r in records.Values) { if (r.impact == pick) r.impact = null; if (r.roll == pick) { r.roll = null; r.rollSound = -1; } }

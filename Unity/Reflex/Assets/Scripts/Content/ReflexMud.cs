@@ -303,6 +303,9 @@ namespace Reflex.Port.Content
             Write();
         }
 
+        /// The model got further materials (a distance LOD built later, ReflexBikeModel.Lod.cs): collected again, the record written again.
+        public void Recollect() { collected = false; materials.Clear(); amount = new Vector4(-1, -1, -1, -1); }
+
         /// MUD BUILDUP (or the look) switched: the constants again (the original's mud term is replaced by the new dirt, or off with MUD BUILDUP OFF: ReflexDirt).
         public void Refresh() { if (collected && version != -1) { version = ReflexDirt.Version; Write(); } }
 

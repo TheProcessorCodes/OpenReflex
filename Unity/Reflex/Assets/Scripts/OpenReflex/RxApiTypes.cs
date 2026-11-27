@@ -193,7 +193,7 @@ namespace Reflex.Port.RxCore
         public int wrong_way;      // the wrong-way indicator showed
         public uint mods;          // OR over the lap: 1 / 2 / 4 PHYSICS STUDIO (config, restored, taint), 8 air helpers not original, 16 map scale
         public uint markers;       // (w-lb-markers) rides back to the SPAWN MARKER in the lap (PRACTICE): not counted, timed again from the line
-        public const uint ModPhysConfig = 1, ModPhysRestored = 2, ModPhysTaint = 4, ModAirHelpers = 8, ModMapScale = 16;
+        public const uint ModPhysConfig = 1, ModPhysRestored = 2, ModPhysTaint = 4, ModAirHelpers = 8, ModMapScale = 16, ModAnyVehicle = 32;
     }
 
     [StructLayout(LayoutKind.Sequential)]

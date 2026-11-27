@@ -98,7 +98,9 @@ namespace Reflex.Port.OriginalWorld
             bool on = aliveFoliage && ta.y > 0f;
             // the noise moves with the frame only while the TAA resolves it (a still pattern otherwise: no shimmer without TAA)
             var taa = ReflexTemporalAA.Active;
-            float frame = on && taa && taa.active ? Time.frameCount % 64 : 0f;
+            // (w: also the scenery / tree LOD cross-fades' dither, RfxDitherNoise: it moves on every level while the TAA runs; Alive's
+            // screen noise, RfxFoliageNoise, reads it only where x is on)
+            float frame = taa && taa.active ? Time.frameCount % 64 : 0f;
             Shader.SetGlobalVector(FoliageDitherId, new Vector4(on ? 1f : 0f, ta.x, ta.y, frame));
         }
 
@@ -136,7 +138,7 @@ namespace Reflex.Port.OriginalWorld
                 grassReport = $"grass {gd.name}: {gd.cells} cells ({gd.gridW} x {gd.gridH}), {gd.blades} blades per cell, draw {gd.maxDrawDistance} fade {gd.fadeDistance}, alpha test {gd.alphaTestValue}";
                 grassSel = new int[gd.cells]; grassKey = new int[gd.cells]; grassFade = new float[gd.cells]; grassTmp = new int[gd.cells];
                 grassBlock = new MaterialPropertyBlock();
-                if (!subscribed) { RenderPipelineManager.beginCameraRendering += OnBeginCamera; subscribed = true; }
+                Subscribe();
             }
             build = c.BuildForest(Shader.Find("Reflex/Tree"), Shader.Find("Reflex/Tree Billboard"));
             if (build == null) { report = (c.forest == null ? "no forest" : "forest shaders Reflex/Tree, Reflex/Tree Billboard missing") + (grassReport != null ? "; " + grassReport : ""); return; }
@@ -183,7 +185,19 @@ namespace Reflex.Port.OriginalWorld
                     drawMaterials[i, k] = dm;
                 }
             report = $"{f.name}: {f.treeCount} trees, {f.types.Count} types, {f.clusterStart.Length} clusters, 3D within {f.max3dDistance:F0}, billboards from {f.minBillboardStart:F0}; built in {sw.ElapsedMilliseconds} ms" + (grassReport != null ? "; " + grassReport : "");
-            if (!subscribed) { RenderPipelineManager.beginCameraRendering += OnBeginCamera; subscribed = true; }
+            Subscribe();
+        }
+
+        void Subscribe()
+        {
+            if (subscribed) return;
+            RenderPipelineManager.beginCameraRendering += OnBeginCamera; ReflexWorldViews.SecondGone += ForgetCamera; subscribed = true;
+        }
+        // SPLIT SCREEN (w-split): the second rider's camera is destroyed: its instance buffers go with it
+        void ForgetCamera(Camera cam)
+        {
+            if (perCamera.TryGetValue(cam, out var cb)) { foreach (var rb in cb.ring) rb?.Release(); perCamera.Remove(cam); }
+            if (grassPerCamera.TryGetValue(cam, out var gb)) { foreach (var rb in gb.ring) rb?.Release(); grassPerCamera.Remove(cam); }
         }
 
         Material NoCull(Material m)
@@ -211,7 +225,7 @@ namespace Reflex.Port.OriginalWorld
 
         void OnDestroy()
         {
-            if (subscribed) { RenderPipelineManager.beginCameraRendering -= OnBeginCamera; subscribed = false; }
+            if (subscribed) { RenderPipelineManager.beginCameraRendering -= OnBeginCamera; ReflexWorldViews.SecondGone -= ForgetCamera; subscribed = false; }
             Clear();
         }
 
@@ -221,10 +235,27 @@ namespace Reflex.Port.OriginalWorld
             if (viewer) return cam == viewer || cam.cameraType == CameraType.SceneView;
             if (cam.cameraType == CameraType.SceneView) return true;
             var chase = level && level.runtime ? level.runtime.chaseCamera : null;
-            if (chase) return cam == chase;
+            if (chase) return ReflexWorldViews.Is(chase, cam);   // (SPLIT SCREEN, w-split: the second rider's view its own selection and buffers)
             var main = Camera.main;
             if (main) return cam == main;
             return (cam.cullingMask & 1) != 0;
+        }
+
+        /// LIGHTING: ENHANCED (ReflexGrass.shader _RfxGrassShade): what a tuft in the sun's shadow keeps of its colour, the share of the
+        /// level's fill lights in the light on the ground (fills + the terrain's sun, x 1.25 as HFTerrain's; under WEATHER's clouds the
+        /// sun global is already the dimmed one, so the shade lifts with them).
+        static readonly int GrassShadeId = Shader.PropertyToID("_RfxGrassShade"), SunColorGlobalId = Shader.PropertyToID("_RfxSunColor");
+        float GrassShade()
+        {
+            var l = content != null ? content.lighting : null;
+            if (l == null) return 0.5f;
+            static float Lum(Vector3 c) => 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+            var dirs = content.LightDirections();
+            float amb = 0f;
+            for (int i = 0; i < 4 && i < dirs.Length; i++) amb += Mathf.Max(dirs[i].y, 0f) * Lum(l.lightColors[i]);
+            Vector4 sc = Shader.GetGlobalVector(SunColorGlobalId);
+            float sun = Lum(new Vector3(sc.x, sc.y, sc.z)) * 1.25f * Mathf.Max(l.sunDirection.normalized.y, 0f);
+            return amb + sun > 1e-4f ? Mathf.Clamp(amb / (amb + sun), 0.3f, 0.85f) : 0.5f;
         }
 
         MaterialPropertyBlock Block(int i)
@@ -246,7 +277,11 @@ namespace Reflex.Port.OriginalWorld
             Shader.SetGlobalVector(CamPosId, new Vector4(eye.x, eye.y, eye.z, 1));
             Shader.SetGlobalVector(CamRightId, right); Shader.SetGlobalVector(CamUpId, up); Shader.SetGlobalVector(CamFwdId, fwd);
 
-            if (drawGrass && grassBuild != null) DrawGrass(cam, MapScale != 1f ? eye / MapScale : eye, fwd, tr.right);   // MAP SCALE: in the level's own feet
+            if (drawGrass && grassBuild != null)
+            {
+                Shader.SetGlobalFloat(GrassShadeId, GrassShade());
+                DrawGrass(cam, MapScale != 1f ? eye / MapScale : eye, fwd, tr.right);   // MAP SCALE: in the level's own feet
+            }
             msGrass = sw.Elapsed.TotalMilliseconds;
             if (build == null) { msLast = sw.Elapsed.TotalMilliseconds; return; }
             var f = build.data;
@@ -702,7 +737,7 @@ namespace Reflex.Port.OriginalWorld
             if (nFar > 0)
             {
                 Setup(grassBlock, 0);
-                Graphics.RenderMeshPrimitives(new RenderParams(grassBuild.far) { camera = cam, worldBounds = bounds, shadowCastingMode = ShadowCastingMode.Off, receiveShadows = false, matProps = grassBlock, layer = 0 },
+                Graphics.RenderMeshPrimitives(new RenderParams(grassBuild.far) { camera = cam, worldBounds = bounds, shadowCastingMode = ShadowCastingMode.Off, receiveShadows = true, matProps = grassBlock, layer = 0 },
                                               grassBuild.mesh, heading, nFar);
             }
             if (nNear > 0)

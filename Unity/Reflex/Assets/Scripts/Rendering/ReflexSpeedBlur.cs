@@ -1,4 +1,4 @@
-// SPEED BLUR (OPTIONS > VIDEO, ENHANCED only; not part of the original renderer): motion blur while riding, stronger the faster the camera
+// SPEED BLUR (OPTIONS > VIDEO; not part of the original renderer): motion blur while riding, stronger the faster the camera
 // moves. It drives the replay's motion blur pass (ReflexCinematic: URP motion vectors, the camera and every moving object, the spinning
 // wheels) with a shutter that opens with speed: nothing below ~15 mph, the full shutter from ~65 mph. The chase camera moves with the bike,
 // so the bike and rider stay sharp while the ground, the scenery and the wheels streak. A replay or photo mode that draws its own effects
@@ -26,6 +26,11 @@ namespace Reflex.Port.Rendering
         Camera cam;
         Vector3 lastPos; bool hasLast; float speed; int quiet;
         bool wrote;
+        // SPLIT SCREEN (w-split): the second view's pipeline (ReflexRenderPipeline.mirror) keeps its shutter to itself (Own, read by that
+        // pipeline for its camera) instead of writing the one static both views would fight over (ReflexCinematic.Current: the first view's)
+        ReflexRenderPipeline pipeline; bool pipelineSeen;
+        /// The second view's shutter this frame (null: closed, or this is not a mirrored pipeline's).
+        public ReflexCinematicSettings Own { get; private set; }
 
         void OnDisable() { Release(); }
 
@@ -51,6 +56,8 @@ namespace Reflex.Port.Rendering
             live.shutterAngle = MaxShutter[setting] * t;
             live.worldDt = 0f;
             live.maxMotion = setting == 2 ? 0.06f : 0.04f;
+            if (!pipelineSeen) { pipelineSeen = true; pipeline = GetComponent<ReflexRenderPipeline>(); }
+            if (pipeline && pipeline.mirror) { Own = live; return; }
             ReflexCinematic.Current = live;
             wrote = true;
         }
@@ -60,7 +67,7 @@ namespace Reflex.Port.Rendering
         void Release()
         {
             if (wrote && ReflexCinematic.Current == live) ReflexCinematic.Current = null;
-            wrote = false;
+            wrote = false; Own = null;
         }
     }
 }

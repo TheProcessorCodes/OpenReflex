@@ -113,8 +113,9 @@ namespace Reflex.Port.OriginalWorld
 
         public bool Built => built;
         /// HUD STYLE MODERN (the client's HUD instead: Reflex.Port.Hud.ReflexModernHud, for the modes it covers; a mode it does not cover keeps this
-        /// one) or H (the HUD hidden) keep this one off.
-        public static bool ClientHides => Reflex.Port.Options.ReflexSettings.HudHidden || (Reflex.Port.Options.ReflexSettings.HudStyle == Reflex.Port.Options.HudStyle.Modern && Reflex.Port.Hud.ReflexModernHud.CoversMode);
+        /// one) or H (the HUD hidden) keep this one off. SPLIT SCREEN (w-split): both riders have the MODERN HUD whatever the style (this one
+        /// cannot be made twice nor kept to a half).
+        public static bool ClientHides => Reflex.Port.Options.ReflexSettings.HudHidden || Reflex.Port.RxCore.RxSplitScreen.Active || (Reflex.Port.Options.ReflexSettings.HudStyle == Reflex.Port.Options.HudStyle.Modern && Reflex.Port.Hud.ReflexModernHud.CoversMode);
         public Canvas Canvas => canvas;
         public OriginalUiTree Tree => tree;
 

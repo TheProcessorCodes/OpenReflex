@@ -21,14 +21,14 @@ namespace Reflex.Port.Options
         {
             Section(panel, "MENUS");
             var first = Named(OptUi.Spinner("UI SCALE", () => ReflexSettings.UiScale + "%", d => { ReflexSettings.UiScale = ReflexSettings.UiScale + d * 10; ReflexSettings.Save(); }, panel), "ui-scale");
-            Note(panel, "The size of every menu page (80% .. 130%). The layout keeps the screen's safe area, and a very wide screen keeps the pages in the middle. Ours.");
+            Help(panel, "The size of every menu page, 80% to 130%. A very wide screen keeps the pages in the middle.");
             Named(OptUi.Spinner("CONTROLLER GLYPHS", () => ReflexSettings.GlyphStyleNames[ReflexSettings.GlyphStyle], d =>
             {
                 ReflexSettings.GlyphStyle = ((ReflexSettings.GlyphStyle + d) % 4 + 4) % 4; ReflexSettings.Save(); ShowOptions(_tab);
             }, panel), "glyph-style");
-            Note(panel, "The buttons the hints and the buttons show: AUTO follows the keyboard or the pad you used last; or always the KEYBOARD, XBOX or PLAYSTATION names. Ours.");
+            Help(panel, "The button names in the hints. AUTO follows the keyboard or controller you used last; or always show KEYBOARD, XBOX or PLAYSTATION names.");
             Named(OptUi.Toggle("REDUCE MOTION", () => ReflexSettings.ReduceMotion, v => { ReflexSettings.ReduceMotion = v; ReflexSettings.Save(); ShowOptions(_tab); }, panel), "reduce-motion");
-            Note(panel, "Switches off the menus' transitions and the HUD's animated flourishes (the values and the colours stay). Ours.");
+            Help(panel, "Turns off the menus' transitions and the HUD's animated flourishes. Values and colours stay.");
 
             Section(panel, "LANGUAGE");
             string[] codes; try { codes = ReflexUiData.AvailableLanguages(); } catch (Exception) { codes = new[] { "ENG" }; }
@@ -36,16 +36,18 @@ namespace Reflex.Port.Options
             {
                 string chosen = ReflexSettings.Language;
                 string show = string.IsNullOrEmpty(chosen) ? ReflexUiData.Shared.language : chosen;
-                return LanguageName(show) + (string.IsNullOrEmpty(chosen) ? "  (GAME)" : "");
+                return LanguageName(show) + (string.IsNullOrEmpty(chosen) ? "  (INSTALL)" : "");
             }, d =>
             {
                 var order = new[] { "" }.Concat(codes).ToArray();
                 int i = Array.IndexOf(order, ReflexSettings.Language); if (i < 0) i = 0;
                 ReflexSettings.Language = order[((i + d) % order.Length + order.Length) % order.Length]; ReflexSettings.Save();
             }, panel), "language");
-            Note(panel, codes.Length > 1
-                ? "The language of the game's texts: event names, rules, the career's pages and the HUD's words. GAME is the install's own. Applies at the next start."
-                : "This install carries one language (English). The game's own options have no language row: the language comes from the installer's language.txt.");
+            Help(panel, codes.Length > 1
+                ? "The language of the game's own texts: event names, rules, the career's pages and the HUD's words. INSTALL is the language your install was set up in."
+                : "The language of the game's own texts. This install carries one language only.", codes.Length > 1 ? When.NextStart : When.None, true);
+            ResetSection(panel, "INTERFACE", "reset-interface", "Puts every row of this page back to its default: UI SCALE 100%, CONTROLLER GLYPHS AUTO, REDUCE MOTION OFF, the install's LANGUAGE (from the next start).",
+                         "UI SCALE, CONTROLLER GLYPHS, REDUCE MOTION and LANGUAGE go back to their defaults. A language change shows from the next start.", ResetInterface);
             return first;
         }
     }

@@ -218,16 +218,20 @@ namespace Reflex.Port.OpenFrontEnd
             => Spinner(label, () => get() ? on : off, _ => set(!get()), parent);
 
         // the hint bars on screen and what they say, so a key cap follows the device in use (OuDevice.Changed)
-        static readonly List<(WeakReference<VisualElement> bar, (string key, string label)[] hints)> s_bars = new List<(WeakReference<VisualElement>, (string, string)[])>();
+        static readonly List<(WeakReference<VisualElement> bar, (string key, string label)[] hints, Action<VisualElement> drawn)> s_bars = new List<(WeakReference<VisualElement>, (string, string)[], Action<VisualElement>)>();
         static bool s_barsHooked;
 
         /// The key caps + labels of the bottom hint bar ("[Enter] SELECT  [Esc] BACK"). The caps change with the device in use.
-        public static void Hints(VisualElement bar, params (string key, string label)[] hints)
+        public static void Hints(VisualElement bar, params (string key, string label)[] hints) => Hints(bar, null, hints);
+
+        /// The same; drawn(bar) runs after every drawing (the bar is drawn again when the device changes: its items are new elements).
+        public static void Hints(VisualElement bar, Action<VisualElement> drawn, params (string key, string label)[] hints)
         {
             if (bar == null) return;
-            Render(bar, hints);
+            hints = ((string, string)[])hints.Clone();
+            Render(bar, hints); drawn?.Invoke(bar);
             s_bars.RemoveAll(b => !b.bar.TryGetTarget(out var t) || t == bar);
-            s_bars.Add((new WeakReference<VisualElement>(bar), hints));
+            s_bars.Add((new WeakReference<VisualElement>(bar), hints, drawn));
             if (s_barsHooked) return;
             s_barsHooked = true;
             OuDevice.Changed += RefreshHints;
@@ -252,7 +256,20 @@ namespace Reflex.Port.OpenFrontEnd
             for (int i = s_bars.Count - 1; i >= 0; i--)
             {
                 if (!s_bars[i].bar.TryGetTarget(out var bar) || bar.panel == null) { if (bar == null) s_bars.RemoveAt(i); continue; }
-                Render(bar, s_bars[i].hints);
+                Render(bar, s_bars[i].hints); s_bars[i].drawn?.Invoke(bar);
+            }
+        }
+
+        /// Item i of a hint bar says label now (and keeps saying it when the bar is drawn again).
+        public static void HintLabel(VisualElement bar, int i, string label)
+        {
+            if (bar == null) return;
+            foreach (var b in s_bars)
+            {
+                if (!b.bar.TryGetTarget(out var t) || t != bar || i < 0 || i >= b.hints.Length) continue;
+                b.hints[i].label = label;
+                if (i < bar.childCount && bar[i].Q<Label>(className: "mxa-hint-label") is Label l) l.text = label;
+                return;
             }
         }
 

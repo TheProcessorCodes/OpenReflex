@@ -63,16 +63,17 @@ namespace Reflex.Port.Options
             };
         }
 
-        /// AUTO LEVEL / COUNTER-STEER SNAP / AIR LOOSENESS (OPTIONS > OPEN REFLEX): every new session takes them before its event loads; the race running
+        /// AUTO LEVEL / COUNTER-STEER SNAP / AIR LOOSENESS / LIP PULL (OPTIONS > OPEN REFLEX): every new session takes them before its event loads; the race running
         /// now gets them at its next frame (the open core only; the old plugin's world has no such options).
         public static void ApplyFreeAir()
         {
-            float level = ReflexSettings.AirAutoLevel, snap = ReflexSettings.AirSnap, loose = ReflexSettings.AirLooseness;
+            float level = ReflexSettings.AirAutoLevel, snap = ReflexSettings.AirSnap, loose = ReflexSettings.AirLooseness, lip = ReflexSettings.LipPull;
             Reflex.Port.RxCore.OpenReflexSimulation.GameAirAutoLevel = level;
             Reflex.Port.RxCore.OpenReflexSimulation.GameAirSnap = snap;
             Reflex.Port.RxCore.OpenReflexSimulation.GameFreeAirLooseness = loose;
+            Reflex.Port.RxCore.OpenReflexSimulation.GameLipPull = lip;
             var rt = Runtime;
-            var open = rt ? rt.SimDriver?.Open : null; open?.SetFreeAir(level, snap, loose);
+            var open = rt ? rt.SimDriver?.Open : null; open?.SetFreeAir(level, snap, loose, lip);
         }
 
         /// FREE RIDE WITHOUT BORDERS (OPTIONS > OPEN REFLEX): every new session takes it before its event loads; a Free Ride running now gets the
@@ -86,7 +87,7 @@ namespace Reflex.Port.Options
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-        static void SyncAtStart() { try { SyncGameSettings(); Reflex.Port.RxCore.OpenReflexSimulation.GameFreeRideBorders = ReflexSettings.FreeRideBordersMode; Reflex.Port.RxCore.OpenReflexSimulation.GameAirAutoLevel = ReflexSettings.AirAutoLevel; Reflex.Port.RxCore.OpenReflexSimulation.GameAirSnap = ReflexSettings.AirSnap; Reflex.Port.RxCore.OpenReflexSimulation.GameFreeAirLooseness = ReflexSettings.AirLooseness; Reflex.Port.RxCore.RxPhysicsStudio.Everywhere = ReflexSettings.PhysicsEverywhere; ReflexSettings.Changed += key => { if (key != null && (key.StartsWith("ReflexUI.") || key == "ReflexOriginalHud")) SyncGameSettings(); }; } catch (Exception e) { Debug.LogException(e); } }
+        static void SyncAtStart() { try { SyncGameSettings(); Reflex.Port.RxCore.OpenReflexSimulation.GameFreeRideBorders = ReflexSettings.FreeRideBordersMode; Reflex.Port.RxCore.OpenReflexSimulation.GameAirAutoLevel = ReflexSettings.AirAutoLevel; Reflex.Port.RxCore.OpenReflexSimulation.GameAirSnap = ReflexSettings.AirSnap; Reflex.Port.RxCore.OpenReflexSimulation.GameFreeAirLooseness = ReflexSettings.AirLooseness; Reflex.Port.RxCore.OpenReflexSimulation.GameLipPull = ReflexSettings.LipPull; Reflex.Port.RxCore.RxPhysicsStudio.Everywhere = ReflexSettings.PhysicsEverywhere; ReflexSettings.Changed += key => { if (key != null && (key.StartsWith("ReflexUI.") || key == "ReflexOriginalHud")) SyncGameSettings(); }; } catch (Exception e) { Debug.LogException(e); } }
 
         public static void DrivingCamera(int v)
         {
@@ -175,6 +176,12 @@ namespace Reflex.Port.Options
         public static void MasterVolume(float v)
         {
             ReflexSettings.MasterVolume = v; AudioListener.volume = ReflexSettings.MasterVolume; ReflexSettings.Save();
+        }
+        public static void StreamerMode(bool on)
+        {
+            ReflexSettings.StreamerMode = on;
+            ReflexOptionsHooks.MusicVolumeChanged?.Invoke();
+            ReflexSettings.Save();
         }
         public static void MusicOn(bool on)
         {
@@ -310,7 +317,7 @@ namespace Reflex.Port.Options
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void ApplyAtStart()
         {
-            try { ReflexSave.Load(); SyncGameSettings(); AudioListener.volume = ReflexSettings.MasterVolume; } catch (Exception e) { Debug.LogException(e); }
+            try { ReflexSave.Load(); ReflexSettings.MigrateLightingOnly(); SyncGameSettings(); AudioListener.volume = ReflexSettings.MasterVolume; } catch (Exception e) { Debug.LogException(e); }
             if (!CanApplyDisplay) return;
             ApplyQuality();
         }
@@ -328,6 +335,7 @@ namespace Reflex.Port.Options
                     rt.racePause = rt.GetComponent<Reflex.Port.OpenFrontEnd.OwnRacePause>() ?? rt.gameObject.AddComponent<Reflex.Port.OpenFrontEnd.OwnRacePause>();
                 if (!rt.GetComponent<Reflex.Port.Hud.ReflexModernHud>()) rt.gameObject.AddComponent<Reflex.Port.Hud.ReflexModernHud>();
                 if (!rt.GetComponent<Reflex.Port.Hud.ReflexCameraToast>()) rt.gameObject.AddComponent<Reflex.Port.Hud.ReflexCameraToast>();   // the camera's name with the CLASSIC / a hidden HUD
+                if (!rt.GetComponent<Reflex.Port.Hud.ReflexFinishBanner>()) rt.gameObject.AddComponent<Reflex.Port.Hud.ReflexFinishBanner>();   // the checkered flag at the local rider's finish (w-finishflag)
                 if (!rt.GetComponent<ReflexPauseExtras>()) rt.gameObject.AddComponent<ReflexPauseExtras>();
                 if (!rt.GetComponent<ReflexRumbleScale>()) rt.gameObject.AddComponent<ReflexRumbleScale>();
                 if (!rt.GetComponent<Reflex.Port.Replay.ReflexReplay>()) rt.gameObject.AddComponent<Reflex.Port.Replay.ReflexReplay>();   // REPLAY / PHOTO MODE (w-replayphoto)

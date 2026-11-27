@@ -68,8 +68,25 @@ namespace Reflex.Port.Content
         /// A VehicleClass's Format ("Single", "Rival", "Multi"), null when the class has no row.
         public static string ClassFormat(int vehicleClassId) => Rfx.Str(Tables.TryGetValue("VehicleClass", out var r) ? r.FirstOrDefault(x => Rfx.Int(x, "VehicleClassId") == vehicleClassId) : null, "Format");
 
+        /// ANY VEHICLE (core/plan/ANY_VEHICLE.md): every vehicle class of the game the port races, whatever event type lists it (VehicleClass
+        /// rows of a RaceableClassFormats format whose VehicleClassType types are all drawable), by id.
+        public static int[] RaceableClasses
+        {
+            get
+            {
+                lock (gate) { if (_raceable != null) return _raceable; }
+                var tables = Tables;
+                List<Dictionary<string, object>> T(string n) => tables.TryGetValue(n, out var r) ? r : new List<Dictionary<string, object>>();
+                var classTypes = T("VehicleClassType").GroupBy(r => Rfx.Int(r, "VehicleClassId")).ToDictionary(g => g.Key, g => g.Select(r => Rfx.Int(r, "VehicleTypeId")).ToArray());
+                var list = T("VehicleClass").Where(r => RaceableClassFormats.Contains(Rfx.Str(r, "Format") ?? "")).Select(r => Rfx.Int(r, "VehicleClassId")).Distinct()
+                    .Where(c => classTypes.TryGetValue(c, out var ts) && ts.Length > 0 && ts.All(DrawableVehicleTypes.Contains)).OrderBy(c => c).ToArray();
+                lock (gate) return _raceable ??= list;
+            }
+        }
+        static int[] _raceable;
+
         /// Rebuilds All after a filter change.
-        public static void Refresh() { lock (gate) { _all = null; _anyLevel = null; _restored = null; } }
+        public static void Refresh() { lock (gate) { _all = null; _anyLevel = null; _restored = null; _raceable = null; } }
 
         // ------------------------------------------------------------------------------------------- tables, as the game merges them
 
@@ -387,6 +404,33 @@ namespace Reflex.Port.Content
                         },
                         vehicleClasses = template.vehicleClasses, atv = template.Atv, aliveRace = true,
                     });
+                }
+                if (alive && accept("FreeRide")) foreach (var entry in UnleashedLevels.All)
+                    list.Add(new Event {
+                        key="FreeRide/"+entry.level, typeName="Free Ride", location=entry.level,
+                        locationLocId=-1, eventTypeLocationId=-1, storeProductId=-1, sort=30000+list.Count,
+                        tables="UnleashedConvertedMaps", sceneSection=entry.level+"FreeRide",
+                        spec=new ReflexWorldFiles.EventSpec { type="FreeRide", location=entry.level, durationType="", typeId=9,
+                            locationId=-1, trackId=0, vehicleClass=-1, riders=1, ai=0, duration=0, activity=8 }
+                    });
+                if (alive) foreach(var entry in UnleashedLevels.All)
+                {
+                    string act=entry.race_type;
+                    if(string.IsNullOrEmpty(act)||!accept(act))continue;
+                    // a freestyle (FMX) arena and a machine challenge course are Free Ride maps only: their source has a closed route, so the
+                    // importer wrote a race for them, but Unleashed runs no lap race there
+                    if(string.Equals(entry.kind,"Freestyle",StringComparison.OrdinalIgnoreCase)
+                       ||(entry.kind??"").StartsWith("machine challenge",StringComparison.OrdinalIgnoreCase))continue;
+                    var template=list.FirstOrDefault(e=>e.spec.type==act&&!e.Dlc&&e.vehicleClasses.Length>0);
+                    if(template==null)continue;
+                    int engine=ActivityIndex(act);
+                    list.Add(new Event { key=act+"/"+entry.level,typeName=template.typeName,location=entry.level,
+                        locationLocId=-1,eventTypeLocationId=-1,storeProductId=-1,sort=30000+list.Count,
+                        tables="UnleashedConvertedMaps",sceneSection=SceneSection(engine,entry.level,0),
+                        vehicleClasses=template.vehicleClasses,atv=template.Atv,
+                        spec=new ReflexWorldFiles.EventSpec {type=act,location=entry.level,durationType=template.spec.durationType,
+                            typeId=template.spec.typeId,locationId=-1,trackId=0,vehicleClass=template.spec.vehicleClass,
+                            riders=1,ai=0,duration=template.spec.duration,activity=engine} });
                 }
                 return list.OrderBy(e => e.spec.activity).ThenBy(e => e.sort).ToList();
             }

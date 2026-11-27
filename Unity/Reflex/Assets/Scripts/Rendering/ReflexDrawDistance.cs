@@ -11,8 +11,9 @@
 //             switch-in and switch-out distance), the draw-distance fade dithered (opaque, so the object keeps casting its shadow) and a
 //             model kept as a shadow caster after its draw distance (OriginalSceneryLod.cs)
 //   grass     the cell window times GrassScale (OriginalForest.cs)
-//   shadows   the shadow distance times ShadowScale (ENHANCED: its tier's) or OriginalLightingShadowScale (ORIGINAL lighting: the project's 50) with cascade splits to
-//             match (ReflexEnhancedLighting, ReflexDrawDistanceDriver below)
+//   shadows   the shadow distance times ShadowScale (the lighting tier's distance) with cascade splits to match (ReflexEnhancedLighting).
+//             OriginalLightingShadowScale / ReflexDrawDistanceDriver's shadow distance only run under the developers' REFLEX_LIGHTING=original
+//             (and in the menus, where no level's lighting is active)
 // REFLEX_DRAW_DISTANCE=original|high|ultra sets it at start (tests). Distances are in world units (the level's feet).
 using System;
 using UnityEngine;
@@ -38,7 +39,7 @@ namespace Reflex.Port.Rendering
         public static float GrassScale => Level == 2 ? 1.8f : Level == 1 ? 1.4f : 1f;
         /// ENHANCED lighting: the main-light shadow distance (its tier's) times this.
         public static float ShadowScale => Level == 2 ? 3f : Level == 1 ? 2f : 1f;
-        /// ORIGINAL lighting: the project's 50 units (15 m: only the bikes, the riders and the forest's 3D trees cast, so a longer reach is cheap) times this.
+        /// Developers' ORIGINAL lighting (REFLEX_LIGHTING=original) and the menus: the project's 50 units (15 m: only the bikes, the riders and the forest's 3D trees cast, so a longer reach is cheap) times this.
         public static float OriginalLightingShadowScale => Level == 2 ? 5f : Level == 1 ? 3f : 1f;
         /// Cross-fade half-width of a tree LOD record edge: a share of the edge's distance, at least MinBand (world units, before the scale).
         public const float TreeBandShare = 0.07f, TreeBandMin = 4f;

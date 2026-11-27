@@ -45,6 +45,9 @@ namespace Reflex.Port.OriginalWorld
             public OriginalTerrain terrain;
             /// Seconds since the last frame while the race runs (0 while paused); preview: seconds while the editor previews over a paused race.
             public float dt, preview;
+            /// (w-watchghost) A camera that is not the game's (WATCH GHOST's synthesised chase camera): the steady distance is only read, never
+            /// learned from it (the table is static: the live driving camera's); not known yet, its own distance is the steady one.
+            public bool noLearn;
         }
 
         const float BlendTime = 0.45f, Clearance = 1.6f, BuzzHz = 15f, JoltHz = 7f, NearBike = 60f;
@@ -83,7 +86,8 @@ namespace Reflex.Port.OriginalWorld
             bool cut = !have || (f.bike - lastBike).sqrMagnitude > 30f * 30f;   // (the game put the bike back on the track: cut, do not swoop)
             settled = f.riding && chasing && !f.wrecked && !cut ? settled + dt : 0f;
             Vector3 rel = f.gamePos - f.bike; float gameDist = rel.magnitude;
-            float hold = Hold(f.holdKey, gameDist, settled, dt);
+            float hold = Hold(f.holdKey, gameDist, settled, f.noLearn ? 0f : dt);
+            if (f.noLearn && hold <= 0f && gameDist > 0.5f) hold = gameDist;
             HoldDistance = hold; GameDistance = gameDist;
             float target = f.riding && chasing && (hold > 0f || f.preview > 0f) ? 1f : 0f;
             weight = !have ? target : Mathf.MoveTowards(weight, target, step / BlendTime);
@@ -146,9 +150,21 @@ namespace Reflex.Port.OriginalWorld
 
             // the field of view: the built-in's (CHASE CAMERA FOV) blended to the preset's
             float baseFov = Reflex.Port.Options.ReflexClientLive.ChaseFov(f.gameFov) * Mathf.Rad2Deg;
-            float own = p.fovMode == 1 ? OriginalOnboardCamera.VerticalFov(p.fovDegrees, f.aspect)
+            float own = p.fovMode == 1 ? OriginalOnboardCamera.ViewFov(p.fovDegrees, f.aspect)
                                        : Mathf.Clamp(2f * Mathf.Atan(Mathf.Tan(f.gameFov * 0.5f) * p.fovScale / 100f), 0.1f, 2.9f) * Mathf.Rad2Deg;
             fovDeg = Mathf.Lerp(baseFov, own, w);
+            fovBase = baseFov; fovBlend = w; fovOwn = p.fovMode == 1 ? p.fovDegrees : 0f;
+            return true;
+        }
+
+        // SPLIT SCREEN (w-split): the screen was cut in two (or put back) after this frame's Apply: the field of view of the last Apply for
+        // the view's new aspect (only a preset set in degrees depends on it; false: nothing to change).
+        float fovBase, fovBlend, fovOwn;
+        public bool Refov(float aspect, out float fovDeg)
+        {
+            fovDeg = 0f;
+            if (!(fovOwn > 0f)) return false;
+            fovDeg = Mathf.Lerp(fovBase, OriginalOnboardCamera.ViewFov(fovOwn, aspect), fovBlend);
             return true;
         }
 
@@ -166,8 +182,10 @@ namespace Reflex.Port.OriginalWorld
         // MX (the runtime passes MX for a world without vehicle info): the game camera's steady distance measured headless (camera_distance_probe,
         // NAT_Concord / NAT_Stillwater / SX_Kingston, 35 ft/s): VISUAL 12.4 ft, GAME PLAY and USER 13.0 .. 13.2 ft (14.1 at 60 ft/s). 0: not measured
         static float Measured(int key) => key / 4 - 1 == 0 ? (key % 4 == 0 ? 12.4f : 13.1f) : 0f;
+        /// The measured steady distance of a key (0: not measured; ReflexChaseProfile's default BACK, w-watchghost).
+        public static float MeasuredHold(int key) => key >= 0 && key < HoldKeys ? Measured(key) : 0f;
 
-        // the steady distance for this frame (0: not known yet); learns a vehicle / view without a measurement while it rides settled
+        // the steady distance for this frame (0: not known yet); learns a vehicle / view without a measurement while it rides settled (dt 0: read only)
         static float Hold(int key, float gameDist, float settledFor, float dt)
         {
             if (key < 0 || key >= HoldKeys) return 0f;

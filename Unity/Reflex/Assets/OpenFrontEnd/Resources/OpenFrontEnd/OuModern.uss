@@ -92,8 +92,11 @@
     color: rgba(246, 246, 244, 0.78);
 }
 
-/* pad glyphs: a round cap in the pad's own colour (Xbox A green, B red, X blue, Y yellow; PlayStation the same way) */
-.ou-frontend .mxa-key-pad {
+/* pad glyphs: a round cap in the pad's own colour (Xbox A green, B red, X blue, Y yellow; PlayStation the same way). Each selector also
+   names .mxa-key: the shell's skeletons (Hub.uxml, Browser.uxml, Garage.uxml, Setup.uxml) carry OuFrontEnd.uss, and CloneTree leaves it on
+   the page layer for the rest of the session; a sheet deeper in the tree wins a tie, so its plain .ou-frontend .mxa-key (grey, radius 4)
+   drew every pad cap of a page in that layer as a keyboard key after the hub was shown once. One class more wins over it wherever it is. */
+.ou-frontend .mxa-key.mxa-key-pad {
     min-width: 34px;
     height: 34px;
     padding: 0;
@@ -102,12 +105,12 @@
     -unity-text-align: middle-center;
     color: rgb(12, 13, 17);
 }
-.ou-frontend .mxa-key-a { background-color: rgb(110, 214, 92); border-color: rgb(160, 240, 140); }
-.ou-frontend .mxa-key-b { background-color: rgb(240, 84, 76); border-color: rgb(255, 150, 140); }
-.ou-frontend .mxa-key-x { background-color: rgb(86, 156, 245); border-color: rgb(150, 200, 255); }
-.ou-frontend .mxa-key-y { background-color: rgb(250, 208, 70); border-color: rgb(255, 230, 140); }
-.ou-frontend .mxa-key-shoulder { border-radius: 8px; width: auto; padding: 0 10px; background-color: rgba(255, 255, 255, 0.82); border-color: rgb(255, 255, 255); }
-.ou-frontend .mxa-key-menu { border-radius: 8px; width: auto; padding: 0 10px; background-color: rgba(255, 255, 255, 0.82); border-color: rgb(255, 255, 255); }
+.ou-frontend .mxa-key.mxa-key-a { background-color: rgb(110, 214, 92); border-color: rgb(160, 240, 140); }
+.ou-frontend .mxa-key.mxa-key-b { background-color: rgb(240, 84, 76); border-color: rgb(255, 150, 140); }
+.ou-frontend .mxa-key.mxa-key-x { background-color: rgb(86, 156, 245); border-color: rgb(150, 200, 255); }
+.ou-frontend .mxa-key.mxa-key-y { background-color: rgb(250, 208, 70); border-color: rgb(255, 230, 140); }
+.ou-frontend .mxa-key.mxa-key-shoulder { border-radius: 8px; width: auto; padding: 0 10px; background-color: rgba(255, 255, 255, 0.82); border-color: rgb(255, 255, 255); }
+.ou-frontend .mxa-key.mxa-key-menu { border-radius: 8px; width: auto; padding: 0 10px; background-color: rgba(255, 255, 255, 0.82); border-color: rgb(255, 255, 255); }
 
 .ou-frontend .ou-statusbar {
     bottom: 34px;

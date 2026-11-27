@@ -86,6 +86,37 @@ namespace Reflex.Port.OpenFrontEnd
             }
         }
 
+        /// A pad is connected (tests: the injected device). With none, the glyphs are the keyboard's whatever was used last (a pad pulled out).
+        public static bool AnyPad => Injected.HasValue ? Injected.Value : Gamepad.all.Count > 0;
+
+        static bool s_shownSet; static OuGlyphs.Device s_shown;
+
+        // (the editor keeps statics between plays: Enter Play Mode Options skip the domain reload; each play seeds, hooks, draws and logs again)
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetPlay()
+        {
+            s_shownSet = false; seeded = false; pollFrame = -1;
+            try { Shutdown(); } catch (Exception) { subscription = null; hooked = false; }   // (Hook hooks again on the first Poll)
+        }
+
+        /// The device whose caps are shown (OuGlyphs.Current): when it differs from the one the caps were last drawn for, Changed (every legend
+        /// and page cap is drawn again). Called on a device switch (Note), a pad plugged in or out, and once a frame by the shell's Update
+        /// (CONTROLLER GLYPHS changed, anything else that moves it), so the caps follow on the frame it changes.
+        public static void Watch()
+        {
+            var d = OuGlyphs.Current;
+            if (s_shownSet && d == s_shown) return;
+            if (!s_shownSet)
+            {
+                var pads = Gamepad.all;
+                var names = new System.Text.StringBuilder();
+                for (int i = 0; i < pads.Count; i++) names.Append(i > 0 ? ", " : "").Append(pads[i].displayName);
+                Debug.Log("[OpenReflex] glyphs: " + d + " (" + pads.Count + " pad(s)" + (pads.Count > 0 ? ": " + names : "") + ", CONTROLLER GLYPHS " + Reflex.Port.Options.ReflexSettings.GlyphStyle + ")");
+            }
+            s_shown = d; s_shownSet = true;
+            Changed?.Invoke();
+        }
+
         /// The pad used last (null: none yet).
         public static Gamepad LastPad => lastPad != null && lastPad.added ? lastPad : Gamepad.current;
 
@@ -95,7 +126,7 @@ namespace Reflex.Port.OpenFrontEnd
             if (g != null) lastPad = g;
             if (padUsed == pad) return;
             pad = padUsed;
-            Changed?.Invoke();
+            Watch();   // (the caps flip now: Changed when the glyph device moved)
         }
 
         static void Hook()
@@ -104,18 +135,26 @@ namespace Reflex.Port.OpenFrontEnd
             hooked = true;
             try
             {
-                // any button press on any device: the control's device says which
+                // any button press on any device: the control's device says which (a mouse click counts as the keyboard)
                 subscription = InputSystem.onAnyButtonPress.Call(control =>
                 {
                     var d = control.device;
                     if (d is Gamepad g) Note(true, g);
-                    else if (d is Keyboard) Note(false);
+                    else if (d is Keyboard || d is Mouse) Note(false);
                 });
             }
             catch (Exception e) { Debug.LogWarning("[OpenReflex] device tracking: " + e.Message); }
+            InputSystem.onDeviceChange -= DeviceChanged; InputSystem.onDeviceChange += DeviceChanged;
         }
 
-        /// Once a frame: hooks the presses, and a stick pushed hard counts as the pad.
+        /// A pad plugged in or pulled out (the last one gone: the keyboard's caps; OuGlyphs.Current).
+        static void DeviceChanged(InputDevice device, InputDeviceChange change)
+        {
+            if (!(device is Gamepad)) return;
+            if (change == InputDeviceChange.Added || change == InputDeviceChange.Removed || change == InputDeviceChange.Disconnected || change == InputDeviceChange.Reconnected) Watch();
+        }
+
+        /// Once a frame: hooks the presses; a stick or the d-pad pushed counts as the pad, the mouse moved as the keyboard.
         public static void Poll()
         {
             if (pollFrame == Time.frameCount) return;
@@ -124,22 +163,24 @@ namespace Reflex.Port.OpenFrontEnd
             if (!seeded)
             {
                 seeded = true;
-                pad = Gamepad.current != null && Keyboard.current == null;
+                pad = Gamepad.all.Count > 0;   // (a pad connected at the start: its caps until the keyboard or mouse is used)
             }
             foreach (var g in Gamepad.all)
             {
-                if (g.leftStick.ReadValue().sqrMagnitude > 0.49f || g.rightStick.ReadValue().sqrMagnitude > 0.49f || g.dpad.ReadValue().sqrMagnitude > 0.1f) { Note(true, g); break; }
+                if (g.leftStick.ReadValue().sqrMagnitude > 0.49f || g.rightStick.ReadValue().sqrMagnitude > 0.49f || g.dpad.ReadValue().sqrMagnitude > 0.1f) { Note(true, g); return; }
             }
+            var mouse = Mouse.current;
+            if (mouse != null && mouse.delta.ReadValue().sqrMagnitude > 9f) Note(false);   // (more than 3 px: not a jitter)
         }
 
-        public static void Shutdown() { subscription?.Dispose(); subscription = null; hooked = false; }
+        public static void Shutdown() { subscription?.Dispose(); subscription = null; hooked = false; InputSystem.onDeviceChange -= DeviceChanged; }
     }
 
     /// Menu actions (keyboard + every gamepad). The direction repeat is shared by every instance.
     public class OuMenuInput : IDisposable
     {
         readonly InputActionMap _map;
-        Gamepad submittedPad;
+        Gamepad submittedPad, cancelledPad;
         readonly InputAction _move, _submit, _cancel, _tabPrev, _tabNext, _alt, _find, _pagePrev, _pageNext, _look, _zoomIn, _zoomOut;
 
         // One hold for the whole process: a rebuilt page (new OuMenuInput) goes on with the direction that is held instead of firing it
@@ -171,6 +212,7 @@ namespace Reflex.Port.OpenFrontEnd
             _cancel = _map.AddAction("Cancel", InputActionType.Button);
             _cancel.AddBinding("<Keyboard>/escape");
             _cancel.AddBinding("<Gamepad>/buttonEast");
+            _cancel.performed += context => cancelledPad = context.control.device as Gamepad;
             _tabPrev = _map.AddAction("TabPrev", InputActionType.Button);
             _tabPrev.AddBinding("<Keyboard>/q");
             _tabPrev.AddBinding("<Keyboard>/pageUp");
@@ -233,16 +275,28 @@ namespace Reflex.Port.OpenFrontEnd
         }
 
         static bool Take(ref bool b) { bool v = b; b = false; return v; }
+        /// SPLIT SCREEN (w-split, the setup page's PLAYERS tab): a gamepad's A (cancel false) or B (cancel true) offered first to the page; true:
+        /// taken (a second controller joining or leaving), the menu does not see the press. Must answer the same for every read in a frame.
+        public static Func<Gamepad, bool, bool> PadPress;
         public bool Submit
         {
             get
             {
                 bool actual = _submit.WasPressedThisFrame();
+                if (actual && submittedPad != null && PadPress != null && PadPress(submittedPad, false)) actual = false;
                 if (actual) Reflex.Port.OriginalWorld.LocalGamepadRouting.RememberMenuSubmit(submittedPad);
                 return Take(ref injectSubmit) | actual;
             }
         }
-        public bool Cancel => Take(ref injectCancel) | _cancel.WasPressedThisFrame();
+        public bool Cancel
+        {
+            get
+            {
+                bool actual = _cancel.WasPressedThisFrame();
+                if (actual && cancelledPad != null && PadPress != null && PadPress(cancelledPad, true)) actual = false;
+                return Take(ref injectCancel) | actual;
+            }
+        }
         public int Tab { get { int t = injectTab; injectTab = 0; return t != 0 ? t : (_tabNext.WasPressedThisFrame() ? 1 : 0) - (_tabPrev.WasPressedThisFrame() ? 1 : 0); } }
         public bool Alt => Take(ref injectAlt) | _alt.WasPressedThisFrame();
         public bool Find => Take(ref injectFind) | _find.WasPressedThisFrame();

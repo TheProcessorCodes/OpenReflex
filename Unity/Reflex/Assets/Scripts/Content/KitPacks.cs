@@ -108,12 +108,15 @@ namespace Reflex.Port.Content
         /// The packs under root (pure file system walk): every MXTables_*.dx9.database with its .dx9.package is one pack, read with the other
         /// databases of its folder. archive(path) is asked about each archive file found (the Unity side installs it; tests: null = ignore) and
         /// returns a problem to list or null. Junk and dot folders (".installing") are skipped. Ordered by id.
-        public static List<KitPack> Scan(string root, List<Problem> problems, Func<string, string> archive = null)
+        /// skip(dir): a folder not to enter (MODS ANYWHERE, ReflexMods.cs: the rest of Mods is scanned after Mods/Gear, which is skipped
+        /// there); idPrefix: put before each pack's id ("../": a pack outside Mods/Gear).
+        public static List<KitPack> Scan(string root, List<Problem> problems, Func<string, string> archive = null, Func<string, bool> skip = null, string idPrefix = null)
         {
             var packs = new List<KitPack>();
             if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return packs;
             void Walk(string dir, int depth)
             {
+                if (skip != null && skip(dir)) return;
                 string[] files, dirs;
                 try { files = Directory.GetFiles(dir); dirs = Directory.GetDirectories(dir); }
                 catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { problems?.Add(new Problem { where = dir, why = "not readable (" + e.Message + ")" }); return; }
@@ -126,6 +129,7 @@ namespace Reflex.Port.Content
                         if (!byLower.ContainsKey(t.Substring(0, t.Length - DbExt.Length) + PkgExt)) { problems?.Add(new Problem { where = byLower[t], why = "the " + baseName + PkgExt + " beside it is missing (the download may be incomplete)" }); continue; }
                         string rel = ReflexMods.RelativeId(root, dir) ?? Path.GetFileName(dir);
                         if (string.IsNullOrEmpty(rel) || rel == ".") rel = baseName;
+                        if (idPrefix != null) rel = idPrefix + rel;
                         var p = new KitPack { id = tables.Count > 1 ? rel + "#" + baseName : rel, name = depth == 0 ? baseName : Path.GetFileName(dir.TrimEnd('/', '\\')), folder = dir, tables = baseName };
                         string why = Load(p, byLower, extracted: false);
                         if (why != null) problems?.Add(new Problem { where = Path.Combine(dir, baseName + DbExt), why = why });

@@ -70,6 +70,7 @@ Shader "Reflex/Original HFTerrain"
         _AliveLayerMean1("ALIVE LOOK: mean colour of detail red", Vector) = (0.5, 0.5, 0.5, 1)
         _AliveLayerMean2("ALIVE LOOK: mean colour of detail green", Vector) = (0.5, 0.5, 0.5, 1)
         _AliveLayerMean3("ALIVE LOOK: mean colour of detail blue", Vector) = (0.5, 0.5, 0.5, 1)
+        _UnleashedDetail("Unleashed stochastic detail", Float) = 0
         _DetailTile("usr_detail_tile (base, red, green, blue)", Vector) = (32, 32, 32, 32)
         // raw constants: Vector, not Color (a Color property is converted gamma -> linear in the linear project: fog 0.612 became 0.332)
         _DirtTint("usr_dirt_tint_color", Vector) = (0.4, 0.3, 0.05, 1)
@@ -83,6 +84,10 @@ Shader "Reflex/Original HFTerrain"
         _DetailParams("Detail mip bias, chroma scale", Vector) = (-0.67, 0.25, 0, 0)
         _MtxSourceColour("MTX authored colour", Float) = 0
         _MtxDetail("MTX coarse breakup, fine grain, fade distance, grain normalization", Vector) = (0, 0, 240, 0)
+        [NoScaleOffset] _UxOvMap("Untamed ground overlay: uv (rg), weight (b: > 0 layer A, < 0 layer B)", 2D) = "black" {}
+        [NoScaleOffset] _UxOvA("Untamed ground overlay A (the ruts)", 2D) = "white" {}
+        [NoScaleOffset] _UxOvB("Untamed ground overlay B (the jump sides)", 2D) = "white" {}
+        _UxOv("Untamed ground overlay: on", Vector) = (0, 0, 0, 0)
         _RTBumpNeutral("RT_Bump neutral sample", Vector) = (0.5, 1, 0, 1)
         _DeformNeutral("Deformation neutral sample", Vector) = (0.50196081, 0, 0, 0)
         [NoScaleOffset] _DeformMap("Engine s10 live deformation surface (set at runtime)", 2D) = "gray" {}
@@ -110,6 +115,7 @@ Shader "Reflex/Original HFTerrain"
 
         HLSLINCLUDE
         #include "ReflexTerrainInput.hlsl"
+            #include "UnleashedDetail.hlsl"
         ENDHLSL
 
         Pass
@@ -130,6 +136,7 @@ Shader "Reflex/Original HFTerrain"
             #pragma instancing_options assumeuniformscaling nomatrices nolightprobe nolightmap
             #pragma multi_compile_local_fragment _ _HFT_4D_CL_S _HFT_SX_FY _HFT_FMX_FF
             #pragma multi_compile_fragment _ _RFX_ENHANCED
+            #pragma multi_compile_local_fragment _ _UNLEASHED_DETAIL   // Unleashed terrain only (UnleashedDetail.hlsl); every other terrain compiles the original taps
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             TEXTURE2D(_ChromLumMap);            SAMPLER(sampler_ChromLumMap);
             #define RFX_ALIVE_SAMPLER sampler_ChromLumMap   // (the bounce light volume: no sampler register left)
@@ -144,9 +151,11 @@ Shader "Reflex/Original HFTerrain"
             TEXTURE2D(_SphericalLightMap);      SAMPLER(sampler_SphericalLightMap);
             TEXTURE2D(_SphericalReflectionMap); SAMPLER(sampler_SphericalReflectionMap);
             TEXTURE2D(_ShadowVisMap);           SAMPLER(sampler_ShadowVisMap);
+            TEXTURE2D(_UxOvMap); TEXTURE2D(_UxOvA); TEXTURE2D(_UxOvB);   // UNTAMED GROUND OVERLAY (samplers: ChromLum's and the base detail layer's)
             TEXTURE2D(_AliveVT0); TEXTURE2D(_AliveVT1); TEXTURE2D(_AliveVT2); TEXTURE2D(_AliveVT3);   // AliveTerrainVT rings (sampler: ChromLum's)
             #define RFX_ENH_OCC_SAMPLER sampler_TopDownMap   // ENHANCED: the terrain already uses all 16 sampler registers
             #define RFX_ENH_SKY_SAMPLER sampler_TopDownMap   // (WEATHER: the sky cube in the wet ground and puddles, the same)
+            #define RFX_WX_SNOW_SAMPLER sampler_TrackMap     // (WEATHER: the snow trail map, bilinear / clamp like the tyre-track map)
             #include "ReflexEnhanced.hlsl"
             #include "ReflexShadows.hlsl"
             #include "ReflexWeather.hlsl"   // WEATHER (ENHANCED only, behind a uniform branch: Scripts/Rendering/ReflexWeather.cs)
@@ -173,8 +182,7 @@ Shader "Reflex/Original HFTerrain"
                 Varyings o = (Varyings)0;
                 UNITY_SETUP_INSTANCE_ID(v);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
-                ReflexTerrainInstancing(v.positionOS, v.normalOS, v.texcoord);
-                o.positionWS = RfxRTBumpDisplace(TransformObjectToWorld(v.positionOS.xyz));
+                o.positionWS = ReflexTerrainVertexWS(v.positionOS, v.normalOS, v.texcoord);
                 o.positionCS = TransformWorldToHClip(o.positionWS);
                 o.normalWS = TransformObjectToWorldNormal(v.normalOS);
                 o.terrainUV = v.texcoord;
@@ -305,12 +313,14 @@ Shader "Reflex/Original HFTerrain"
                         float3 wn = float3(0, 1, 0);
                         if (aw.puddle > 0.001 && dist < 70.0)
                         {
-                            float2 rg = RfxWeatherRipples(P.xz, _RfxWeather2.w, _RfxWeather2.y) * saturate(_RfxWeather2.y * 4.0);
-                            wn = normalize(float3(-rg.x * 0.35, 1.0, -rg.y * 0.35));
+                            float2 rg = RfxWeatherRipples(P.xz, _RfxWeather2.w, _RfxWeather2.y) * saturate(_RfxWeather2.y * 4.0) * 0.35
+                                      + RfxWeatherWavelets(P.xz, _RfxWeather2.w) * (0.035 * saturate(aw.depth * 3.0));
+                            wn = normalize(float3(-rg.x, 1.0, -rg.y));
                         }
-                        float3 sunW = saturate(dot(aw.N, _RfxSunDir.xyz)) * visibility * _RfxSunColor.rgb;
+                        float3 sunRawW = visibility * _RfxSunColor.rgb;
+                        float3 sunW = saturate(dot(aw.N, _RfxSunDir.xyz)) * sunRawW;
                         float3 lightW = RfxAliveAmbient(aw.N, P) + sunW;
-                        colour = RfxWeatherGroundShade(aw, albedo, lightW, 0, sunW, Vw, RfxWeatherReflection(reflect(Vw, aw.N), 0.55), RfxWeatherReflection(reflect(Vw, wn), 0.0), wn);
+                        colour = RfxWeatherGroundShade(aw, albedo, lightW, 0, sunW, sunRawW, Vw, RfxWeatherReflection(reflect(Vw, aw.N), 0.5), RfxWeatherReflection(reflect(Vw, wn), 0.0), wn);
                     }
                 #endif
                     float fog = saturate((dist - _FogParams.x) / max(1, _FogParams.y - _FogParams.x));
@@ -458,13 +468,14 @@ Shader "Reflex/Original HFTerrain"
                     N = rfxW.N;
                     if (rfxW.puddle > 0.001 && dist < 70.0)
                     {
-                        float2 rg = RfxWeatherRipples(P.xz, _RfxWeather2.w, _RfxWeather2.y) * saturate(_RfxWeather2.y * 4.0);
-                        rfxWaterN = normalize(float3(-rg.x * 0.35, 1.0, -rg.y * 0.35));
+                        float2 rg = RfxWeatherRipples(P.xz, _RfxWeather2.w, _RfxWeather2.y) * saturate(_RfxWeather2.y * 4.0) * 0.35
+                                  + RfxWeatherWavelets(P.xz, _RfxWeather2.w) * (0.035 * saturate(rfxW.depth * 3.0));
+                        rfxWaterN = normalize(float3(-rg.x, 1.0, -rg.y));
                     }
                     if (_RfxWeatherDebug.x > 0.5)
                     {
                         float k = _RfxWeatherDebug.x;
-                        float3 dbg = k < 1.5 ? float3(rfxW.puddle, rfxW.edge, rfxW.wet * 0.3) : k < 2.5 ? float3(rfxW.snow, rfxW.trail, rfxW.mudTrail)
+                        float3 dbg = k < 1.5 ? float3(rfxW.puddle, rfxW.edge, rfxW.depth) : k < 2.5 ? float3(rfxW.snow * (1.0 - rfxW.packed), max(rfxW.trail, rfxW.packed), rfxW.rim)
                                    : k < 3.5 ? float3(saturate(-dmW * 14.0), saturate(dmW * 14.0), saturate(conc * 60.0)) : float3(trk, trkWide, saturate(basin * 3.0));
                         return half4(dbg, 1);
                     }
@@ -584,16 +595,37 @@ Shader "Reflex/Original HFTerrain"
 
                 // Detail layers (0cf4..0dcc), D3D uv * tile with Unity v = 1 - v_d3d * tile.
                 float bias = _DetailParams.x;
+            #if defined(_UNLEASHED_DETAIL)
+                // Unleashed terrain (ReflexTerrainMaterial.BuildUnleashedSurface): the layers without their repeat, instead of the plain taps
+                float4 dBase=UnleashedSampleBias(TEXTURE2D_ARGS(_DetailBase,sampler_DetailBase),uv*_DetailTile.x,bias);
+                float4 dRed=UnleashedSampleBias(TEXTURE2D_ARGS(_DetailRed,sampler_DetailRed),uv*_DetailTile.y,bias);
+                float4 dGreen=UnleashedSampleBias(TEXTURE2D_ARGS(_DetailGreen,sampler_DetailGreen),uv*_DetailTile.z,bias);
+                float4 dBlue=UnleashedSampleBias(TEXTURE2D_ARGS(_DetailBlue,sampler_DetailBlue),uv*_DetailTile.w,bias);
+            #else
                 float4 dBase  = SAMPLE_TEXTURE2D_BIAS(_DetailBase,  sampler_DetailBase,  FlipV(uv * _DetailTile.x), bias);
                 float4 dRed   = SAMPLE_TEXTURE2D_BIAS(_DetailRed,   sampler_DetailRed,   FlipV(uv * _DetailTile.y), bias);
                 float4 dGreen = SAMPLE_TEXTURE2D_BIAS(_DetailGreen, sampler_DetailGreen, FlipV(uv * _DetailTile.z), bias);
                 float4 dBlue  = SAMPLE_TEXTURE2D_BIAS(_DetailBlue,  sampler_DetailBlue,  FlipV(uv * _DetailTile.w), bias);
+            #endif
                 float4 detail = lerp(dBase, dRed, w.r);
                 detail = lerp(detail, dGreen, w.g);
                 detail = lerp(detail, dBlue, w.b);
             #if defined(_HFT_SX_FY)
                 detail = lerp(dRed, detail, maskScale * rutFlat);         // 180c -> 1c14 -> 1d30: deformation amount AND adjacent rut slope
             #endif
+                // UNTAMED GROUND OVERLAY (not the original program; Content/UntamedImport/UxGroundOverlay.cs): an imported MX vs ATV Untamed
+                // stadium's painted ruts and jump-side dirt. Untamed multiplies a texture of the terrain material's own onto the dirt by a
+                // weight painted per vertex, through that material's texture coordinates (the ruts: one strip along the lap). The converter
+                // baked the coordinates and the weight onto the height grid (_UxOvMap, texel centres at the grid nodes as the other maps):
+                // detail x lerp(1, A, w) on the lanes (w > 0), x lerp(1, B, -w) on the jump sides (w < 0).
+                if (_UxOv.x > 0.5)
+                {
+                    float3 ovm = SAMPLE_TEXTURE2D_LOD(_UxOvMap, sampler_ChromLumMap, uvU, 0).rgb;
+                    float2 ovUV = FlipV(ovm.xy);
+                    float3 ovA = SAMPLE_TEXTURE2D_BIAS(_UxOvA, sampler_DetailBase, ovUV, bias).rgb;
+                    float3 ovB = SAMPLE_TEXTURE2D_BIAS(_UxOvB, sampler_DetailBase, ovUV, bias).rgb;
+                    detail.rgb *= lerp(1.0, ovA, saturate(ovm.z * _UxOv.y)) * lerp(1.0, ovB, saturate(-ovm.z * _UxOv.z));
+                }
                 // Imported tracks only. Reuse native soil textures at two physical scales;
                 // no additional sampler, and no change to the deformation/track normal path.
                 if (_MtxDetail.x > 0.0)
@@ -664,7 +696,7 @@ Shader "Reflex/Original HFTerrain"
                     float3 sunW = sunLight * slm.a;
                 #endif
                     float3 Rw = reflect(V, N), Rp = reflect(V, rfxWaterN);
-                    colour = RfxWeatherGroundShade(rfxW, albedo, sunW + slm.rgb, spec, sunW, V, RfxWeatherReflection(Rw, 0.55), RfxWeatherReflection(Rp, 0.0), rfxWaterN);
+                    colour = RfxWeatherGroundShade(rfxW, albedo, sunW + slm.rgb, spec, sunW, sunLight, V, RfxWeatherReflection(Rw, 0.5), RfxWeatherReflection(Rp, 0.0), rfxWaterN);
                 }
             #endif
 
@@ -715,8 +747,7 @@ Shader "Reflex/Original HFTerrain"
             {
                 Varyings o = (Varyings)0;
                 UNITY_SETUP_INSTANCE_ID(v);
-                ReflexTerrainInstancing(v.positionOS, v.normalOS, v.texcoord);
-                float3 positionWS = RfxRTBumpDisplace(TransformObjectToWorld(v.positionOS.xyz));
+                float3 positionWS = ReflexTerrainVertexWS(v.positionOS, v.normalOS, v.texcoord);
                 float3 normalWS = TransformObjectToWorldNormal(v.normalOS);
             #if _CASTING_PUNCTUAL_LIGHT_SHADOW
                 float3 lightDirectionWS = normalize(_LightPosition - positionWS);
@@ -759,8 +790,7 @@ Shader "Reflex/Original HFTerrain"
                 Varyings o = (Varyings)0;
                 UNITY_SETUP_INSTANCE_ID(v);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
-                ReflexTerrainInstancing(v.positionOS, v.normalOS, v.texcoord);
-                o.positionCS = TransformWorldToHClip(RfxRTBumpDisplace(TransformObjectToWorld(v.positionOS.xyz)));
+                o.positionCS = TransformWorldToHClip(ReflexTerrainVertexWS(v.positionOS, v.normalOS, v.texcoord));
                 return o;
             }
 
@@ -790,8 +820,7 @@ Shader "Reflex/Original HFTerrain"
                 Varyings o = (Varyings)0;
                 UNITY_SETUP_INSTANCE_ID(v);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
-                ReflexTerrainInstancing(v.positionOS, v.normalOS, v.texcoord);
-                o.positionCS = TransformWorldToHClip(RfxRTBumpDisplace(TransformObjectToWorld(v.positionOS.xyz)));
+                o.positionCS = TransformWorldToHClip(ReflexTerrainVertexWS(v.positionOS, v.normalOS, v.texcoord));
                 o.normalWS = TransformObjectToWorldNormal(v.normalOS);
                 o.terrainUV = v.texcoord;
                 return o;

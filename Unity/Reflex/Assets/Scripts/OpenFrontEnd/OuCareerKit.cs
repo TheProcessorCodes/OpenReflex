@@ -207,17 +207,23 @@ namespace Reflex.Port.OpenFrontEnd
             var row = OuUi.Div("oc-legend-items", band); row.pickingMode = PickingMode.Ignore;
             var keys = new (string, string)[items.Length];
             for (int i = 0; i < items.Length; i++) keys[i] = (items[i].key, items[i].label);
-            OuUi.Hints(row, keys);
-            int n = 0;
-            foreach (var e in row.Children())
+            // the clicks are wired on every drawing: the bar is drawn again (new items) when the device in use changes
+            OuUi.Hints(row, r =>
             {
-                var click = items[n++].click;
-                if (click == null) { e.pickingMode = PickingMode.Ignore; continue; }
-                e.pickingMode = PickingMode.Position; e.AddToClassList("oc-legend-click");
-                e.RegisterCallback<ClickEvent>(ev => { if (ev.button != 0) return; OuSound.Play("Back"); click(); });
-            }
+                int n = 0;
+                foreach (var e in r.Children())
+                {
+                    var click = n < items.Length ? items[n++].click : null;
+                    if (click == null) { e.pickingMode = PickingMode.Ignore; continue; }
+                    e.pickingMode = PickingMode.Position; e.AddToClassList("oc-legend-click");
+                    e.RegisterCallback<ClickEvent>(ev => { if (ev.button != 0) return; OuSound.Play("Back"); click(); });
+                }
+            }, keys);
             return band;
         }
+
+        /// Item i of a Legend says label now.
+        public static void LegendLabel(VisualElement legend, int i, string label) => OuUi.HintLabel(legend?.Q(className: "oc-legend-items"), i, label);
 
         /// A patch button (the original's dotted plates with orange type; gold type and a lift when focused).
         public static VisualElement Button(string label, string name, Action submit, VisualElement parent, string cls = null)

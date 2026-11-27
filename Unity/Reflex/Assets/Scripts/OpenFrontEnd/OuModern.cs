@@ -169,7 +169,8 @@ namespace Reflex.Port.OpenFrontEnd
     {
         public enum Device { Keyboard, Xbox, PlayStation }
 
-        /// The device whose buttons are shown: CONTROLLER GLYPHS (Options), AUTO follows the device used last (OuDevice).
+        /// The device whose buttons are shown: CONTROLLER GLYPHS (Options); AUTO: the device used last (OuDevice.PadLast: a pad's button,
+        /// stick or d-pad, or a key, mouse click or mouse move), the keyboard's when no pad is connected.
         public static Device Current
         {
             get
@@ -180,7 +181,7 @@ namespace Reflex.Port.OpenFrontEnd
                     case 2: return Device.Xbox;
                     case 3: return Device.PlayStation;
                 }
-                if (!OuDevice.PadLast) return Device.Keyboard;
+                if (!OuDevice.PadLast || !OuDevice.AnyPad) return Device.Keyboard;
                 return PadIsPlayStation() ? Device.PlayStation : Device.Xbox;
             }
         }
@@ -217,6 +218,7 @@ namespace Reflex.Port.OpenFrontEnd
             new[] { "Q / E", "LB / RB", "L1 / R1" }, new[] { ", .", "R Stick", "R Stick" }, new[] { "- +", "LT / RT", "L2 / R2" },
             new[] { "T", "X", "Square" },   // the garage's TEST RIDE (keyboard T; after the Find family, so "X" keeps meaning Find)
             new[] { "Esc", "Menu", "Options" },   // the pause (after the Cancel family: "Esc" keeps meaning Cancel; a hint stores "Menu")
+            new[] { "Left", "LB", "L1" }, new[] { "Right", "RB", "R1" }, new[] { "Space", "View", "Create" },   // WATCH GHOST's rewind / forward / restart
         };
 
         /// The name on the device in use of the action whose name on some device is key (unknown names stay).
@@ -238,7 +240,9 @@ namespace Reflex.Port.OpenFrontEnd
                 case "X": case "Square": return "mxa-key-pad mxa-key-x";
                 case "Y": case "Triangle": return "mxa-key-pad mxa-key-y";
                 case "LB / RB": case "L1 / R1": case "LT / RT": case "L2 / R2": return "mxa-key-pad mxa-key-shoulder";
+                case "LB": case "RB": case "L1": case "R1": return "mxa-key-pad mxa-key-shoulder";   // (one of the pair: the leaderboards' vehicle chips)
                 case "Menu": case "Options": case "D-pad": case "R Stick": return "mxa-key-pad mxa-key-menu";
+                case "L Stick": case "RS": case "R3": case "View": case "Create": return "mxa-key-pad mxa-key-menu";   // (REPLAY / PHOTO MODE's hints)
             }
             return null;
         }

@@ -38,7 +38,8 @@ Shader "Reflex/Original HFT Tracks"
             TEXTURE2D(_SoftnessMask); SAMPLER(sampler_SoftnessMask);
 
             struct Attributes { float3 position : POSITION; float2 uv : TEXCOORD0; float2 attr : TEXCOORD1; };
-            struct Varyings { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; float2 attr : TEXCOORD1; float2 maskUV : TEXCOORD2; };
+            struct Varyings { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; float2 attr : TEXCOORD1; float2 maskUV : TEXCOORD2; float2 wedge : SV_ClipDistance0; };
+            float4 _RfxRTBumpClip0, _RfxRTBumpClip1;   // the near target's view wedge over the world (x, z, 1) (ReflexRTBump.ViewWedge); (0, 0, 1): none
 
             float4 _TrackWorld;   // xy: terrain centre (x, z), zw: half size (x, z)
 
@@ -51,6 +52,7 @@ Shader "Reflex/Original HFT Tracks"
                 o.positionCS = mul(UNITY_MATRIX_VP, float4(n, 0.5, 1));
                 o.uv = v.uv; o.attr = v.attr;
                 o.maskUV = n * 0.5 + 0.5;
+                o.wedge = float2(dot(_RfxRTBumpClip0.xyz, float3(v.position.xy, 1.0)), dot(_RfxRTBumpClip1.xyz, float3(v.position.xy, 1.0)));
                 return o;
             }
 

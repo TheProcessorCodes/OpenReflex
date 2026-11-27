@@ -59,6 +59,9 @@ namespace Reflex.Port.OriginalWorld
         /// The current trim (1 = the original level), also applied to the computer riders' engine packs (OriginalVehicleSound.Tick).
         public float FieldTrim => fieldTrim;
         float fieldTrim = 1f; bool fieldTrimInit;
+        /// SPLIT SCREEN (w-split): the local riders' event volume (OriginalVehicleSound.SplitLocalTrim while two riders are heard); 1 = none,
+        /// and a local rider's event then gets no volume command at all (the one-rider game's commands are as before).
+        public float LocalTrim = 1f;
 
         void UpdateFieldTrim(RxVehicleAudioState state, float dt)
         {
@@ -70,7 +73,8 @@ namespace Reflex.Port.OriginalWorld
                 {
                     var r = state.riders[i];
                     if ((r.flags & RxVehicleAudioRider.Valid) == 0 || (r.flags & RxVehicleAudioRider.LocalHuman) != 0) continue;
-                    float dx = r.px - lis.x, dy = r.py - lis.y, dz = r.pz - lis.z, d = Mathf.Sqrt(dx * dx + dy * dy + dz * dz);
+                    var h = audio.Hear(new Vector3(r.px, r.py, r.pz));   // (SPLIT SCREEN: what the nearer of the two listeners hears)
+                    float dx = h.x - lis.x, dy = h.y - lis.y, dz = h.z - lis.z, d = Mathf.Sqrt(dx * dx + dy * dy + dz * dz);
                     float ro = d <= FieldRolloffMin ? 1f : d >= FieldRolloffMax ? 0f : 1f - (d - FieldRolloffMin) / (FieldRolloffMax - FieldRolloffMin);
                     sum += ro * ro;
                 }
@@ -82,9 +86,10 @@ namespace Reflex.Port.OriginalWorld
         // the computer riders' events carry the trim as their event volume (Host sub-command 2, the same one the game's SetVolume uses)
         void PostFieldTrim(Emitter e)
         {
-            if (e.load == 0 || LocalHuman(e) || Mathf.Abs(e.postedTrim - fieldTrim) < 0.004f) return;
-            e.postedTrim = fieldTrim;
-            audio.Host(2, e.wrapperId, e.serial, e.path, null, fieldTrim, Vector3.zero, false);
+            bool local = LocalHuman(e); float trim = local ? LocalTrim : fieldTrim;   // (SPLIT SCREEN: the local riders' LocalTrim, posted only once it is not 1)
+            if (e.load == 0 || local && e.postedTrim < 0f && trim >= 1f || Mathf.Abs(e.postedTrim - trim) < 0.004f) return;
+            e.postedTrim = trim;
+            audio.Host(2, e.wrapperId, e.serial, e.path, null, trim, Vector3.zero, false);
         }
 
         // ------------------------------------------------------------------------------------------------ the emitter's tunables

@@ -1,7 +1,9 @@
 /* REPLAY and PHOTO MODE (Reflex.Port.Replay.ReflexReplayUi) over the world, in the OPEN REFLEX look (OuModern.uss: the logo's hot red,
    white and silver on near-black glass; Barlow Condensed ExtraBold Italic for titles, Barlow Condensed Bold for labels). Ported from
    Open Unleashed's MxaReplay.uss. Everything is scoped to .ou-replay (the viewer document's root). Reference size 1920 x 1080, scaled by
-   height (OPTIONS > INTERFACE > UI SCALE too). */
+   height (OPTIONS > INTERFACE > UI SCALE too). REPLAY and PHOTO MODE are one layout: the top row, the dock, the settings panel and the
+   hint bar are placed by ReflexReplayUi.Layout inside the Open front end's content frame (OuLayout.Insets), so nothing here has a
+   left / right / top / bottom of its own. */
 
 .ou-replay {
     --ou-red: rgb(232, 28, 36);
@@ -57,7 +59,6 @@
 
 .rp-top {
     position: absolute;
-    left: 56px; right: 56px; top: 40px;
     flex-direction: row;
     justify-content: space-between;
     align-items: flex-start;
@@ -133,11 +134,10 @@
     color: var(--ou-muted);
 }
 
-/* ------------------------------------------------------------------ transport (REPLAY) */
+/* ------------------------------------------------------------------ the dock (both faces: timeline, transport, time, the other face, EXIT) */
 
-.rp-transport {
+.rp-dock {
     position: absolute;
-    left: 56px; right: 56px; bottom: 104px;
     background-color: var(--ou-glass);
     border-radius: 6px;
     border-width: 1px;
@@ -239,6 +239,7 @@
 }
 
 .rp-icon-button {
+    flex-shrink: 0;
     width: 52px;
     height: 46px;
     border-radius: 4px;
@@ -271,13 +272,30 @@
 .rp-time {
     font-size: 24px;
     letter-spacing: 1px;
-    margin: 0 18px 0 12px;
-    min-width: 170px;
+    margin: 0 0 0 12px;
+    min-width: 150px;
+    flex-shrink: 0;
     color: var(--ou-text);
 }
 
 .rp-time-dim {
-    color: var(--ou-faint);
+    font-size: 19px;
+    letter-spacing: 2px;
+    min-width: 0;
+    margin-left: 4px;
+    color: var(--ou-muted);
+}
+
+.rp-chips {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.rp-chiprow {
+    flex-direction: row;
+    justify-content: flex-end;
+    margin-bottom: 8px;
 }
 
 .rp-spacer {
@@ -301,14 +319,14 @@
 }
 
 .rp-chip-label {
-    font-size: 15px;
+    font-size: 16px;
     letter-spacing: 2px;
-    color: var(--ou-faint);
+    color: var(--ou-muted);
     margin: 0 8px 0 8px;
 }
 
 .rp-chip-value {
-    font-size: 21px;
+    font-size: 22px;
     letter-spacing: 1px;
     color: rgb(255, 255, 255);
     -unity-text-align: middle-center;
@@ -316,7 +334,7 @@
 
 .rp-chip-arrow {
     font-size: 26px;
-    width: 26px;
+    width: 22px;
     -unity-text-align: middle-center;
     color: var(--ou-muted);
 }
@@ -326,6 +344,7 @@
 }
 
 .rp-text-button {
+    flex-shrink: 0;
     height: 46px;
     padding: 0 22px;
     margin-left: 10px;
@@ -362,8 +381,6 @@
 
 .rp-panel {
     position: absolute;
-    right: 40px; top: 108px; bottom: 104px;
-    width: 470px;
     background-color: var(--ou-glass);
     border-radius: 6px;
     border-width: 1px;
@@ -441,8 +458,8 @@
 }
 
 .rp-num-value {
-    font-size: 18px;
-    min-width: 70px;
+    font-size: 22px;
+    min-width: 74px;
     -unity-text-align: middle-right;
     margin-right: 4px;
 }
@@ -514,30 +531,11 @@
     color: rgb(255, 255, 255);
 }
 
-/* the photo face's moment strip (bottom left) */
-.rp-moment {
-    position: absolute;
-    left: 56px; bottom: 104px;
-    width: 640px;
-    background-color: var(--ou-glass);
-    border-radius: 6px;
-    border-width: 1px;
-    border-color: var(--ou-line);
-    padding: 10px 16px 12px 16px;
-}
-
-.rp-moment-row {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-}
-
 /* ------------------------------------------------------------------ toast, hints, hidden note */
 
 .rp-toast {
     position: absolute;
     left: 50%;
-    bottom: 190px;
     width: 560px;
     margin-left: -280px;
     flex-direction: row;
@@ -583,32 +581,47 @@
     white-space: normal;
 }
 
-.ou-replay .mxa-hints {
-    right: 56px;
-    bottom: 26px;
+/* the hint bar: the Open front end's (OuLayout places it over the legend band; OuModern's key caps, the pad's in the pad's colours), a
+   little denser than a menu page's because the viewer names up to ten keys; .rp-hints-compact when even that is wider than the frame */
+.ou-frontend.mxa-root.ou-replay .mxa-hints .mxa-hint {
+    margin-left: 30px;
 }
 
-.ou-replay .mxa-hint {
-    margin-left: 22px;
+.ou-frontend.mxa-root.ou-replay .mxa-hint-label {
+    font-size: 22px;
+    letter-spacing: 2px;
+    margin-left: 10px;
 }
 
-.ou-replay .mxa-key {
-    background-color: rgba(255, 255, 255, 0.16);
-    font-size: 15px;
-    padding: 2px 9px;
-    margin-right: 8px;
+/* a pad button with a name (the PlayStation pad's Triangle / Square / Circle / Cross): a pill around the word, not a circle under it */
+.ou-frontend.mxa-root.ou-replay .mxa-key-pad {
+    width: auto;
+    padding: 0 9px;
 }
 
-.ou-replay .mxa-hint-label {
-    font-size: 15px;
+.ou-frontend.mxa-root.ou-replay .rp-hints-compact .mxa-hint {
+    margin-left: 16px;
+}
+
+.ou-frontend.mxa-root.ou-replay .rp-hints-compact .mxa-hint-label {
+    font-size: 17px;
     letter-spacing: 1px;
-    color: var(--ou-muted);
+    margin-left: 7px;
+}
+
+.ou-frontend.mxa-root.ou-replay .rp-hints-compact .mxa-key {
+    font-size: 14px;
+    padding: 3px 8px;
+    min-width: 28px;
+}
+
+.ou-frontend.mxa-root.ou-replay .rp-hints-compact .mxa-key-pad {
+    height: 28px;
+    padding: 0 6px;
 }
 
 .rp-hidden-note {
     position: absolute;
-    right: 56px;
-    bottom: 26px;
     flex-direction: row;
     align-items: center;
     opacity: 0.85;
@@ -627,10 +640,11 @@
     opacity: 0.92;
 }
 
-/* the moment strip's parts sit flush (the transport's have margins) */
-.ou-replay .rp-section-flush { margin-left: 0; }
-.ou-replay .rp-time-flush { margin-right: 0; min-width: 0; }
-.ou-replay .rp-timeline-flush { margin-bottom: 0; }
+/* a focused row is the Open front end's (gold, dark text): the number rows' value and bar follow it */
+.ou-frontend.mxa-root.ou-replay .mxa-row:focus .rp-num-value { color: var(--oc-ink); }
+.ou-frontend.mxa-root.ou-replay .mxa-row:focus .rp-bar { background-color: rgba(14, 15, 15, 0.3); }
+.ou-frontend.mxa-root.ou-replay .mxa-row:focus .rp-bar-fill,
+.ou-frontend.mxa-root.ou-replay .mxa-row:focus .rp-bar-zero { background-color: var(--oc-ink); }
 
 /* the shell's buttons inside the panel take the panel's look */
 .ou-replay .rp-panel .mxa-button { border-left-width: 0; }

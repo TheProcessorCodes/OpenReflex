@@ -127,6 +127,14 @@ namespace Reflex.Port.Content
             c.Open();
             c.ReadScene();
             c.ParseLighting();
+            c.ApplyUnleashedEnvironment();
+            if(UnleashedLevels.Bound?.level==level && UnleashedLevels.Bound.environment_mode=="night")
+            {
+                c.lighting.sunColor=new Vector3(.26f,.34f,.50f);
+                for(int i=0;i<c.lighting.lightColors.Length;i++)c.lighting.lightColors[i]*=.38f;
+                c.lighting.bounceColor*=.28f;
+                c.lighting.fogColorStart=c.lighting.fogColorEnd=new Color(.025f,.035f,.055f,0);
+            }
             if (ExperimentalTerrain.For(level)) c.ApplyMtxLighting();   // the MTX venue's own light (ExperimentalMtxLighting.cs)
             c.ParseAnchors();
             c.stageTimes.Add($"open + scene {sw.ElapsedMilliseconds} ms");
@@ -195,7 +203,7 @@ namespace Reflex.Port.Content
             install = ReflexInstall.Packages;
             database = level;
             Rfx.Check(install.Has(level), "level database " + level + " missing in the install");
-            var db = install.Db(level); levelDb = db;
+            var db = install.Db(database); levelDb = db;
             // Packages the level lists in <level>.dx9.level (Shared + <level>Base); the Base package holds the scene's assets.
             var order = new List<string>();
             string levelFile = TrackMods.LevelFile(level, ".dx9.level");   // (a custom track's own: TrackMods)
@@ -218,7 +226,7 @@ namespace Reflex.Port.Content
             if (string.IsNullOrEmpty(name)) return null;
             foreach (var p in packageOrder) { var a = levelDb.Find(p)?.Find(name, type); if (a != null) return a; }
             if (engineDb != null) foreach (var pkg in engineDb.packages.Values) { var a = pkg.Find(name, type); if (a != null) return a; }
-            return null;
+            return unleashedEnvironment?.FindAsset(name,type);
         }
         Rfx.Database levelDb, engineDb;
 
@@ -260,6 +268,8 @@ namespace Reflex.Port.Content
 
         internal byte[] ReadAsset(string name, string type)
         {
+            string imported = UnleashedResource(name, type);
+            if (imported != null) return RxFiles.ReadAllBytes(imported);
             var a = FindAsset(name, type);
             Rfx.Check(a != null, $"{level}: {name}.{type} missing");
             return install.Read(a);
@@ -279,8 +289,12 @@ namespace Reflex.Port.Content
             entities = ReflexScene.Read(data, wanted.ToArray());
             // an MTX track (Content/ExperimentalMtxLighting.cs): Concord's terrain, light and sky, and (unless REFLEX_MTX_LIGHT=legacy) its distance fog and
             // HDR settings: the stock nationals' exposure, not the executable's defaults
-            if (ExperimentalTerrain.For(level)) entities = entities.Where(e => e.Type == "HFTerrainRSData" || e.Type == "AmbientDirectionalLightRSData" || e.Type == "SkyRSData"
-                || ExperimentalMtxLighting.Enabled && (e.Type == "DistanceFogRSData" || e.Type == "HDRSettingsRSData")).ToList();
+            if (ExperimentalTerrain.For(level))
+            {
+                var kit = UnleashedLevels.Bound?.level == level ? UnleashedStartGate.Keep(entities) : new List<SceneEntity>();   // (Reflex's start gate on an Unleashed race level)
+                entities = entities.Where(e => e.Type == "HFTerrainRSData" || e.Type == "AmbientDirectionalLightRSData" || e.Type == "SkyRSData"
+                    || ExperimentalMtxLighting.Enabled && (e.Type == "DistanceFogRSData" || e.Type == "HDRSettingsRSData") || kit.Contains(e)).ToList();
+            }
             sceneSections = wanted;
         }
         List<string> sceneSections;

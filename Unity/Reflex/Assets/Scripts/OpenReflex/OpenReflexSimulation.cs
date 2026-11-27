@@ -39,6 +39,7 @@ namespace Reflex.Port.RxCore
             public RxAppearance[] appearances;
             public RxTerrainInfo terrainInfo;
             public float[] heights, deformation;
+            public int secondLocalSlot = -1;   // SPLIT SCREEN (w-split): the second local rider's seat slot (-1: one local rider)
         }
         readonly bool prepareStartup;
         StartupData startupData;
@@ -58,7 +59,7 @@ namespace Reflex.Port.RxCore
         double startupLoadedAt = -1;
         // The Heat format re-creates its riders between the rounds (the AAA loading page: the session is Loading while the core rebuilds
         // the activity area, MXGame states 9 / 10): the roster of the next round, captured once the session runs again.
-        public sealed class RosterData { public RxSlot[] slots; public RxAppearance[] appearances; }
+        public sealed class RosterData { public RxSlot[] slots; public RxAppearance[] appearances; public int secondLocalSlot = -1; }
         RosterData rosterData;
         bool rosterDirty;
         public RosterData TakeRosterData() { lock (gate) { var data = rosterData; rosterData = null; return data; } }
@@ -69,7 +70,7 @@ namespace Reflex.Port.RxCore
         public const int MaxSlotNodes = 64;
         public const int MaxStandings = RxRiderCap.Max;   // RIDER CAP: every rider's standing (was 16)
         public const int MaxMud = RxRiderCap.Max + 1;   // [0] the local player, [1 + i] the tracked slots
-        public const int MaxParticles = 6000;   // 3000 drawn per manager (the original's cap)
+        public const int MaxParticles = 30000;   // the original's instance caps: 10000 for the normal manager (per 12 riders: 26,667 for a field of 32), 3000 for the additive one (00699e70)
         public const int MaxRaceLine = 64;
         public const int MaxAmbientEntities = 4096;   // the old plugin's OriginalAmbient.MaxEntities
         public const int MaxAmbientNodeFlags = 16384, MaxScenarioModels = 4096, MaxCrowdFlashes = 2048;
@@ -78,12 +79,42 @@ namespace Reflex.Port.RxCore
         public const int MaxTrackTriangles = 65536;   // the old plugin's MaxTrackTriangles (18 floats each)
         public const int MaxTrackRibbons = 72;        // 3 rings x 24 strips
 
+        /// SPLIT SCREEN (w-split): what one frame's getters answer for the second local rider (read in Collect's one view-player-1
+        /// window on the worker): the same structs the first rider's fields of Results carry, each with its flag. valid = the session has
+        /// two local riders and the window ran; slot = that rider's seat slot (-1 unknown), finished = its standings row's flag,
+        /// drivingCamera = the core's preset 0..3 of that rider (-1 unknown / another camera).
+        public sealed class View2
+        {
+            public bool valid;
+            public RxBikeState bike; public bool hasBike;
+            public RxOnboardState onboardState;
+            public RxRaceState race; public bool hasRace;
+            public RxHudState hud; public bool hasHud;
+            public RxWaypointState waypoint; public bool hasWaypoint;
+            public RxRaceFormatState raceFormat; public bool hasRaceFormat;
+            public RxRaceHudState raceHud; public bool hasRaceHud;
+            public RxStuntHudState stuntHud; public bool hasStuntHud;
+            public RxReflexHudState reflexHud; public bool hasReflexHud;
+            public RxChallengeState challenge; public bool hasChallenge;
+            public RxCompassState compass; public bool hasCompass;
+            public RxPowercrossHudState powercross; public bool hasPowercross;
+            public RxVehicleInfo vehicle; public bool hasVehicle;
+            public int slot = -1; public bool finished; public int drivingCamera = -1;
+            public void Clear()
+            {
+                valid = hasBike = hasRace = hasHud = hasWaypoint = hasRaceFormat = hasRaceHud = hasStuntHud = hasReflexHud = hasChallenge = hasCompass = hasPowercross = hasVehicle = finished = false;
+                slot = -1; drivingCamera = -1; onboardState = default;
+            }
+        }
+
         public sealed class Results
         {
             public ReplaySnapshot replay;                              // immutable camera/fade paired with this collected pose frame
             // The post-race presentation's cast (rx_podium_api.h, w-podium): collected while the activity is in Post. podiumRiderCount
             // podium RiderCharacters (their bones in podiumMatrices), podiumSlotCount slots' live rider / vehicle drawn flags.
             public bool hasPodium; public RxPodiumInfo podium;
+            /// The podium copy was taken during the race: the slots' drawn flags only (CollectPodium), no scenario cast.
+            public bool podiumRacing;
             public RxPodiumRider[] podiumRiders = new RxPodiumRider[MaxPodiumRiders]; public int podiumRiderCount;
             public float[] podiumMatrices = new float[MaxPodiumRiders * 69 * 16];
             public RxPodiumSlot[] podiumSlots = new RxPodiumSlot[RxRiderCap.Max]; public int podiumSlotCount;
@@ -113,6 +144,9 @@ namespace Reflex.Port.RxCore
             public RxResultsPage resultsPage;                                  // the results page's table once the page started (rx_session_results_page), else null
             public float[] bikePose = new float[MaxSlotNodes * 16]; public int bikeNodes;
             public RxCamera camera; public bool hasCamera;
+            // SPLIT SCREEN (RxSplitScreen): the second local rider's camera, and everything else read as that rider (rx_session_set_view_player 1)
+            public RxCamera camera2; public bool hasCamera2;
+            public readonly View2 view2 = new View2();
             public RxTerrainInfo terrainInfo; public bool hasTerrainInfo;
             public readonly List<TerrainPatch> terrain = new List<TerrainPatch>();   // the first one is the whole grid (rx_terrain_info)
             public RxParticleInfo particleInfo; public bool hasParticles;
@@ -182,6 +216,7 @@ namespace Reflex.Port.RxCore
         readonly float mapScaleBase; // BASE SCALE: the track's default scale (RxMapScale.Base at construction; 1 for the game's tracks)
         /// The scale the core made the track at (rx_session_map_scale), 1 before the event loads or without one.
         public float MapScale { get; private set; } = 1f;
+        readonly bool anyVehicle;    // ANY VEHICLE: a vehicle or class the event type never offered (RxAnyVehicle.Current at construction): no records
         readonly bool practice;      // PRACTICE: this session's lap race is endless (RxPracticeMode.Current at construction, a lap race only)
         /// The core made this session a practice session (rx_session_practice after the set; false before the event loads or without one).
         public bool Practice { get; private set; }
@@ -428,8 +463,18 @@ namespace Reflex.Port.RxCore
             try { if (RxApiNative.rx_session_set_free_air_looseness(s, looseness) != 0) Log("AIR LOOSENESS " + looseness + " refused: " + Clean(RxApiNative.rx_session_last_error(s))); }
             catch (EntryPointNotFoundException) { hasLoosenessExport = false; if (looseness > 0f) Log("rx_session_set_free_air_looseness is not exported by this librxcore; AIR LOOSENESS needs the current core"); }
         }
-        /// The air options changed in a race: the worker applies them before its next job (the next airborne step uses them).
-        public void SetFreeAir(float autoLevel, float snap, float looseness) => BetweenFrames(s => { ApplyAirHelpers(s, autoLevel, snap); ApplyFreeAirLooseness(s, looseness); });
+        /// LIP PULL (OPTIONS > OPEN REFLEX; core rx_session_set_lip_pull, w-lippull): 0 .. 1, how much of the original's rear-wheel-only wheelie limiter
+        /// the local player keeps on a steep face (it holds the bike down to a steep lip); 1 = the original (the default), 0 = none there.
+        public static volatile float GameLipPull = 1f;
+        bool hasLipPullExport = true;
+        void ApplyLipPull(IntPtr s, float lipPull)
+        {
+            if (!hasLipPullExport) return;
+            try { if (RxApiNative.rx_session_set_lip_pull(s, lipPull) != 0) Log("LIP PULL " + lipPull + " refused: " + Clean(RxApiNative.rx_session_last_error(s))); }
+            catch (EntryPointNotFoundException) { hasLipPullExport = false; if (lipPull < 1f) Log("rx_session_set_lip_pull is not exported by this librxcore; LIP PULL needs the current core"); }
+        }
+        /// The air options changed in a race: the worker applies them before its next job (the next airborne / grounded step uses them).
+        public void SetFreeAir(float autoLevel, float snap, float looseness, float lipPull = 1f) => BetweenFrames(s => { ApplyAirHelpers(s, autoLevel, snap); ApplyFreeAirLooseness(s, looseness); ApplyLipPull(s, lipPull); });
         /// FREE RIDE WITHOUT BORDERS (OPTIONS > OPEN REFLEX; core rx_session_set_free_ride_borders): 1 (the option's default) = in Free Ride no
         /// reset zones, no reset triggers but the deep-water ones, no cannonball (white-out) band, the terrain's edge only as a fall net (collision
         /// is the original's: w-dfcollide); 0 = the original's borders. Every new session takes it before its event loads; a running one gets it
@@ -444,6 +489,22 @@ namespace Reflex.Port.RxCore
             catch (EntryPointNotFoundException) { hasBordersExport = false; if (mode != 0) Log("rx_session_set_free_ride_borders is not exported by this librxcore; FREE RIDE WITHOUT BORDERS needs the current core"); }
         }
         public void SetFreeRideBorders(int mode) => BetweenFrames(s => ApplyFreeRideBorders(s, mode));
+        /// B.R.A.A.P. per-rider skill (core rx_session_set_ai_tier): the computer riders' skill tiers (0 All Time .. 3 Rookie), set by the worker
+        /// before its next frame. The riders not named keep the tier the event's AI OPPONENTS setting gave them.
+        public void SetAiTiers((int slot, int tier)[] tiers) { if (tiers != null && tiers.Length > 0) System.Threading.Interlocked.Exchange(ref pendingAiTiers, tiers); }
+        (int slot, int tier)[] pendingAiTiers;
+        /// (the worker, a ready session: kept until then, not dropped with a queue entry taken during the load states)
+        void ApplyAiTiers(IntPtr s)
+        {
+            var tiers = System.Threading.Interlocked.Exchange(ref pendingAiTiers, null);
+            if (tiers == null) return;
+            try
+            {
+                foreach (var (slot, tier) in tiers)
+                    if (RxApiNative.rx_session_set_ai_tier(s, slot, tier) != 0) Log("AI TIER slot " + slot + " -> " + tier + " refused: " + Clean(RxApiNative.rx_session_last_error(s)));
+            }
+            catch (EntryPointNotFoundException) { Log("rx_session_set_ai_tier is not exported by this librxcore; B.R.A.A.P. per-rider skill needs the current core"); }
+        }
 
         /// WEATHER GRIP (Rendering/ReflexWeather.GripFactor; core rx_session_set_weather_grip): rain and snow take grip off every tyre of the
         /// event (every rider, every class). The weather writes it every frame; the worker hands a changed value to the core before its next
@@ -462,13 +523,19 @@ namespace Reflex.Port.RxCore
         /// SPAWN MARKER (OPTIONS > OPEN REFLEX > SPAWN MARKERS; core rx_session_spawn_at): the local rider through the game's own reset to a spot,
         /// on the worker before its next job. `done` (on the worker) gets the core's answer (0 ok, 2 not a Free Ride, 3 not now; -1 an old core).
         /// instant (w-markerbtns; rx_session_spawn_at_instant): the same reset at once, without the reset key's 0.5 s white fade (an older core: the fade).
-        public void SpawnAt(float px, float py, float pz, float dx, float dz, Action<int> done = null, bool instant = false)
+        /// air (NOCLIP; rx_session_spawn_at_air): instant, with the vehicle left at exactly the spot to fall from there (an older core: instant).
+        public void SpawnAt(float px, float py, float pz, float dx, float dz, Action<int> done = null, bool instant = false, bool air = false)
         {
             BetweenFrames(s =>
             {
                 int rc = -1;
                 bool ran = false;
-                if (instant && hasSpawnInstant)
+                if (air && hasSpawnAir)
+                {   // (NOCLIP) the instant respawn with the vehicle left at exactly the spot (an older core: on the ground under it)
+                    try { rc = RxApiNative.rx_session_spawn_at_air(s, px, py, pz, dx, dz); ran = true; }
+                    catch (EntryPointNotFoundException) { hasSpawnAir = false; Log("rx_session_spawn_at_air is not exported by this librxcore; noclip puts the bike on the ground"); }
+                }
+                if (!ran && (instant || air) && hasSpawnInstant)
                 {
                     try { rc = RxApiNative.rx_session_spawn_at_instant(s, px, py, pz, dx, dz); ran = true; }
                     catch (EntryPointNotFoundException) { hasSpawnInstant = false; Log("rx_session_spawn_at_instant is not exported by this librxcore; the marker respawn keeps the reset's fade"); }
@@ -482,27 +549,31 @@ namespace Reflex.Port.RxCore
             });
         }
         volatile bool hasSpawnInstant = true;
+        volatile bool hasSpawnAir = true;
 
         /// RT_Bump cascade layout (w-rtbumpfit; core rx_session_rtbump_fit, the game's own RTBump_FitCascadeMatrices 007ba8d0): the renderer posts its
-        /// camera, the worker fits it between frames, the renderer takes the latest result (Rendering/ReflexRTBump.cs). One request in flight at a time.
+        /// camera, the worker fits it between frames, the renderer takes the latest result (Rendering/ReflexRTBump.cs). One request in flight at a time
+        /// per view. SPLIT SCREEN (w-split): view 1 is the second rider's camera, with its own request and result (the fit is a pure function of the
+        /// camera given: with one channel the second view would draw the first camera's trapezoid, detail only where the first rider looks).
         public static volatile bool RTBumpFitAvailable = true;
         readonly object rtbumpGate = new object();
-        bool rtbumpPending;
-        float[] rtbumpResult; int rtbumpResultSerial;
-        public void RequestRTBumpFit(float[] pos, float[] fwd, float[] up, float fovRad, float aspect, float near)
+        readonly bool[] rtbumpPending = new bool[2];
+        readonly float[][] rtbumpResult = new float[2][]; readonly int[] rtbumpResultSerial = new int[2];
+        public void RequestRTBumpFit(float[] pos, float[] fwd, float[] up, float fovRad, float aspect, float near, int view = 0)
         {
             if (!RTBumpFitAvailable) return;
-            lock (rtbumpGate) { if (rtbumpPending) return; rtbumpPending = true; }
+            view &= 1;
+            lock (rtbumpGate) { if (rtbumpPending[view]) return; rtbumpPending[view] = true; }
             BetweenFrames(s =>
             {
                 var o = new float[12]; int rc;
                 try { rc = RxApiNative.rx_session_rtbump_fit(s, pos, fwd, up, fovRad, aspect, near, o); }
                 catch (EntryPointNotFoundException) { rc = -1; RTBumpFitAvailable = false; Log("rx_session_rtbump_fit is not exported by this librxcore; RT_Bump uses its stand-in fit"); }
-                lock (rtbumpGate) { rtbumpPending = false; if (rc == 0) { rtbumpResult = o; rtbumpResultSerial++; } }
+                lock (rtbumpGate) { rtbumpPending[view] = false; if (rc == 0) { rtbumpResult[view] = o; rtbumpResultSerial[view]++; } }
             });
         }
-        /// The latest RT_Bump fit (null before the first); serial counts the results.
-        public float[] LatestRTBumpFit(out int serial) { lock (rtbumpGate) { serial = rtbumpResultSerial; return rtbumpResult; } }
+        /// The latest RT_Bump fit of a view (null before the first); serial counts the results.
+        public float[] LatestRTBumpFit(out int serial, int view = 0) { view &= 1; lock (rtbumpGate) { serial = rtbumpResultSerial[view]; return rtbumpResult[view]; } }
 
         /// The RT_Bump fit while no game frames run (w-replayterrain: the world paused, the replay viewer, photo mode). RequestRTBumpFit waits for
         /// the next game frame, so the layout stayed the one of the last riding camera while the replay / photo camera flew elsewhere: the terrain
@@ -574,7 +645,8 @@ namespace Reflex.Port.RxCore
             var list = GameUiSettings;
             if (list != null) foreach (var kv in list) b.Append(kv.Key).Append('=').Append(kv.Value).Append(';');
             b.Append(GameAirAutoLevel.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append('/').Append(GameAirSnap.ToString("R", System.Globalization.CultureInfo.InvariantCulture))
-             .Append('/').Append(GameFreeAirLooseness.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append('/').Append(GameFreeRideBorders).Append(';');
+             .Append('/').Append(GameFreeAirLooseness.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append('/').Append(GameFreeRideBorders)
+             .Append('/').Append(GameLipPull.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append(';');
             if (remap != null) foreach (int v in remap) b.Append(v).Append(',');
             return b.ToString();
         }
@@ -616,6 +688,18 @@ namespace Reflex.Port.RxCore
             {
                 try { RxApiNative.rx_session_set_driving_camera(s, preset); }
                 catch (EntryPointNotFoundException) { Log("Full camera selection requires the current core build"); }
+            });
+        }
+
+        /// SPLIT SCREEN (w-split): the same for one local rider (0 the first, 1 the second), by the core's per-player setter: no view
+        /// player is touched (rx_session_set_driving_camera_player). Player 0 is SetDrivingCamera(preset).
+        public void SetDrivingCamera(int preset, int player)
+        {
+            if (player <= 0) { SetDrivingCamera(preset); return; }
+            BetweenFrames(s =>
+            {
+                try { RxApiNative.rx_session_set_driving_camera_player(s, player, preset); }
+                catch (EntryPointNotFoundException) { Log("A second rider's camera selection requires the current core build"); }
             });
         }
 
@@ -666,6 +750,12 @@ namespace Reflex.Port.RxCore
             mapScaleBase = career == null && !this.testDrive && !this.tutorial && string.IsNullOrEmpty(spec.EventActivation) ? RxMapScale.Base : 1f;
             // PRACTICE: an exhibition lap race only (never the career, the test ride, the tutorials or a challenge)
             practice = career == null && !this.testDrive && !this.tutorial && string.IsNullOrEmpty(spec.EventActivation) && RxPracticeMode.Current && RxPracticeMode.LapRace(spec.EventType);
+            anyVehicle = career == null && !this.testDrive && !this.tutorial && string.IsNullOrEmpty(spec.EventActivation) && RxAnyVehicle.Current;
+            // SPLIT SCREEN: taken here (the main thread, when the session is made), not on the worker: the front end's load arena launches its
+            // own ride (ReflexEventSelect.Launch clears the request) while the event's pre-started session is still loading
+            // SPLIT SCREEN RULE (w-split): player 2's laps are NEVER saved (PRACTICE included): the core's lap log follows player 1 only and player 2's records go to a
+            // session-only player database (core/api/practice_session.inc, rx_session_finalize_records); View2 is for player 2's HUD and view only
+            splitRequested = career == null && !this.testDrive && !this.tutorial && string.IsNullOrEmpty(spec.EventActivation) && RxSplitScreen.Requested;
             preChallengeHold = this.inCareerMode && !string.IsNullOrEmpty(spec.EventActivation);
             // PHYSICS STUDIO (RxPhysicsStudio.AllowedHere, the one gate): races, Free Ride and the test ride; the career, MotoSkills and the
             // challenges with PHYSICS STUDIO EVERYWHERE. "" leaves the core untouched (bit for
@@ -902,6 +992,7 @@ namespace Reflex.Port.RxCore
                 ApplyUiSettings();   // before the event loads: the players' KeyMaps and the AI's pace read them then
                 { float level = GameAirAutoLevel, snap = GameAirSnap; if (level < 1f || snap < 1f) ApplyAirHelpers(session, level, snap); }   // AUTO LEVEL / COUNTER-STEER SNAP (1, 1 is the core's default)
                 { float loose = GameFreeAirLooseness; if (loose > 0f) ApplyFreeAirLooseness(session, loose); }   // AIR LOOSENESS (likewise)
+                { float lip = GameLipPull; if (lip < 1f) ApplyLipPull(session, lip); }   // LIP PULL (1 is the core's default)
                 { int borders = GameFreeRideBorders; if (borders != 0) ApplyFreeRideBorders(session, borders); }   // FREE RIDE WITHOUT BORDERS (before the load)
                 ApplyPhysics(session);   // PHYSICS STUDIO: before any event loads (the career's too), so before its vehicles are made
                 foreach (var (model, cls, file, name, nodes) in ownPhysics)   // ALIVE CLASSES: likewise
@@ -978,6 +1069,16 @@ namespace Reflex.Port.RxCore
                                 Log($"MAP SCALE {MapScale * 100f:0} % (the track's default {mapScaleBase * 100f:0} %): the track is scaled; offline records, best laps and highlights are not kept for this event");
                             else Log($"MAP SCALE {MapScale * 100f:0} %: the track's default scale (its records are kept)");
                         }
+                        if (anyVehicle)
+                        {   // ANY VEHICLE (core/plan/ANY_VEHICLE.md): a vehicle or class the event type never offered: the core keeps no records of it
+                            try
+                            {
+                                if (RxApiNative.rx_session_set_any_vehicle(session, true) != 0)
+                                { Fail("rx_session_set_any_vehicle failed: " + Clean(RxApiNative.rx_session_last_error(session))); return; }
+                            }
+                            catch (EntryPointNotFoundException) { Fail("This librxcore has no ANY VEHICLE (rx_session_set_any_vehicle): rebuild the core."); return; }
+                            Log("ANY VEHICLE: a vehicle or class this event type never offered; offline records, best laps and highlights are not kept, laps are not posted");
+                        }
                         if (practice)
                         {   // PRACTICE: the exhibition lap race is endless (the original's Practice rule; core/game/practice.h)
                             try
@@ -1008,6 +1109,18 @@ namespace Reflex.Port.RxCore
                             if (cap != s.riders) Log($"RIDER CAP: this librxcore races at most {cap} riders: the event loads with {cap} instead of {s.riders}");
                             else Log($"RIDER CAP: a field of {s.riders} riders (the original's {RxRiderCap.Original} + {s.riders - RxRiderCap.Original} behind the gate)");
                             s.riders = cap;
+                        }
+                        // SPLIT SCREEN (RxSplitScreen): a second local rider (the second pad), added to the field the setup chose
+                        splitPlayers = false;
+                        if (splitRequested)
+                        {
+                            try
+                            {
+                                if (RxApiNative.rx_session_set_local_players(session, 2) != 0)
+                                    Log("SPLIT SCREEN refused: " + Clean(RxApiNative.rx_session_last_error(session)));
+                                else { splitPlayers = true; s.riders = RxRiderCap.Clamp(Math.Max(2, s.riders + 1)); Log($"SPLIT SCREEN: two local riders (the second on pad 2), {s.riders} riders"); }
+                            }
+                            catch (EntryPointNotFoundException) { Log("this librxcore has no SPLIT SCREEN (rx_session_set_local_players): one rider"); }
                         }
                         loadedRiders = s.riders;
                         if (RxApiNative.rx_session_event_load(session, ref s) != 0)
@@ -1102,12 +1215,13 @@ namespace Reflex.Port.RxCore
             r.replay = null;
             r.error = null; r.terrain.Clear();
             r.hasBike = r.hasRace = r.hasCamera = r.hasTerrainInfo = r.hasParticles = r.hasAmbient = false;
+            r.hasCamera2 = false; r.view2.Clear();   // SPLIT SCREEN (w-split): a job that never reaches Collect carries no second view of an earlier frame
             r.hasHud = r.hasVehicle = r.hasWaypoint = r.hasPowercross = r.hasActivation = r.hasChallenge = r.hasCompass = r.hasRaceFormat = r.hasRaceHud = r.hasStuntHud = r.hasModeResults = r.hasReflexHud = false; r.modeResults = default; r.raceFormat = default; r.raceHud = default; r.stuntHud = default; r.reflexHud = default; r.waypoint = default; r.powercross = default; r.activation = default; r.challenge = default; r.compass = default;
             r.eventUi = default; r.vehicleAudio.Clear(); r.sound.Clear(); r.resultsPage = null;
             r.riderBones = r.bikeNodes = r.driverCount = r.mudCount = r.slotCount = r.raceLinePoints = r.particleCount = 0;
             r.ambientEntityCount = r.ambientMatrixCount = 0; r.ambientNodeFlagBytes = 0; r.crowdFlashCount = 0;
             r.scenarioModelCount = 0; r.hasScenarioModels = false; r.scenarioSoundCount = 0;
-            r.hasPodium = false; r.podium = default; r.podiumRiderCount = r.podiumSlotCount = 0;
+            r.hasPodium = false; r.podiumRacing = false; r.podium = default; r.podiumRiderCount = r.podiumSlotCount = 0;
             r.bikeNodeFlagCount = 0;
             r.dt = 0; r.slotMilliseconds = 0;
             r.laps.Clear();
@@ -1118,6 +1232,7 @@ namespace Reflex.Port.RxCore
             while (betweenFrames.TryDequeue(out var call) && CurrentPhase == Phase.Ready)
             { try { call(session); } catch (Exception e) { Log("between frames: " + e.Message); } }
             if (CurrentPhase == Phase.Ready) ApplyWeatherGrip(session);   // WEATHER GRIP: the weather's factor of this frame
+            if (CurrentPhase == Phase.Ready) ApplyAiTiers(session);       // B.R.A.A.P.: the roster riders' own skill tiers
 
             // jobFrames whole frames of jobDt: back to back while they fit in about one frame period at the measured cost, else one
             // frame covering MaxMergedSteps of them (a slower machine); the rest dropped.
@@ -1232,11 +1347,29 @@ namespace Reflex.Port.RxCore
             int count = RxApiNative.rx_session_slots(session, slots, (uint)slots.Length);
             if (count < careerLaunch.Riders) return false;
             Array.Resize(ref slots, count);
-            var data = new RosterData { slots = slots, appearances = new RxAppearance[count] };
+            var data = new RosterData { slots = slots, appearances = new RxAppearance[count], secondLocalSlot = SecondLocalSlot(slots, count) };
             for (int i = 0; i < count; i++)
                 if (RxApiNative.rx_session_appearance(session, slots[i].slot, ref data.appearances[i]) != 0) return false;
             lock (gate) rosterData = data;
             return true;
+        }
+
+        // SPLIT SCREEN (w-split): the second local rider's seat slot, -1 when the session has one (worker; `slots` = the roster as view
+        // player 0 has it). The core answers the first rider for a player that does not exist, hence the test against the first's slot.
+        int SecondLocalSlot(RxSlot[] slots, int count)
+        {
+            splitSlot = -1;
+            if (!splitPlayers) return -1;
+            int first = -1, second = -1;
+            for (int i = 0; i < count; i++) if (slots[i].local != 0) { first = slots[i].slot; break; }
+            try
+            {
+                RxApiNative.rx_session_set_view_player(session, 1);
+                int n = Math.Min(splitSlots.Length, RxApiNative.rx_session_slots(session, splitSlots, (uint)splitSlots.Length));
+                for (int i = 0; i < n; i++) if (splitSlots[i].local != 0) { second = splitSlots[i].slot; break; }
+            }
+            finally { RxApiNative.rx_session_set_view_player(session, 0); }
+            return splitSlot = second >= 0 && second != first ? second : -1;
         }
 
         void CaptureStartup()
@@ -1255,6 +1388,8 @@ namespace Reflex.Port.RxCore
             catch (EntryPointNotFoundException) { Log("Current core required for mapped five-view camera switching"); }
             for (int i = 0; i < count; i++)
                 if (RxApiNative.rx_session_appearance(session, slots[i].slot, ref data.appearances[i]) != 0) return;
+            data.secondLocalSlot = SecondLocalSlot(slots, count);
+            if (data.secondLocalSlot >= 0) Log($"SPLIT SCREEN: the second local rider is slot {data.secondLocalSlot}");
             if (trackTerrain)
             {
                 if (RxApiNative.rx_session_terrain(session, ref data.terrainInfo) != 0) return;
@@ -1297,8 +1432,16 @@ namespace Reflex.Port.RxCore
         bool hasWaypointExport = true, hasActivationExport = true, hasChallengeExport = true, hasCompassExport = true, hasRaceFormatExport = true, hasRaceHudExport = true, hasStuntHudExport = true, hasModeResultsExport = true, hasReflexHudExport = true;
         bool hasVehicleAudioExport = true; readonly byte[] vehicleAudioScratch = new byte[RxVehicleAudioState.Size];
         bool hasSoundExport = true; readonly byte[] soundScratch = new byte[RxSoundState.Size];
+        volatile bool splitPlayers;   // SPLIT SCREEN: this session runs two local riders (RxSplitScreen)
+        int splitSlot = -1;           // the second local rider's seat slot (worker: SecondLocalSlot), -1 unknown
+        readonly RxSlot[] splitSlots = new RxSlot[RxRiderCap.Max]; readonly RxDriverResult[] splitDrivers = new RxDriverResult[MaxStandings];   // view-player-1 scratch
+        bool hasCameraBindingsExport = true;
+        readonly bool splitRequested;
+        /// SPLIT SCREEN: this session's event was loaded with two local riders (the world that runs it draws two views: RxSplitScreen.Active).
+        public bool SplitPlayers => splitPlayers;
         bool hasResultsExport = true; readonly byte[] resultsScratch = new byte[RxResultsPage.Size]; RxResultsPage resultsPageCache;   // the results page's table (w-resultsrng)
         bool hasOnboardExport = true, hasRaceLineExExport = true, hasEventUiExport = true, checkedEventUiLayout;
+        bool hasFunnelExport = true;
         // LAP LOG (w-lb-practice): the last serial read; the records since then go into the result (RxPractice turns them into laps)
         bool hasLapLogExport = true, checkedLapLayout; uint lapSerial; readonly RxLapRecord[] lapScratch = new RxLapRecord[16];
         void ReadLapLog(Results r)
@@ -1319,6 +1462,74 @@ namespace Reflex.Port.RxCore
             }
             catch (EntryPointNotFoundException) { hasLapLogExport = false; }
         }
+        // SPLIT SCREEN (w-split): the first rider's reads of Collect again, for the second local rider (the caller holds view player 1):
+        // the same wrappers, export guards and versioned structs. Allocates nothing.
+        void CollectView2(View2 v, int firstSlot)
+        {
+            v.valid = true;
+            v.hasBike = RxApiNative.rx_session_bike(session, ref v.bike) == 0;
+            if (hasOnboardExport)
+                try { RxApiNative.rx_session_onboard_state(session, ref v.onboardState); }
+                catch (EntryPointNotFoundException) { hasOnboardExport = false; }
+            v.hasRace = RxApiNative.rx_session_race(session, ref v.race) == 0 && v.race.valid != 0;
+            if (hasHudExport)
+                try { v.hasHud = RxApiNative.rx_session_hud(session, ref v.hud) == 0 && v.hud.valid != 0; }
+                catch (EntryPointNotFoundException) { hasHudExport = false; }
+            v.waypoint = RxWaypointState.Create();
+            if (hasWaypointExport)
+                try { v.hasWaypoint = RxWaypointNative.Read(session, ref v.waypoint) == 0 && v.waypoint.valid != 0; }
+                catch (EntryPointNotFoundException) { hasWaypointExport = false; }
+            if (!v.hasWaypoint) v.waypoint = default;
+            v.challenge = RxChallengeState.Create();
+            if (hasChallengeExport)
+                try { v.hasChallenge = RxChallengeNative.Read(session, ref v.challenge) == 0 && v.challenge.valid != 0; }
+                catch (EntryPointNotFoundException) { hasChallengeExport = false; }
+            if (!v.hasChallenge) v.challenge = default;
+            v.compass = RxCompassState.Create();
+            if (hasCompassExport)
+                try { v.hasCompass = RxCompassNative.Read(session, ref v.compass) == 0 && v.compass.valid != 0; }
+                catch (EntryPointNotFoundException) { hasCompassExport = false; }
+            if (!v.hasCompass) v.compass = default;
+            v.raceFormat = RxRaceFormatState.Create();
+            if (hasRaceFormatExport)
+                try { v.hasRaceFormat = RxRaceFormatNative.Read(session, ref v.raceFormat) == 0 && v.raceFormat.valid != 0; }
+                catch (EntryPointNotFoundException) { hasRaceFormatExport = false; }
+            if (!v.hasRaceFormat) v.raceFormat = default;
+            v.raceHud = RxRaceHudState.Create();
+            if (hasRaceHudExport)
+                try { v.hasRaceHud = RxRaceHudNative.Read(session, ref v.raceHud) == 0 && v.raceHud.valid != 0; }
+                catch (EntryPointNotFoundException) { hasRaceHudExport = false; }
+            if (!v.hasRaceHud) v.raceHud = default;
+            v.stuntHud = RxStuntHudState.Create();
+            if (hasStuntHudExport)
+                try { v.hasStuntHud = RxStuntHudNative.Read(session, ref v.stuntHud) == 0 && v.stuntHud.valid != 0; }
+                catch (EntryPointNotFoundException) { hasStuntHudExport = false; }
+            if (!v.hasStuntHud) v.stuntHud = default;
+            v.reflexHud = RxReflexHudState.Create();
+            if (hasReflexHudExport)
+                try { v.hasReflexHud = RxReflexHudNative.Read(session, ref v.reflexHud) == 0 && v.reflexHud.valid != 0; }
+                catch (EntryPointNotFoundException) { hasReflexHudExport = false; }
+            if (!v.hasReflexHud) v.reflexHud = default;
+            v.powercross = RxPowercrossHudState.Create();
+            try { v.hasPowercross = RxPowercrossHudNative.Read(session, ref v.powercross) == 0 && v.powercross.valid != 0; }
+            catch (EntryPointNotFoundException) { }
+            if (!v.hasPowercross) v.powercross = default;
+            if (hasVehicleExport)
+                try { v.hasVehicle = RxApiNative.rx_session_vehicle_info(session, -1, ref v.vehicle) == 0; }
+                catch (EntryPointNotFoundException) { hasVehicleExport = false; }
+            // the rider's own standings row (the "local" one of this view): its seat slot and whether it finished; no row (no standings):
+            // the startup's slot (rx_session_vehicle_info (-1) does not name the slot)
+            v.slot = splitSlot;
+            int rows = Math.Min(splitDrivers.Length, Math.Max(0, RxApiNative.rx_session_standings(session, splitDrivers, (uint)splitDrivers.Length)));
+            for (int i = 0; i < rows; i++)
+                if (splitDrivers[i].local != 0) { if (splitDrivers[i].slot != firstSlot) { v.slot = splitDrivers[i].slot; v.finished = splitDrivers[i].finished != 0; } break; }
+            // the rider's driving camera as the core has it (the camera key of pad 2 cycles it in the core)
+            if (hasCameraBindingsExport)
+                try { if (RxApiNative.rx_session_camera_bindings(session, ref splitBindings) == 0) v.drivingCamera = splitBindings.driving_camera; }
+                catch (EntryPointNotFoundException) { hasCameraBindingsExport = false; }
+        }
+        RxCameraBindings splitBindings;
+
         void Collect(Results r)
         {
             if (tutorial)
@@ -1337,6 +1548,9 @@ namespace Reflex.Port.RxCore
             r.riderBones = RxApiNative.rx_session_rider_pose(session, r.riderPose, RiderBoneCount);
             r.bikeNodes = RxApiNative.rx_session_bike_pose(session, r.bikePose, MaxSlotNodes);
             r.hasRace = RxApiNative.rx_session_race(session, ref r.race) == 0 && r.race.valid != 0;
+            if (hasFunnelExport)   // (an imported Unleashed race level's start bales: Content/UnleashedFunnel.cs)
+                try { RxApiNative.FunnelProgress = RxApiNative.rx_session_funnel(session); }
+                catch (EntryPointNotFoundException) { hasFunnelExport = false; RxApiNative.FunnelProgress = -1f; }
             // RESTORED CONTENT: a championship stage is recorded on this worker as soon as its activity is in Post (before any results page)
             if (r.hasRace && Career == null) try { RxChampWeekend.AfterFrame(session, r.race.state); } catch (Exception e) { Log("Championship weekend: " + e.Message); }
             ReadLapLog(r);
@@ -1427,6 +1641,21 @@ namespace Reflex.Port.RxCore
                 try { r.resultsPage = resultsPageCache = RxResultsNative.Read(session, resultsScratch, resultsPageCache); }
                 catch (EntryPointNotFoundException) { hasResultsExport = false; }
             r.hasCamera = RxApiNative.rx_session_camera(session, ref r.camera) == 0;
+            r.hasCamera2 = false; r.view2.Clear();
+            if (splitPlayers)
+            {
+                // SPLIT SCREEN (w-split): the one window in which the getters answer for the second local rider (the view player is a
+                // process static of the core: set and reset here on the worker, nothing else runs between)
+                try
+                {
+                    RxApiNative.rx_session_set_view_player(session, 1);
+                    r.hasCamera2 = RxApiNative.rx_session_camera(session, ref r.camera2) == 0;
+                    int firstSlot = -1;   // the first rider's standings row (a session without a second rider answers the first again)
+                    for (int i = 0; i < r.driverCount; i++) if (r.drivers[i].local != 0) { firstSlot = r.drivers[i].slot; break; }
+                    CollectView2(r.view2, firstSlot);
+                }
+                finally { RxApiNative.rx_session_set_view_player(session, 0); }
+            }
             // the info block and the live particles are one export now; a core without it has the info block only
             if (hasParticleArray)
             {
@@ -1539,10 +1768,21 @@ namespace Reflex.Port.RxCore
             // (the arrival: the hovercraft / sky crane / box car, then the hero shot): the core's own test (state Pre / Countdown) decides
             int state = r.hasRace ? r.race.state : -1;
             bool post = state == 4, intro = !r.hasRace || state == 0 || state == 1;
-            if (!post && !intro) return;
             try
             {
                 var info = default(RxPodiumInfo);
+                // the race (InProgress / WindDown): only every slot's live rider / vehicle drawn flags (no cast: the core stops before the
+                // characters without a rider buffer). An eliminated rider (00512c80 -> 0050abe0) and an online leaver (rx_session_remote_gone)
+                // are out of play with their vehicle model's +0x14e clear: the original does not draw them; without these flags they were
+                // drawn where they stopped (the Eliminator's AI "frozen" mid-track)
+                if (state == 2 || state == 3)
+                {
+                    if (RxApiNative.rx_session_podium(session, ref info, null, 0, null, 0, r.podiumSlots, (uint)r.podiumSlots.Length) != 0) return;
+                    r.podium = info; r.hasPodium = true; r.podiumRacing = true; r.podiumRiderCount = 0;
+                    r.podiumSlotCount = Math.Max(0, Math.Min(info.slots, r.podiumSlots.Length));
+                    return;
+                }
+                if (!post && !intro) return;
                 if (intro)   // is the intro scenario playing? (info only: the characters' bones are evaluated only when it does)
                 {
                     if (RxApiNative.rx_session_podium(session, ref info, null, 0, null, 0, null, 0) != 0 || info.scenario != 3) return;

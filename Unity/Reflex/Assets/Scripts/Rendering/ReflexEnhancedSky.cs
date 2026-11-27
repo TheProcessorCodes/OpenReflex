@@ -1,3 +1,4 @@
+using System.Linq;
 // LIGHTING: ENHANCED (OPTIONS > VIDEO): the per-level HDRI skies and what is derived from them. Not part of the original renderer.
 //
 // Each outdoor level gets one of the CC0 Poly Haven skies in Assets/ThirdParty/Skies (LICENSES.md), chosen for the level's original time
@@ -99,6 +100,14 @@ namespace Reflex.Port.Rendering
 
         public static Profile For(string level)
         {
+            if (Content.UnleashedLevels.Is(level))
+            {
+                var e=Content.UnleashedLevels.All.FirstOrDefault(x=>x.level==level);
+                if(e?.environment_mode=="night")return NoSky.With(x=>{x.skyAmbient=.12f;x.postExposure=.95f;});
+                if(e?.environment_mode=="stadium_night"||e?.environment_mode=="indoor")return NoSky;
+                if(e?.environment_mode=="dusk")return NoSky.With(x=>x.skyAmbient=.2f);
+                return P(e?.environment_sky??"partly_cloudy");
+            }
             var p = level != null && Levels.TryGetValue(level, out var found) ? found : NoSky;
             // an MTX track on Concord's infrastructure: its post exposure, its indoor arenas as stadiums (Content/ExperimentalMtxLighting.cs)
             return Content.ExperimentalTerrain.For(level) ? Content.ExperimentalMtxLighting.EnhancedProfile(p) : p;
@@ -450,33 +459,96 @@ namespace Reflex.Port.Rendering
             sh[6] = V(0.546274f * c[8].x, 0.546274f * c[8].y, 0.546274f * c[8].z, 1);
         }
 
-        // the lat-long as a cube (Unity's face convention: +X (-z, -y), -X (z, -y), +Y (x, z), -Y (x, -z), +Z (x, -y), -Z (-x, -y); rows top-down)
+        // the lat-long as a cube (Unity's face convention: +X (-z, -y), -X (z, -y), +Y (x, z), -Y (x, -z), +Z (x, -y), -Z (-x, -y); rows top-down).
+        // Its mips are filtered for the roughness that reads them (PrefilterMips), not plain box mips.
         static Cubemap MakeCube(Color[] px)
         {
             var cube = new Cubemap(CubeSize, TextureFormat.RGBAHalf, true) { name = "Reflex enhanced sky (reflections)", filterMode = FilterMode.Trilinear, wrapMode = TextureWrapMode.Clamp, hideFlags = HideFlags.DontSave };
-            var face = new Color[CubeSize * CubeSize];
+            var faces = new Color[6][];
             for (int f = 0; f < 6; f++)
             {
+                var face = faces[f] = new Color[CubeSize * CubeSize];
                 for (int y = 0; y < CubeSize; y++)
                     for (int x = 0; x < CubeSize; x++)
-                    {
-                        float u = (x + 0.5f) / CubeSize * 2f - 1f, v = (y + 0.5f) / CubeSize * 2f - 1f;
-                        Vector3 d;
-                        switch ((CubemapFace)f)
-                        {
-                            case CubemapFace.PositiveX: d = new Vector3(1, -v, -u); break;
-                            case CubemapFace.NegativeX: d = new Vector3(-1, -v, u); break;
-                            case CubemapFace.PositiveY: d = new Vector3(u, 1, v); break;
-                            case CubemapFace.NegativeY: d = new Vector3(u, -1, -v); break;
-                            case CubemapFace.PositiveZ: d = new Vector3(u, -v, 1); break;
-                            default: d = new Vector3(-u, -v, -1); break;
-                        }
-                        face[y * CubeSize + x] = SampleLatLong(px, d.normalized);
-                    }
+                        face[y * CubeSize + x] = SampleLatLong(px, CubeDirection(f, (x + 0.5f) / CubeSize * 2f - 1f, (y + 0.5f) / CubeSize * 2f - 1f).normalized);
                 cube.SetPixels(face, (CubemapFace)f, 0);
             }
-            cube.Apply(true, false);
+            PrefilterMips(cube, faces);
+            cube.Apply(false, false);
             return cube;
+        }
+
+        static Vector3 CubeDirection(int face, float u, float v)
+        {
+            switch ((CubemapFace)face)
+            {
+                case CubemapFace.PositiveX: return new Vector3(1, -v, -u);
+                case CubemapFace.NegativeX: return new Vector3(-1, -v, u);
+                case CubemapFace.PositiveY: return new Vector3(u, 1, v);
+                case CubemapFace.NegativeY: return new Vector3(u, -1, -v);
+                case CubemapFace.PositiveZ: return new Vector3(u, -v, 1);
+                default: return new Vector3(-u, -v, -1);
+            }
+        }
+
+        // The cube's mips for the roughness that reads them. The shaders take mip = roughness x the last mip (RfxEnhSkyReflection; the vehicles'
+        // RfxMatEnv a little above that), so mip m holds the sky seen through a GGX lobe of perceptual roughness m / last (alpha = its square,
+        // the usual N = V = R prefilter: weight D(N.H) N.L per solid angle). Mip 1's lobe is as narrow as its texel: the box mip. From mip 2 on
+        // each texel is the weighted sum over a box mip of the sky coarse enough for the lobe (16 px faces for mip 2, 8 px above), a few
+        // million weights in all. Plain box mips (Apply(true)) gave a rough surface the sky's square texels and the faces' seams.
+        static void PrefilterMips(Cubemap cube, Color[][] faces)
+        {
+            int last = cube.mipmapCount - 1;
+            // box mips of every face (the sources)
+            var box = new List<Color[][]> { faces };
+            for (int m = 1, size = CubeSize / 2; m <= last && size >= 1; m++, size /= 2)
+            {
+                var prev = box[m - 1]; int ps = size * 2; var level = new Color[6][];
+                for (int f = 0; f < 6; f++)
+                {
+                    var o = level[f] = new Color[size * size];
+                    for (int y = 0; y < size; y++)
+                        for (int x = 0; x < size; x++)
+                            o[y * size + x] = (prev[f][2 * y * ps + 2 * x] + prev[f][2 * y * ps + 2 * x + 1] + prev[f][(2 * y + 1) * ps + 2 * x] + prev[f][(2 * y + 1) * ps + 2 * x + 1]) * 0.25f;
+                }
+                box.Add(level);
+            }
+            for (int m = 1; m < box.Count; m++)
+            {
+                int size = CubeSize >> m;
+                if (m == 1) { for (int f = 0; f < 6; f++) cube.SetPixels(box[1][f], (CubemapFace)f, 1); continue; }
+                int sm = Mathf.Min(m == 2 ? 2 : 3, box.Count - 1), ss = CubeSize >> sm;
+                // the source texels: direction, solid angle, colour
+                int count = 6 * ss * ss; var dir = new Vector3[count]; var area = new float[count]; var col = new Color[count];
+                for (int f = 0, i = 0; f < 6; f++)
+                    for (int y = 0; y < ss; y++)
+                        for (int x = 0; x < ss; x++, i++)
+                        {
+                            float u = (x + 0.5f) / ss * 2f - 1f, v = (y + 0.5f) / ss * 2f - 1f;
+                            dir[i] = CubeDirection(f, u, v).normalized; area[i] = 1f / Mathf.Pow(1f + u * u + v * v, 1.5f); col[i] = box[sm][f][y * ss + x];
+                        }
+                float rough = (float)m / last, alpha = rough * rough, a2 = alpha * alpha;
+                for (int f = 0; f < 6; f++)
+                {
+                    var o = new Color[size * size];
+                    for (int y = 0; y < size; y++)
+                        for (int x = 0; x < size; x++)
+                        {
+                            var n = CubeDirection(f, (x + 0.5f) / size * 2f - 1f, (y + 0.5f) / size * 2f - 1f).normalized;
+                            float r = 0, g = 0, b = 0, wsum = 0;
+                            for (int i = 0; i < count; i++)
+                            {
+                                float nl = n.x * dir[i].x + n.y * dir[i].y + n.z * dir[i].z; if (nl <= 0f) continue;
+                                float nh2 = 0.5f + 0.5f * nl;                       // (N.H)^2 with H halfway between N and L
+                                float d = nh2 * (a2 - 1f) + 1f;
+                                float w = a2 / (d * d) * nl * area[i];
+                                r += col[i].r * w; g += col[i].g * w; b += col[i].b * w; wsum += w;
+                            }
+                            o[y * size + x] = wsum > 0f ? new Color(r / wsum, g / wsum, b / wsum, 1f) : box[m][f][y * size + x];
+                        }
+                    cube.SetPixels(o, (CubemapFace)f, m);
+                }
+            }
         }
 
         static Color SampleLatLong(Color[] px, Vector3 d)

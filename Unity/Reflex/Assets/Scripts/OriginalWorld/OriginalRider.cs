@@ -24,6 +24,8 @@ namespace Reflex.Port.OriginalWorld
         public SkinnedMeshRenderer[] skinnedMeshes;
         // Rigid parts attached to bone transforms (helmet on node 35, goggles on node 36).
         public Renderer[] rigidMeshes;
+        // The gear's further distance LODs, as they are built (Content/ReflexRiderModel.SelectLods): shown and hidden with the gear, not part of the lists above.
+        public readonly System.Collections.Generic.List<Renderer> lodMeshes = new System.Collections.Generic.List<Renderer>();
         // Hierarchy parents of MXRider_Hierarchy (node 0's parent is -1: it hangs off the entity root node 69).
         public int[] boneParents;
         // Bind-pose world matrices of MXRider_Hierarchy, OriginalBoneCount * 16 floats, row-major row-vector.
@@ -125,6 +127,7 @@ namespace Reflex.Port.OriginalWorld
             if (skinnedMesh) skinnedMesh.enabled = !proxyVisible;
             if (skinnedMeshes != null) foreach (var r in skinnedMeshes) if (r) r.enabled = !proxyVisible;
             if (rigidMeshes != null) foreach (var r in rigidMeshes) if (r) r.enabled = !proxyVisible;
+            foreach (var r in lodMeshes) if (r) r.enabled = !proxyVisible;
         }
     }
 }

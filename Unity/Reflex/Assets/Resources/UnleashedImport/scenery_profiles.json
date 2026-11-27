@@ -1,0 +1,62 @@
+{
+  "Nat07": {
+    "donor": "FR_Cheyenne",
+    "species": {
+      "nat07_pinea": "FR_CH_BlueSpruceSnow1",
+      "nat07_pineb": "FR_CH_BlueSpruceSnow1",
+      "nat07_pinec": "FR_CH_BlueSpruceSnow1",
+      "nat07_pined": "FR_CH_BlueSpruceSnow1",
+      "nat07_pinee": "FR_CH_BlueSpruceSnow1"
+    }
+  },
+  "FS13": {
+    "donor": "FR_Cheyenne",
+    "species": {
+      "nat07_pinea": "FR_CH_BlueSpruceSnow1",
+      "nat07_pineb": "FR_CH_BlueSpruceSnow1",
+      "nat07_pinec": "FR_CH_BlueSpruceSnow1",
+      "nat07_pined": "FR_CH_BlueSpruceSnow1",
+      "nat07_pinee": "FR_CH_BlueSpruceSnow1"
+    }
+  },
+  "Nat01": {
+    "donor": "FR_Gibson",
+    "species": {
+      "creosote": "FR_GI_Broom_Med",
+      "creosoteyellow": "FR_GI_Broom_Dry"
+    }
+  },
+  "Nat16": {
+    "donor": "FR_Cheyenne",
+    "species": {
+      "nat16_pinea": "FR_CH_BlueSpruceSnow1",
+      "nat16_pineb": "FR_CH_BlueSpruceSnow1",
+      "nat16_pinec": "FR_CH_BlueSpruceSnow1",
+      "nat16_pined": "FR_CH_BlueSpruceSnow1",
+      "nat16_pinee": "FR_CH_BlueSpruceSnow1",
+      "nat16_pinef": "FR_CH_BlueSpruceSnow1",
+      "nat16_pineg": "FR_CH_BlueSpruceSnow1",
+      "nat16_pineh": "FR_CH_BlueSpruceSnow1"
+    }
+  },
+  "Nat04": {
+    "donor": "PX_Laguna",
+    "species": {
+      "nat04_palma": "PX_LA_B_Palm",
+      "nat04_palmb": "PX_LA_B_Palm"
+    }
+  },
+  "Nat12": {
+    "donor": "PX_Laguna",
+    "species": {
+      "nat12_palmtreea": "PX_LA_B_Palm"
+    }
+  },
+  "Nat09": {
+    "donor": "FR_Gibson",
+    "species": {
+      "nat09_cactusa": "Eco_Saguaro",
+      "nat09_cactusb": "Eco_Saguaro"
+    }
+  }
+}

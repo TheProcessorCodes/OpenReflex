@@ -348,3 +348,45 @@
 
 /* dark glass over the 3D compound: the rider and the bike stay visible beside it */
 .ou-frontend.mxa-root .mxa-layer .ou-garage-panel { background-color: rgba(10, 18, 20, 0.86); }
+
+/* ---------------------------------------------------------------- the vehicle list's filter bar (OpenShell.GarageFilters.cs): SOURCE and CLASS
+   chips after the track browser's (.ou-chip), in the garage panel's scale; the one on is orange, the focused one gold */
+
+.ou-frontend .ou-gfilters { flex-shrink: 0; margin: 2px 6px 6px 2px; }
+.ou-frontend .ou-gfilter-row { flex-direction: row; flex-wrap: wrap; align-items: flex-start; flex-shrink: 0; margin: 0 0 2px 0; }
+.ou-frontend .ou-gfilter-row > .ou-spacer { flex-grow: 1; }
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip-sort { margin-right: 0; }
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip {
+    flex-direction: row; align-items: center; flex-shrink: 0; flex-grow: 0; height: 36px; min-width: 0; margin: 0 6px 6px 0; padding: 0 10px 0 8px;
+    border-radius: 0; border-width: 0; border-left-width: 4px; border-left-color: rgba(204, 95, 41, 0); background-color: rgba(255, 255, 255, 0.09);
+    translate: 0 0; transition-property: background-color, border-left-color; transition-duration: 0.12s;
+}
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip > .mxa-button-label {
+    flex-grow: 0; margin: -2px 0 0 0; padding: 0; font-size: 21px; letter-spacing: 2px; color: rgb(236, 235, 220); white-space: nowrap; text-shadow: 0 0 0 rgba(0, 0, 0, 0);
+    -unity-font-definition: url("Fonts/BarlowCondensed-Bold.ttf"); -unity-font-style: normal;
+}
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip > .ou-gfchip-n {
+    margin: -1px 0 0 8px; padding: 0; font-size: 18px; letter-spacing: 1px; color: rgba(236, 235, 220, 0.55);
+    -unity-font-definition: url("Fonts/BarlowCondensed-SemiBold.ttf"); -unity-font-style: normal;
+}
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip:hover { background-color: rgba(255, 255, 255, 0.18); }
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip-none > .mxa-button-label { color: rgba(236, 235, 220, 0.42); }
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip-none > .ou-gfchip-n { color: rgba(236, 235, 220, 0.30); }
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip-on { background-color: rgb(204, 95, 41); border-left-color: rgb(14, 15, 15); }
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip-on > .mxa-button-label { color: rgb(14, 15, 15); }
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip-on > .ou-gfchip-n { color: rgba(14, 15, 15, 0.72); }
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip:focus { background-color: rgb(226, 172, 64); border-left-color: rgb(14, 15, 15); }
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip:focus > .mxa-button-label { color: rgb(14, 15, 15); }
+.ou-frontend.mxa-root .mxa-layer .ou-gfchip:focus > .ou-gfchip-n { color: rgba(14, 15, 15, 0.72); }
+
+/* nothing listed: why, and the way back to every vehicle */
+.ou-frontend .ou-gempty {
+    flex-shrink: 0; margin: 10px 6px 0 2px; padding: 20px 20px 22px 20px; border-left-width: 6px; border-left-color: rgb(204, 95, 41);
+    background-color: rgba(18, 20, 25, 0.84);
+}
+.ou-frontend .ou-gempty-title {
+    margin: 0; padding: 0; font-size: 34px; letter-spacing: 2px; color: rgb(236, 235, 220); white-space: normal;
+    -unity-font-definition: url("Fonts/BarlowCondensed-Bold.ttf"); -unity-font-style: normal;
+}
+.ou-frontend .ou-gempty > .ou-gempty-text { margin: 8px 0 16px 0; }
+.ou-frontend.mxa-root .mxa-layer .ou-gempty-clear { align-self: flex-start; }

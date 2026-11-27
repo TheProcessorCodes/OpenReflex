@@ -103,6 +103,7 @@ namespace Reflex.Port.Content
         {
             if (stage == 1)
             {
+                if (StageUnleashedForest(jobs)) return;
                 var ge = entities.FirstOrDefault(e => e.Type == "GrassSystemRSData" && !string.IsNullOrEmpty(e.Asset("GrassAsset")));
                 if (ge != null)
                     jobs.Add(() =>
@@ -154,6 +155,7 @@ namespace Reflex.Port.Content
                         });
                     }
                 if (forest == null) return;
+                if (UnleashedLevels.Is(level)) foreach(var t in forest.types) { t.near=Mathf.Max(t.near,600);t.far=Mathf.Max(t.far,1000); }
                 FinishForest(forest);
                 // the surface materials of Alive's multi-material trees (named by the trees, parsed in stage 2)
                 foreach (var mn in forest.types.Where(t => t.loaded).SelectMany(t => t.surfaces.Select(q => q.material)).Where(q => !string.IsNullOrEmpty(q)).Distinct().ToList())
@@ -674,9 +676,9 @@ namespace Reflex.Port.Content
                 // are dilated for filtering (the texels under alpha 0 .. 0.03 carry the grass colour in every mip) and its executable's sampler
                 // state is unknown (encrypted): bilinear, so a near flower or tuft is not drawn as big square texels (w-alivetrees)
                 var grassFilter = AliveLevels.Is(level) ? FilterMode.Bilinear : FilterMode.Point;
-                if (g.atlasTexture != null && sceneTextures.TryGetValue(g.atlasTexture, out var at)) { var t = ReflexTex.ToTexture(at, TextureWrapMode.Clamp, TextureWrapMode.Clamp, grassFilter); if (t) { Track(t); m.SetTexture("_GrassTex", t); } }
+                if (g.atlasTexture != null && sceneTextures.TryGetValue(g.atlasTexture, out var at)) { var t = ReflexTex.ToTexture(at, TextureWrapMode.Clamp, TextureWrapMode.Clamp, grassFilter); if (t) { Track(t); Rendering.ReflexTextureFiltering.Register(t); m.SetTexture("_GrassTex", t); } }
                 else Warn($"grass atlas {g.atlasTexture} missing");
-                if (g.colorTexture != null && sceneTextures.TryGetValue(g.colorTexture, out var ct)) { var t = ReflexTex.ToTexture(ct, TextureWrapMode.Clamp, TextureWrapMode.Clamp, FilterMode.Bilinear); if (t) { Track(t); m.SetTexture("_ColorTex", t); } }
+                if (g.colorTexture != null && sceneTextures.TryGetValue(g.colorTexture, out var ct)) { var t = ReflexTex.ToTexture(ct, TextureWrapMode.Clamp, TextureWrapMode.Clamp, FilterMode.Bilinear); if (t) { Track(t); Rendering.ReflexTextureFiltering.Register(t); m.SetTexture("_ColorTex", t); } }
                 else Warn($"grass colour map {g.colorTexture} missing");
                 m.SetFloat("_Near", near ? 1f : 0f);
                 // far: ALPHAREF 2, SRCALPHA / INVSRCALPHA; near: ALPHAREF trunc(AlphaTestValue 256), no blending (FUN_006700d0 / FUN_0066e300)

@@ -119,10 +119,16 @@ namespace Reflex.Port.Content
             // the sampler states of the first material slot that names the texture
             Dictionary<int, float> st = null;
             foreach (var lm in sceneMaterials.Values) { int i = lm.textures.IndexOf(texture); if (i >= 0) { st = lm.samplerStates[i]; break; } }
+            // (the slot's mip filter and LOD bias too, as TextureFor gives the texture the scenery bound: a frame is sampled as that one was)
+            bool tri = st != null && st.TryGetValue(7, out var mipFilter) && mipFilter == 2f;
+            float bias = st != null && st.TryGetValue(8, out var b8) ? b8 : 0f;
             fb.frames = frames.Select(t =>
             {
                 TextureWrapMode Wrap(int key) => st != null && st.TryGetValue(key, out var v) ? (v == 3f || v == 4f ? TextureWrapMode.Clamp : v == 2f ? TextureWrapMode.Mirror : TextureWrapMode.Repeat) : TextureWrapMode.Repeat;
-                var tex = ReflexTex.ToTexture(t, Wrap(1), Wrap(2), FilterMode.Bilinear); Track(tex); return tex;
+                var tex = ReflexTex.ToTexture(t, Wrap(1), Wrap(2), tri ? FilterMode.Trilinear : FilterMode.Bilinear);
+                if (tex && bias != 0) tex.mipMapBias = bias;
+                Rendering.ReflexTextureFiltering.Register(tex);   // TEXTURE FILTERING
+                Track(tex); return tex;
             }).ToArray();
             // the Unity material properties that hold this texture slot (ReflexSceneryMaterial binds by sampler: find the property by the
             // frame-0 texture name the scenery bound, or the property left empty for a slot that failed to load)

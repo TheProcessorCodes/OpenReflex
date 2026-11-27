@@ -394,11 +394,20 @@ namespace Reflex.Port.Content
         /// anisotropic filtering instead of the material's console states (MIP point: hard mip steps in the RT_Bump slices, which the terrain
         /// shows as lines that move with the camera).
         Texture2D TextureFor(string name, Dictionary<int, float> st) => TextureFor(name, st, false, 1);
+        readonly HashSet<string> textureMissing = new HashSet<string>(StringComparer.Ordinal);
 
         Texture2D TextureFor(string name, Dictionary<int, float> st, bool trilinear, int aniso)
         {
             if (name != null && videoTargets.Contains(name)) return Texture2D.blackTexture;
-            if (!sceneTextures.TryGetValue(name, out var lt)) return null;
+            if (!sceneTextures.TryGetValue(name, out var lt))
+            {   // (said once, by name, unless its load already warned)
+                if (!string.IsNullOrEmpty(name) && textureMissing.Add(name))
+                {
+                    bool told; lock (warnings) told = warnings.Any(w => w.StartsWith("texture " + name + ":", StringComparison.Ordinal));
+                    if (!told) Debug.LogWarning($"Reflex scenery: texture {name} is not loaded (a material slot is drawn without it)");
+                }
+                return null;
+            }
             TextureWrapMode Wrap(int key) { return st != null && st.TryGetValue(key, out var v) ? (v == 3f || v == 4f ? TextureWrapMode.Clamp : v == 2f ? TextureWrapMode.Mirror : TextureWrapMode.Repeat) : TextureWrapMode.Repeat; }
             var wu = Wrap(1); var wv = Wrap(2);
             bool tri = trilinear || (st != null && st.TryGetValue(7, out var mip) && mip == 2f);
@@ -406,8 +415,9 @@ namespace Reflex.Port.Content
             float bias = st != null && st.TryGetValue(8, out var b8) ? b8 : 0f;      // MIPMAPLODBIAS (e.g. -1 on the Concord facades)
             string key = $"{name}|{wu}|{wv}|{filter}|{bias}|{aniso}";
             if (textureObjects.TryGetValue(key, out var t)) return t;
-            t = ReflexTex.ToTexture(lt, wu, wv, filter, aniso);
+            t = ReflexTex.ToTexture(lt, wu, wv, filter, Math.Max(1, aniso));
             if (t && bias != 0) t.mipMapBias = bias;
+            if (!trilinear) Rendering.ReflexTextureFiltering.Register(t);   // TEXTURE FILTERING (ORIGINAL: the sampler state above; not the RT_Bump layers, drawn top-down into their target)
             Track(t); textureObjects[key] = t;
             return t;
         }
@@ -494,21 +504,27 @@ namespace Reflex.Port.Content
             if (parent) root.transform.SetParent(parent, false);
             if (ExperimentalTerrain.For(level))
             {
-                var data = ExperimentalTerrain.Scenery(TrackMods.Bound.folder);
+                var data = ExperimentalTerrain.Scenery(ExperimentalTerrain.Path);
                 if (data != null)
                 {
-                    root.name = "MTX scenery: " + TrackMods.Bound.name;
+                    root.name = "Imported scenery: " + (UnleashedLevels.Bound?.display_name ?? TrackMods.Bound?.name ?? level);
                     var view = root.AddComponent<ExperimentalMtxView>();
                     var owned = new List<UnityEngine.Object>();
                     try
                     {
-                        var counts = ExperimentalMtxScenery.BuildScenery(data, root.transform, owned, view.skies);
-                        root.transform.localScale = Vector3.one * Reflex.Port.RxCore.RxMapScale.Current;
+                        var imported = new GameObject("Imported world"); imported.transform.SetParent(root.transform, false);
+                        var counts = ExperimentalMtxScenery.BuildScenery(data, imported.transform, owned, view.skies);
+                        imported.transform.localScale = Vector3.one * Reflex.Port.RxCore.RxMapScale.Current;
+                        UnleashedVegetation.Attach(imported.transform, owned);
+                        UnleashedFunnel.Attach(imported.transform);   // (the start's bale sets of a race level)
+                        UnleashedToys.Attach(imported.transform, owned);   // (the .toy's animated props: the ferris wheel, finish arches ...)
+                        UnleashedAurora.Attach(root.transform, view.skies, owned);   // (Northern Lights: OPEN REFLEX's own aurora for the source's dome)
                         foreach (var dome in view.skies) dome.localScale /= Reflex.Port.RxCore.RxMapScale.Current;
                         Debug.Log($"[MTX] scenery loaded: {counts.surfaces} meshes, {counts.textures} textures, {view.skies.Count} sky meshes");
                     }
                     finally { foreach (var item in owned) Track(item); }
-                    return root;
+                    if (UnleashedLevels.Bound == null) return root;
+                    // Continue through the regular Reflex sky builder for imported library levels.
                 }
             }
             var meshes = new Dictionary<string, Mesh>();

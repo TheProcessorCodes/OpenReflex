@@ -76,9 +76,22 @@ namespace Reflex.Port.Content
             catch (Exception e) { problems.Add(new Problem { where = GeicoPackId, why = "not read (" + e.Message + ")" }); }
             foreach (var root in Roots())
             {
-                try { packs.AddRange(Scan(root, problems, a => Archive(a, root))); }
+                // (a .rxmod that is not a kit pack is a bike, skin, parts or rider gear mod: read where it lies, MODS ANYWHERE, never a problem here)
+                try { packs.AddRange(Scan(root, problems, a => TrackArchives.Sniff(a) == TrackArchives.Kind.RxMod && !TrackArchives.IsKitRxMod(a) ? null : Archive(a, root))); }
                 catch (Exception e) { problems.Add(new Problem { where = root, why = "not scanned (" + e.Message + ")" }); }
             }
+            try
+            {   // MODS ANYWHERE (ReflexMods.cs): the packs in the rest of Mods (a folder with an MXTables_* database, a kit pack .rxmod), found
+                // by what they are. What does not load there is logged, not listed: it may be another kind of mod.
+                string modsRoot = ReflexMods.ModsRoot;
+                if (modsRoot != null && Directory.Exists(modsRoot))
+                {
+                    var homes = Roots().ToList(); var elsewhere = new List<Problem>();
+                    packs.AddRange(Scan(modsRoot, elsewhere, a => TrackArchives.IsKitRxMod(a) ? Archive(a, modsRoot) : null, d => homes.Any(h => ReflexMods.SameFolder(h, d)), ReflexMods.OutsideMark));
+                    foreach (var p in elsewhere) Debug.Log("[KitPacks] outside Mods/Gear, not loaded: " + p);
+                }
+            }
+            catch (Exception e) { Debug.LogWarning("[KitPacks] the rest of Mods was not scanned: " + e.Message); }
             // (a pack put into the game's Database folder the original way is merged into the game's tables as the original game merges it - the
             // core reads it there too, so both keep its ids; ReflexEvents.Tables keeps one row per id. KitPacks.ScanInstall reads one as a pack: tests.)
             if (ReflexMods.ClientRoot == null) s_stale = true;   // (asked before the client root was known: again on the next use)
@@ -162,13 +175,16 @@ namespace Reflex.Port.Content
             var chosen = ChosenGear();
             return chosen.Count == 0 ? stock : WithGear(stock, chosen, id => t.Int("RiderGear", "RiderGearTypeId", t.Find("RiderGear", "RiderGearId", id)));
         }
-        public static int[] PartIds(ReflexGameTables t, int model, int[] stock)
+        /// tokens: the pieces a B.R.A.A.P. roster rider wears (KitItem.Token; null: the player's own choices).
+        public static int[] PartIds(ReflexGameTables t, int model, int[] stock, string[] tokens = null)
         {
-            var chosen = ChosenParts(model);
+            var chosen = tokens == null ? ChosenParts(model) : tokens.Select(FromToken).Where(i => i != null && i.bike && i.models.Contains(model)).ToList();
             var ids = stock;
             foreach (var it in chosen) ids = WithPart(ids, it, id => t.Int("VehiclePart", "VehiclePartTypeId", t.Find("VehiclePart", "VehiclePartId", id)));
             return ids;
         }
+        /// A well-formed token ("g:" / "k:", 12 hex, a row id): what a B.R.A.A.P. roster keeps of a piece.
+        public static bool IsToken(string s) => s != null && s.Length <= 40 && System.Text.RegularExpressions.Regex.IsMatch(s, "^[gk]:[0-9a-f]{12}:-?[0-9]{1,9}$");
 
     }
 }

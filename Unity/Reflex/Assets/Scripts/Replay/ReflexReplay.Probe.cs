@@ -5,6 +5,9 @@
 //   REFLEX_PHOTO_DIR=<dir>                                the photos go there, not to Pictures (ReflexReplay.Photo.cs)
 //   REFLEX_REPLAY_SHOTS=<dir>                             screenshots of the viewer (with its UI) at each step
 //   REFLEX_REPLAY_PROBE_QUIT=1                            quit when done
+//   REFLEX_REPLAY_UI=1 REFLEX_REPLAY_UI_TAG=<name>        the UI sheet instead (ProbeUi): REPLAY and PHOTO MODE with their UI, shown and hidden, at
+//                                                         1920 x 1080 and 3440 x 1440 with the keyboard's, the Xbox pad's and the PlayStation pad's
+//                                                         hints, the photo frame (aspect mask, grid, logo) and UI SCALE 130: <name>_<size>_<what>.png
 // It opens REPLAY, scrubs, steps every camera mode, follows another rider, sets and flies camera keys, opens PHOTO MODE, takes photos
 // with the logo in three corners at three aspects / resolutions, closes, checks the live moment came back, and logs each step as
 // "[ReplayProbe] ..." with the recording's size and cost ("[ReplayProbe] MEASURE ...").
@@ -33,7 +36,65 @@ namespace Reflex.Port.Replay
             if (!probe || probeStarted || Active) return;
             if (Buffer.Duration < EnvF("REFLEX_REPLAY_AT", 20f)) return;
             probeStarted = true;
-            StartCoroutine(ProbeRun());
+            StartCoroutine(probeUi ? ProbeUi() : ProbeRun());
+        }
+
+        static readonly bool probeUi = Environment.GetEnvironmentVariable("REFLEX_REPLAY_UI") == "1";
+
+        /// The UI sheet (REFLEX_REPLAY_UI): one held moment, both faces, every hint style, two screen shapes.
+        IEnumerator ProbeUi()
+        {
+            string tag = Environment.GetEnvironmentVariable("REFLEX_REPLAY_UI_TAG"); if (string.IsNullOrEmpty(tag)) tag = "ui";
+            bool ok = Open(View.Replay, Origin.Live);
+            P($"ui sheet: open {ok}");
+            if (!ok) yield break;
+            yield return Wait(1f);
+            float at = Buffer.EndTime - 6f;
+            SetCamera(Cam.Chase);
+            int glyphBefore = Reflex.Port.Options.ReflexSettings.GlyphStyle, scaleBefore = Reflex.Port.Options.ReflexSettings.UiScale;
+            IEnumerator Show(View face, bool hidden)
+            {
+                if (Face != face) { if (face == View.Photo) PhotoFromReplay(); else SetFace(View.Replay); }
+                Pause(); Seek(at);
+                UiHidden = hidden; Ui.FaceChanged();
+                Reflex.Port.OpenFrontEnd.OuUi.RefreshHints();
+                yield return Wait(0.35f);
+            }
+            foreach (var (w, h) in new[] { (1920, 1080), (3440, 1440) })
+            {
+                Reflex.Port.OpenFrontEnd.OuLayout.ScreenOverride = new Vector2Int(w, h);
+                string size = w + "x" + h;
+                foreach (var (glyph, gname) in new[] { (1, "kb"), (2, "xbox"), (3, "ps") })
+                {
+                    Reflex.Port.Options.ReflexSettings.GlyphStyle = glyph;
+                    yield return Show(View.Replay, false); yield return Shot($"{tag}_{size}_{gname}_replay", w, h);
+                    yield return Show(View.Photo, false); yield return Shot($"{tag}_{size}_{gname}_photo", w, h);
+                    if (glyph == 3) continue;
+                    yield return Show(View.Replay, true); yield return Shot($"{tag}_{size}_{gname}_replay_hidden", w, h);
+                    yield return Show(View.Photo, true); yield return Shot($"{tag}_{size}_{gname}_photo_hidden", w, h);
+                }
+                // the photo frame: the aspect mask, the grid and the logo's place
+                Reflex.Port.Options.ReflexSettings.GlyphStyle = 1;
+                Photo.aspect = 3; Photo.grid = 1; Photo.logo = 1;
+                yield return Show(View.Photo, false); yield return Shot($"{tag}_{size}_kb_photo_frame", w, h);
+                Photo.aspect = 0; Photo.grid = 0; Photo.logo = 0;
+                // the KEYFRAMES camera's row
+                yield return Show(View.Replay, false);
+                SetCamera(Cam.Free); AddKey(); SetCamera(Cam.Keyframes);
+                yield return Wait(0.2f); yield return Shot($"{tag}_{size}_kb_replay_keys", w, h);
+                ClearKeys(); SetCamera(Cam.Chase);
+            }
+            // UI SCALE 130 %
+            Reflex.Port.OpenFrontEnd.OuLayout.ScreenOverride = new Vector2Int(1920, 1080);
+            Reflex.Port.Options.ReflexSettings.UiScale = 130; Reflex.Port.OpenFrontEnd.OuScale.Apply(Ui.Document.panelSettings);
+            yield return Show(View.Replay, false); yield return Shot($"{tag}_1920x1080_kb_replay_scale130", 1920, 1080);
+            yield return Show(View.Photo, false); yield return Shot($"{tag}_1920x1080_kb_photo_scale130", 1920, 1080);
+            Reflex.Port.Options.ReflexSettings.UiScale = scaleBefore; Reflex.Port.OpenFrontEnd.OuScale.Apply(Ui.Document.panelSettings);
+            Reflex.Port.Options.ReflexSettings.GlyphStyle = glyphBefore;
+            Reflex.Port.OpenFrontEnd.OuLayout.ScreenOverride = Vector2Int.zero;
+            SetFace(View.Replay); Close();
+            P("UI DONE");
+            if (Environment.GetEnvironmentVariable("REFLEX_REPLAY_PROBE_QUIT") == "1") { yield return Wait(1f); Application.Quit(); }
         }
 
         static void P(string s) => Debug.Log("[ReplayProbe] " + s);
@@ -42,12 +103,11 @@ namespace Reflex.Port.Replay
 
         /// The view with the viewer's UI over it, 1920 x 1080, drawn offscreen (works without a window: -batchmode): the game camera into
         /// one target, the UI document's panel into another (a copy of its PanelSettings with a target texture), blended on the CPU.
-        IEnumerator Shot(string name)
+        IEnumerator Shot(string name, int W = 1920, int H = 1080)
         {
             string dir = Environment.GetEnvironmentVariable("REFLEX_REPLAY_SHOTS");
             if (string.IsNullOrEmpty(dir) || !Ui || !camera) yield break;
             Directory.CreateDirectory(dir);
-            const int W = 1920, H = 1080;
             var doc = Ui.Document; var original = doc.panelSettings;
             RenderTexture uiRt = null; PanelSettings copy = null;
             try

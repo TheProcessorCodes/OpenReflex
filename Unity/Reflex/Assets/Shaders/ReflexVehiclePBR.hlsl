@@ -9,8 +9,14 @@
 //   fabric sheen, micro grain               a grazing-angle sheen for cloth, weave / pebble / rubber grain in the albedo (no new textures)
 //   mud / dirt                              _RfxDirt (Content/ReflexDirt.cs): a mask from the vertex's rest-pose height (uv3: ground = 0), the
 //                                           part's affinity (wheels > boots > frame > seat > jersey), fractal noise in rest space and the side
-//                                           the rear wheel throws it to; caked mud / dry dust by the amount, wetter and glossier when wet; capped
-//                                           so the graphics always show through
+//                                           the rear wheel throws it to. The dirt has a thickness: a bevelled edge where it begins, clods and
+//                                           grain on it (a height field in rest space, bumped), crevices between the clods darker, the surface
+//                                           under it loses its gloss by the coverage (as the original's mud term did: spec x (1 - mud)); dry
+//                                           dust where thin, caked mud where thick, darker and glossy when wet; the graphics show through the
+//                                           thin dirt and wherever the dirt does not reach
+//   the material's own maps                 the program's shading normal (rfxExpN: its normal map), the SFX / combo map's shine channel and the
+//                                           diffuse map where the program's slots are known (_RfxMatMap, Content/ReflexMaterialClasses.cs), a
+//                                           .rxmod material's normal map (through the surface's own UV frame: no vertex tangents needed)
 // Everything is in the original's raw (display-referred) units like the programs' own output, lit by the same rig as the programs (RfxObjRig:
 // the fill lights, the bounce and the sun's radiosity through the level's colour reference map, the volume shadow / MapShadow term, the
 // shadow term the fragment gives the program) so the new layers sit in the level's light.
@@ -42,9 +48,9 @@ RfxSurf RfxSurfOf(int k)
         case 6:  s.metal = 1.0;  s.rough = 0.42; s.dirtAff = 1.0; s.dirtH = 0.9; s.grain = 0.04; s.grainScale = 220; break;                   // BRUSHED METAL (engine, muffler)
         case 7:  s.rough = 0.88; s.f0 = 0.045; s.gain = 0.55; s.dirtAff = 1.45; s.dirtH = 2.0; s.grain = 0.05; s.grainScale = 160; break;      // RUBBER TYRE
         case 8:  s.rough = 0.64; s.cc = 0.08; s.ccRough = 0.3; s.dirtAff = 0.6; s.dirtH = 0.85; s.grain = 0.04; s.grainScale = 90; break;     // SEAT / GRIP
-        case 9:  s.rough = 0.96; s.gain = 0.35; s.sheen = 1.0; s.dirtAff = 0.8; s.dirtH = 0.8; s.grain = 0.07; s.grainScale = 380; break;      // FABRIC
+        case 9:  s.rough = 0.96; s.gain = 0.35; s.sheen = 1.0; s.dirtAff = 0.8; s.dirtH = 1.3; s.grain = 0.07; s.grainScale = 380; break;      // FABRIC (dirtH: the rest pose stands; 0.8 left the jersey's torso clean at any amount)
         case 10: s.rough = 0.5;  s.cc = 0.35; s.ccRough = 0.3; s.dirtAff = 1.25; s.dirtH = 0.5; s.grain = 0.04; s.grainScale = 150; break;    // LEATHER / BOOT
-        case 11: s.rough = 0.4;  s.cc = 1.0;  s.ccRough = 0.035; s.dirtAff = 0.1; s.dirtH = 0.5; s.grain = 0.008; break;                      // HELMET SHELL
+        case 11: s.rough = 0.4;  s.cc = 1.0;  s.ccRough = 0.035; s.dirtAff = 0.25; s.dirtH = 2.2; s.grain = 0.008; break;                     // HELMET SHELL (specks at the highest amounts only)
         case 12: s.rough = 0.04; s.f0 = 0.06;  s.gain = 1.6; s.dirtAff = 0.12; s.dirtH = 0.5; break;                                          // GOGGLE LENS
         case 13: s.rough = 0.55; s.cc = 0; s.f0 = 0.028; s.gain = 0.5; s.sheen = 0.2; s.dirtAff = 0.45; s.dirtH = 0.6; break;                // SKIN
         case 14: s.metal = 0.28; s.rough = 0.4;  s.cc = 1.0;  s.ccRough = 0.05; s.dirtAff = 0.9; s.dirtH = 1.4; s.grain = 0.01; break;       // BODY PAINT (trucks, buggies, UTVs)
@@ -57,6 +63,9 @@ RfxSurf RfxSurfOf(int k)
 
 // the original program's own environment reflection kept for the class (0: all of it replaced by the terms below)
 float RfxMatOrigReflection(int k) { return RfxSurfOf(k).origRefl; }
+// the original program's own sun highlight kept for the class (rfxSunSpecKeep, ReflexObjectPrograms.hlsl): a clear-coat class takes its
+// highlight from the coat's GGX lobe below, so the program's pow highlight on the same spot is dropped (one highlight, not two)
+float RfxMatSunSpecKeep(int k) { return RfxSurfOf(k).cc >= 0.35 ? 0.0 : 1.0; }
 
 // ---------------------------------------------------------------------------------------------------------------------------- noise
 float RfxHash(float3 p)
@@ -73,6 +82,9 @@ float RfxValueNoise(float3 x)
     float b = lerp(lerp(RfxHash(i + float3(0, 0, 1)), RfxHash(i + float3(1, 0, 1)), f.x), lerp(RfxHash(i + float3(0, 1, 1)), RfxHash(i + float3(1, 1, 1)), f.x), f.y);
     return lerp(a, b, f.z);
 }
+// a fixed rotation (the value noise's grid shows as axis-aligned streaks when two octaves share its axes)
+float3 RfxRot(float3 p) { return float3(0.36 * p.x + 0.48 * p.y - 0.8 * p.z, -0.8 * p.x + 0.6 * p.y, 0.48 * p.x + 0.64 * p.y + 0.6 * p.z); }
+float RfxFbm2(float3 p) { return RfxValueNoise(p) * 0.6 + RfxValueNoise(RfxRot(p) * 2.17 + 31.7) * 0.4; }
 float RfxFbm(float3 p)
 {
     float a = 0.5, s = 0, w = 0;
@@ -115,10 +127,21 @@ float RfxVisSmith(float NoV, float NoL, float a2)
 }
 float3 RfxFresnelSchlick(float3 F0, float VoH) { float f = pow(1.0 - saturate(VoH), 5.0); return F0 + (1.0 - F0) * f; }
 
-// the environment in direction R at a perceptual roughness: the level's reflection cube (ENHANCED: the HDRI sky), raw HDR units
+// the environment in direction R at a perceptual roughness: the level's reflection cube (ENHANCED: the HDRI sky), raw HDR units.
+// A level without a reflection map and without a sky (_RfxReflectionOn 0: indoor / night levels; the global then still holds the last
+// level's cube, or none): rfxMatEnvFallback, the light of the level's rig around the surface (set by RfxVehicleMaterial), so metals do not
+// reflect another level's sky or go black. The blur follows the cube's own mip count (the level maps differ; the sky cube has 7).
+static float3 rfxMatEnvFallback = float3(0, 0, 0);
 float3 RfxMatEnv(float3 R, float rough)
 {
-    float maxMip = _RfxEnhParams2.w > 0.5 ? _RfxEnhParams2.z : 6.0;
+    if (_RfxReflectionOn < 0.5) return rfxMatEnvFallback;
+    float maxMip = _RfxEnhParams2.z;
+    if (_RfxEnhParams2.w < 0.5)
+    {
+        uint w, h, levels;
+        _RfxReflectionCube.GetDimensions(0, w, h, levels);
+        maxMip = max((float)levels - 1.0, 0.0);
+    }
     return SAMPLE_TEXTURECUBE_LOD(_RfxReflectionCube, sampler_RfxReflectionCube, R, rough * (1.7 - 0.7 * rough) * maxMip).rgb;
 }
 
@@ -151,10 +174,45 @@ void RfxObjRig(float3 P, float3 N, out float3 amb, out float3 sunK)
     sunK = vol * lerp(float3(1, 1, 1), ref.rgb, floor(ref.a));
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------- the material's maps
+// _RfxMatMap (Content/ReflexMaterialClasses.cs; ReflexBikeModel.RxMod.cs for z): x the SFX / combo map's slot + 1 and y its shine channel
+// (0 r, 2 b) where the program's slots are known, z the slot + 1 of a normal map only ENHANCED reads (a .rxmod material's, on a program
+// without a normal map of its own), w the diffuse map's slot + 1; _RfxMat.z: the diffuse may stand for the albedo (metal F0).
+// One of the material's textures by its slot, at the mesh's first UV set (what the programs sample their maps with), through the samplers
+// the programs already use; gradients from the caller (sampled inside branches).
+float4 RfxMatTex(int slot, float2 uv, float2 dx, float2 dy)
+{
+    switch (slot)
+    {
+        case 0: return SAMPLE_TEXTURE2D_GRAD(_Tex0, sampler_Tex0, uv, dx, dy);
+        case 1: return SAMPLE_TEXTURE2D_GRAD(_Tex1, sampler_Tex1, uv, dx, dy);
+        case 2: return SAMPLE_TEXTURE2D_GRAD(_Tex2, sampler_Tex2, uv, dx, dy);
+        case 3: return SAMPLE_TEXTURE2D_GRAD(_Tex3, sampler_Tex3, uv, dx, dy);
+        case 6: return SAMPLE_TEXTURE2D_GRAD(_Tex6, sampler_Tex1, uv, dx, dy);   // (the ENHANCED-only normal map: no sampler of its own)
+        default: return float4(0, 0, 0, 1);
+    }
+}
+
+// a tangent-space normal (signed x / y, as the tyre program's map) on the surface's own UV frame, from the screen derivatives of the
+// position and the UVs: T the direction of growing u square to N, the programs' bitangent T x N (ReflexObjectPrograms.hlsl RfxVs0)
+float3 RfxMatDetailNormal(float3 N, float3 dpdx, float3 dpdy, float2 duvx, float2 duvy, float2 nxy)
+{
+    float det = duvx.x * duvy.y - duvy.x * duvx.y;
+    float3 T = (dpdx * duvy.y - dpdy * duvx.y) * (det < 0 ? -1.0 : 1.0);
+    T -= N * dot(N, T);
+    float l = dot(T, T);
+    if (l < 1e-20) return N;
+    T *= rsqrt(l);
+    float3 B = cross(T, N);
+    return normalize(nxy.x * T + nxy.y * B + sqrt(saturate(1.0 - dot(nxy, nxy))) * N);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------- the layers
-// c: the original program's result (fog included). P / N / rp: world position, world normal, rest-pose position in metres. occ: (ao, contact
-// shadow) of ReflexOcclusionPass, shadow: Unity's main light shadow at the pixel (1 without), fog: RfxFog(P) (rgb, 1 - amount).
-float3 RfxMatLayers(float3 c, int k, float3 P, float3 N, float3 rp, float2 occ, float shadow, float4 fog, bool front, inout float alpha)
+// c: the original program's result (fog included). P / N / rp: world position, shading normal (the program's: normal-mapped where it is),
+// rest-pose position in metres. occ: (ao, contact shadow) of ReflexOcclusionPass, shadow: Unity's main light shadow at the pixel (1 without),
+// fog: RfxFog(P) (rgb, 1 - amount). mask: the SFX map's shine 0..1 (-1: none), albedo: the surface's own colour, the program's albedo or the diffuse map (a < 0: none: estimated
+// from c), specKeep: what the mud over the surface leaves of its gloss (1 - the coverage).
+float3 RfxMatLayers(float3 c, int k, float3 P, float3 N, float3 rp, float2 occ, float shadow, float4 fog, bool front, float mask, float4 albedo, float specKeep, inout float alpha)
 {
     RfxSurf s = RfxSurfOf(k);
     float3 V = normalize(_WorldSpaceCameraPos - P);
@@ -170,7 +228,9 @@ float3 RfxMatLayers(float3 c, int k, float3 P, float3 N, float3 rp, float2 occ, 
     amb = RfxEnhAmbient(amb, N, occ.x);
     #endif
     float3 sunC = _RfxSunColor.rgb * sunK * (shadow * occ.y);
-    float rough = saturate(s.rough + _RfxMat.y);
+    // the SFX map's shine: glossier and stronger where the map says so, duller where it does not (the class's constants at its middle)
+    float rough = saturate(s.rough + _RfxMat.y + (mask >= 0 ? lerp(0.12, -0.06, mask) : 0.0));
+    float gain = s.gain * (mask >= 0 ? lerp(0.5, 1.2, mask) : 1.0) * specKeep;
 
     // ---- micro grain in the albedo (weave / pebble / rubber), faded where it would shimmer
     float grainFade = 0;
@@ -184,14 +244,28 @@ float3 RfxMatLayers(float3 c, int k, float3 P, float3 N, float3 rp, float2 occ, 
         c *= 1.0 + s.grain * g * grainFade;
     }
 
-    // ---- albedo estimate: the colour the program gave, normalised (its hue, with a share of its luminance for F0)
-    float lum = RfxLuma(c);
-    float3 tint = saturate((c + 0.03) / (lum + 0.03));
-    float3 albedoF = saturate(tint * (0.55 + 0.45 * saturate(lum * 1.4)));
+    // ---- albedo for F0: the hue and a share of the luminance of the material's diffuse map where it is known (the surface's own colour:
+    // the same in sun and shade, near and far), else of the colour the program gave (lit and fogged: an estimate)
+    float3 src = albedo.a >= 0 ? albedo.rgb : c;
+    float lum = RfxLuma(src);
+    float3 tint = saturate((src + 0.03) / (lum + 0.03));
+    float share = 0.55 + 0.45 * saturate(lum * 1.4);
+    // a surface whose own colour is known and dark (a black rim, a black A-arm or frame, a carbon pipe: painted, anodised or no metal at all)
+    // is not bare metal: its metalness falls with the albedo's luminance, so it keeps its own dark diffuse and reflects as a dark coated
+    // surface (F0 0.04) instead of as alloy; the share of the luminance follows it down. Chrome stays chrome (its maps are painted
+    // reflections); the lit estimate keeps the floor (a bright metal in the shade is dark there too)
+    float metal = s.metal;
+    if (albedo.a >= 0 && s.chrome < 0.5)
+    {
+        float bare = smoothstep(0.05, 0.22, lum);
+        metal *= bare;
+        share = lerp(lum, share, bare);
+    }
+    float3 albedoF = saturate(tint * share);
 
     // ---- specular: base layer
     float3 F0d = s.f0.xxx;
-    float3 F0 = lerp(F0d, s.chrome > 0.5 ? lerp(float3(0.93, 0.93, 0.93), tint, 0.2) : albedoF * 0.95 + 0.03, s.metal);
+    float3 F0 = lerp(F0d, s.chrome > 0.5 ? lerp(float3(0.93, 0.93, 0.93), tint, 0.2) : albedoF * 0.95 + 0.03, metal);
     float a = rough * rough;
     float a2 = RfxSpecAA(N, a * a);
     float3 H = normalize(L + V);
@@ -214,10 +288,10 @@ float3 RfxMatLayers(float3 c, int k, float3 P, float3 N, float3 rp, float2 occ, 
         ccAtten = 1.0 - Fcc * s.cc;
     }
 
-    // ---- the sum: the original's diffuse (metals keep part of it: their textures paint the metal), the new specular over it
-    float diffuseKeep = 1.0 - 0.62 * s.metal;
-    float3 spec = (specBase * ccAtten + specCC + (sunSpecBase * ccAtten + sunSpecCC)) * s.gain;
-    // the sun's glints are already in the original's own highlight for plastics: keep the new one from doubling it
+    // ---- the sum: the original's diffuse (metals keep part of it: their textures paint the metal), the new specular over it. The sun's glint
+    // of a clear-coat class is the coat's alone: the program's own pow highlight is off for it (RfxMatSunSpecKeep)
+    float diffuseKeep = 1.0 - 0.62 * metal;
+    float3 spec = (specBase * ccAtten + specCC + (sunSpecBase * ccAtten + sunSpecCC)) * gain;
     c = (c - fog.rgb) * diffuseKeep + fog.rgb + spec * fog.w;
 
     // ---- sheen
@@ -225,7 +299,7 @@ float3 RfxMatLayers(float3 c, int k, float3 P, float3 N, float3 rp, float2 occ, 
     {
         float f = pow(1.0 - NoV, 2.5);
         float3 litv = amb * aoAmb + sunC * NoL;
-        c += (c * 0.9 + 0.05 * litv) * f * s.sheen * fog.w;
+        c += (c * 0.9 + 0.05 * litv) * f * s.sheen * specKeep * fog.w;
     }
     // ---- lens: the reflection shows through the (blended) tint
     if (k == 12) alpha = saturate(alpha + RfxLuma(spec) * 0.8);
@@ -233,85 +307,168 @@ float3 RfxMatLayers(float3 c, int k, float3 P, float3 N, float3 rp, float2 occ, 
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------- mud / dirt
-// returns the coverage 0..1 (already capped); noiseOut: a height for the relief
-float RfxDirtCoverage(float3 rp, float3 N, float amount, float aff, float H, float seed, float fade, out float height)
+// The dirt as a layer with a thickness, in rest space (metres): where it is (the coverage), how thick (0 thin dust .. 1 caked) and its
+// surface (a height, 1 = about a centimetre: the bevel where the layer begins, clods with creases between them, a pebbly
+// top, thrown specks past the edge, grain). (The shapes were tuned on a plane outside the game before the in-game shots.)
+struct RfxDirtField { float m, edge, core, height, relief, tone; };
+
+RfxDirtField RfxDirtFieldAt(float3 rp, float3 N, float amount, float aff, float H, float seed, float fadeClod, float fadeFine, float fadeGrain)
 {
+    RfxDirtField o; o.m = 0; o.edge = 0; o.core = 0; o.height = 0; o.relief = 0; o.tone = 0.5;
     float h = rp.y;
     float cover = amount * aff * saturate(1.15 - h / H);
     float back = saturate(dot(N, -_RfxDirtF.xyz) * 0.5 + 0.5);               // the rear wheel's roost lands behind and below
     cover *= lerp(0.82, 1.18, back);
-    height = 0.5;
-    if (cover < 0.035) return 0.0;                                           // (above the dirt's reach: no noise at all)
-    float3 q = rp * 5.0 + seed;
-    float n = RfxFbm(q);
-    float n2 = RfxValueNoise(rp * 26.0 + seed * 1.7);
-    float n3 = 0.5;
-    [branch] if (fade > 0.05) n3 = lerp(0.5, RfxValueNoise(rp * 85.0 + seed * 3.1), fade);   // (the finest grain fades out where it would shimmer)
-    height = n2 * 0.7 + n3 * 0.3;
-    float d = cover * 1.6 + (n - 0.5) * 0.9 + (n2 - 0.5) * 0.4 + (n3 - 0.5) * 0.18 - 0.4;
-    return smoothstep(0.0, 0.28, d) * 0.86;
+    if (cover < 0.035) return o;                                             // (above the dirt's reach: no noise at all)
+    float w = smoothstep(0.035, 0.15, cover);                                // (the noise comes in with the cover: no line at the dirt's reach)
+    float n = RfxFbm(rp * 5.0 + seed);                                       // blotches (20 cm)
+    // clods (2 - 3 cm): a warped two-octave noise, its high parts plateaus with a bevel (caked lumps, creases between them)
+    float cn = lerp(0.5, RfxFbm2(RfxRot(rp) * 42.0 + seed * 1.7 + (n - 0.5) * 5.0), fadeClod);
+    float clod = smoothstep(0.40, 0.66, cn) * (0.7 + 0.3 * smoothstep(0.62, 0.85, cn));
+    float speck = 0, peb = 0.5, grain = 0.5;
+    [branch] if (fadeFine > 0.03)
+    {
+        // thrown specks and drips out past the caked edge: the peaks of a noise stretched down the vehicle, warped (no two alike)
+        float sn = RfxFbm2(RfxRot(rp * float3(1.0, 0.5, 1.0)) * 64.0 + seed * 3.1 + (cn - 0.5) * 2.0);
+        speck = smoothstep(0.67, 0.82, sn) * fadeFine;
+        peb = RfxValueNoise(RfxRot(rp) * 110.0 + seed * 2.3);                // the caked mud's pebbly top (1 cm)
+        peb = lerp(0.5, 1.0 - abs(2.0 * peb - 1.0), fadeFine);
+        grain = lerp(0.5, RfxValueNoise(rp * 210.0 + seed * 5.3), fadeGrain);   // grain (5 mm)
+    }
+    float d0 = cover * 1.6 - 0.4 + w * ((n - 0.5) * 0.9 + (cn - 0.5) * 0.5);
+    float d = d0 + w * speck * 0.55;
+    o.edge = smoothstep(0.0, 0.14, d);                                       // the layer begins
+    o.core = smoothstep(0.1, 0.6, d0);                                       // caked
+    float bevel = smoothstep(0.0, 0.14, d0);                                 // the caked layer's own edge (a speck is a low dome: no step around it)
+    o.m = o.edge * lerp(0.8, 0.96, o.core);
+    o.relief = saturate(0.25 + clod * 0.6 * o.core + speck * (1.0 - o.core) * 0.5 + (peb - 0.5) * 0.3);   // 0 in the creases .. 1 on the clods
+    o.height = bevel * (0.3 + 0.2 * o.core) + o.core * (clod * 0.34 + (peb - 0.5) * 0.10) + o.edge * ((grain - 0.5) * 0.06 + speck * (1.0 - bevel) * 0.1);
+    o.tone = lerp(cn, n, 0.5);
+    return o;
 }
 
-float3 RfxDirtLayer(float3 c, int k, float3 P, float3 N, float3 rp, float2 occ, float shadow, float4 fog)
+// f: the field at the pixel, Nd: the dirt's bumped normal, nVar: its variance over the pixel (all from RfxVehicleMaterial: derivatives are
+// taken outside the branches)
+float3 RfxDirtLayer(float3 c, RfxDirtField f, float3 P, float3 N, float3 Nd, float nVar, float2 occ, float shadow, float4 fog)
 {
-    RfxSurf s = RfxSurfOf(k);
-    float amount = _RfxDirt.x;
-    if (amount < 0.004 || s.dirtAff <= 0.001) return c;
-    float fade = saturate(1.0 - length(fwidth(rp * 85.0)) * 0.5);
-    float height;
-    float m = RfxDirtCoverage(rp, N, amount, s.dirtAff, s.dirtH, _RfxDirt.w, fade, height);
-    float3 dpdx = ddx(P), dpdy = ddy(P); float dhx = ddx(height), dhy = ddy(height);   // (before the early out: derivatives need uniform flow)
-    if (m <= 0.002) return c;
-    float wet = _RfxDirt.y;
+    float amount = _RfxDirt.x, wet = _RfxDirt.y;
     float3 V = normalize(_WorldSpaceCameraPos - P);
-    if (dot(N, V) < 0) N = -N;
-    float unit = _RfxDirt.z > 0 ? _RfxDirt.z : 1.0;
-    float3 Nd = RfxBumpFromHeight(dpdx * 1.0, dpdy * 1.0, dhx * 0.012 * unit, dhy * 0.012 * unit, N, 1.0);   // (a few millimetres of relief, in world units)
     float NoV = max(dot(Nd, V), 1e-3);
     float3 L = normalize(_RfxSunDir.xyz);
     float NoL = saturate(dot(Nd, L));
+    // (the rig's fill lights and the sky take the relief at half strength: at full strength every clod turned a face to another light and
+    // the caked mud read as crumpled foil in the shade)
+    float3 Na = normalize(lerp(N, Nd, 0.5));
     float3 amb, sunK;
-    RfxObjRig(P, Nd, amb, sunK);
+    RfxObjRig(P, Na, amb, sunK);
     #if defined(_RFX_ENHANCED)
-    amb = RfxEnhAmbient(amb, Nd, occ.x);
+    amb = RfxEnhAmbient(amb, Na, occ.x);
     #endif
     float aoAmb = lerp(1.0, occ.x, _RfxEnhParams.y);
     float3 sunC = _RfxSunColor.rgb * sunK * (shadow * occ.y);
-    // the dirt itself: the level's mud colour; dust where thin, darker caked mud where thick; wet mud darker
+    // the dirt itself: the level's mud colour; dust where thin, darker caked mud where thick, lighter on the clods' drying tops, darker in
+    // the crevices between them; wet mud darker
     float3 mud = saturate(_RfxDirtColor.rgb * 1.9 + 0.07);
     float3 dust = saturate(_RfxDirtColor.rgb * 2.3 + 0.2);
-    float thick = saturate(m * 1.1 + amount * 0.5);
+    float thick = saturate(f.core * 0.85 + amount * 0.35);
     float3 alb = lerp(dust, mud, thick);
-    alb *= lerp(0.8, 1.2, height);
-    alb *= 1.0 - 0.3 * wet;
-    float cav = lerp(0.62, 1.0, height);
-    float3 lit = (amb * aoAmb + sunC * NoL) * cav;
+    alb *= lerp(0.86, 1.12, f.relief) * (0.9 + 0.2 * f.tone);
+    alb *= 1.0 - 0.36 * wet;
+    // the crevices between the clods take less of the sky and (less so) of the sun; the slopes that face the eye read lighter than those that
+    // turn away (the relief shows in flat light and in the shade too, where the rig's light alone would leave it flat)
+    float cav = lerp(1.0, lerp(0.66, 1.0, smoothstep(0.2, 0.7, f.relief)), f.core);
+    float facing = saturate(0.5 + (dot(Nd, V) - dot(N, V)) * 1.6);
+    float3 lit = (amb * aoAmb * cav + sunC * NoL * lerp(cav, 1.0, 0.55)) * lerp(0.9, 1.1, facing);
     float3 dirtC = alb * lit;
-    // a share of the original's colour shows through (the graphics never disappear)
-    dirtC = lerp(dirtC, c * alb * 1.2, 0.12);
-    // gloss: dry dirt is rough, wet mud shines
-    float rough = lerp(0.9, 0.3, wet);
-    float a = rough * rough, a2 = saturate(a * a + 0.02);
+    // a share of the original's colour shows through the thin dirt (the graphics never disappear under dust)
+    dirtC = lerp(dirtC, c * alb * 1.2, 0.14 * (1.0 - f.core));
+    // gloss: dry dirt is rough with a faint sheen on the clods, wet mud shines (the film sits on the clods: glints on every lump)
+    float rough = saturate(lerp(0.72, 0.27, wet) + (0.5 - f.relief) * lerp(0.16, 0.08, wet));
+    float a = rough * rough, a2 = saturate(a * a + min(2.0 * nVar, 0.18));
     float3 H = normalize(L + V);
     float NoH = saturate(dot(Nd, H)), VoH = saturate(dot(V, H));
-    float3 F0 = float3(0.03, 0.03, 0.03);
+    float3 F0 = lerp(0.035, 0.05, wet).xxx;
     float3 sp = RfxFresnelSchlick(F0, VoH) * RfxGGX(NoH, a2) * RfxVisSmith(NoV, NoL, a2) * NoL * 3.14159265 * sunC;
-    if (wet > 0.01) sp += RfxMatEnv(reflect(-V, Nd), rough) * RfxEnvBRDF(F0, rough, NoV) * wet * saturate(occ.x + 0.2) * 0.8;
+    sp += RfxMatEnv(reflect(-V, Nd), rough) * RfxEnvBRDF(F0, rough, NoV) * lerp(0.4, 0.75, wet) * saturate(occ.x + 0.2) * cav;
     dirtC += sp;
     float3 dirtFinal = dirtC * fog.w + fog.rgb;
-    return lerp(c, dirtFinal, m);
+    return lerp(c, dirtFinal, f.m);
 }
 
-// every ENHANCED layer over the program's result; call only when _RfxMatOn > 0.5 and the material has a class
-float4 RfxVehicleMaterial(float4 c, int k, float3 P, float3 N, float3 restPos, float2 occ, float shadow, bool front)
+// every ENHANCED layer over the program's result; call only when _RfxMatOn > 0.5 and the material has a class.
+// N: the vertex normal (world), Ns: the program's shading normal (its normal map; = N without one), uv: the mesh's first UV set.
+// nOut: the normal of what is seen at the pixel (the material's, the dirt's where it lies), facing the eye: the rain film and the menu light.
+float4 RfxVehicleMaterial(float4 c, int k, float3 P, float3 N, float3 Ns, float3 restPos, float2 uv, float2 occ, float shadow, bool front, out float3 nOut)
 {
     float unit = _RfxDirt.z > 0 ? _RfxDirt.z : 1.0;                         // model units per metre
     float3 rp = restPos / unit;
     float4 fog = RfxFog(P, _WorldSpaceCameraPos);
     float alpha = c.a;
-    N = normalize(N);
-    c.rgb = RfxMatLayers(c.rgb, k, P, N, rp, occ, shadow, fog, front, alpha);
-    if (_RfxDirtOn > 0.5) c.rgb = RfxDirtLayer(c.rgb, k, P, N, rp, occ, shadow, fog);
+    N = normalize(N); Ns = normalize(Ns);
+    float3 V = normalize(_WorldSpaceCameraPos - P);
+    float3 dpdx = ddx(P), dpdy = ddy(P); float2 duvx = ddx(uv), duvy = ddy(uv);
+    RfxSurf s = RfxSurfOf(k);
+    {   // (a level without a reflection map: RfxMatEnv's stand-in, the rig's light on a surface facing the reflection)
+        float3 ambF, sunKF;
+        RfxObjRig(P, reflect(-V, Ns), ambF, sunKF);
+        rfxMatEnvFallback = ambF * 0.9 + _RfxSunColor.rgb * sunKF * 0.12;
+    }
+
+    // ---- the material's own maps
+    float mask = -1; float4 albedo = float4(0, 0, 0, -1);
+    int sfxSlot = (int)(_RfxMatMap.x + 0.5) - 1, nrmSlot = (int)(_RfxMatMap.z + 0.5) - 1, difSlot = (int)(_RfxMatMap.w + 0.5) - 1;
+    [branch] if (sfxSlot >= 0)
+    {
+        float4 sfx = RfxMatTex(sfxSlot, uv, duvx, duvy);
+        mask = saturate(_RfxMatMap.y > 1.0 ? sfx.b : sfx.r);
+    }
+    // (a metal's own colour: the program's albedo where a material constant colours it - rfxExpAlb: a wheel's / hub's / A-arm's / frame's /
+    // spring's colour option is such a constant, not a texture - else its diffuse map)
+    [branch] if (s.metal > 0)
+    {
+        if (rfxExpAlbOn > 0.5) albedo = float4(saturate(rfxExpAlb), 1);
+        else if (difSlot >= 0 && _RfxMat.z > 0.5) albedo = float4(RfxMatTex(difSlot, uv, duvx, duvy).rgb, 1);
+    }
+    [branch] if (nrmSlot >= 0)
+    {
+        float3 nf = dot(Ns, V) < 0 ? -Ns : Ns;
+        Ns = RfxMatDetailNormal(nf, dpdx, dpdy, duvx, duvy, RfxMatTex(nrmSlot, uv, duvx, duvy).xy);
+    }
+
+    // ---- the dirt's field and its surface (before the material: the dirt takes the gloss of what it covers)
+    RfxDirtField f; f.m = 0; f.edge = 0; f.core = 0; f.height = 0; f.relief = 0; f.tone = 0.5;
+    float3 Ng = dot(N, V) < 0 ? -N : N;
+    bool dirty = _RfxDirtOn > 0.5 && _RfxDirt.x >= 0.004 && s.dirtAff > 0.001;
+    float px = length(fwidth(rp));   // (derivatives: outside the branches)
+    [branch] if (dirty)
+    {
+        // (each scale of the relief fades out where a pixel no longer resolves it: nothing to shimmer under TAA or far away)
+        f = RfxDirtFieldAt(rp, N, _RfxDirt.x, s.dirtAff, s.dirtH, _RfxDirt.w, saturate(1.6 - px * 42.0 * 1.1), saturate(1.3 - px * 64.0 * 0.9), saturate(1.2 - px * 210.0 * 0.7));
+    }
+    float dhx = ddx(f.height), dhy = ddy(f.height);
+    float3 Nd = Ng;
+    [branch] if (f.m > 0.002)
+    {
+        // the height as a bump: a centimetre of relief in world units, drawn stronger than life so it reads at riding distance; the slope capped
+        float kb = 0.01 * unit * 1.25;
+        float3 r1 = cross(dpdy, Ng), r2 = cross(Ng, dpdx);
+        float det = dot(dpdx, r1);
+        float3 grad = (det < 0 ? -1.0 : 1.0) * (dhx * r1 + dhy * r2) * kb / max(abs(det), 1e-12);
+        float gl = length(grad);
+        grad *= min(gl, 1.0) / max(gl, 1e-6);
+        Nd = normalize(Ng - grad);
+    }
+
+    float3 dndx = ddx(Nd), dndy = ddy(Nd);
+    float nVar = 0.25 * (dot(dndx, dndx) + dot(dndy, dndy));               // (the dirt's specular anti-aliasing, as RfxSpecAA)
+
+    c.rgb = RfxMatLayers(c.rgb, k, P, Ns, rp, occ, shadow, fog, front, mask, albedo, 1.0 - f.m, alpha);
+    nOut = dot(Ns, V) < 0 ? -Ns : Ns;
+    [branch] if (f.m > 0.002)
+    {
+        c.rgb = RfxDirtLayer(c.rgb, f, P, Ng, Nd, nVar, occ, shadow, fog);
+        nOut = normalize(lerp(nOut, Nd, f.m));
+    }
     c.a = alpha;
     return c;
 }

@@ -3,7 +3,9 @@
 // Recording. Every sound command of the world goes through OriginalAudio (OriginalAudio.CommandIssued): the game's own FMOD event
 // commands (the gate drop, the finish, the announcer, the crowd's reactions ...) and the host's sound layer (the original engines of every
 // rider, OriginalEngineAudio; the drive-on, landing, collision and foley sounds, OriginalGameSound; the level's crowd emitters and
-// ambience, OriginalLevelSound). Each is kept (sub-command, wrapper, path, parameter, value, position) in a ring of its own (AudioRing),
+// ambience, OriginalLevelSound; the MX vs ATV Alive engines, AliveEngineAudio, whose events are in the same OriginalAudio's library once
+// their set is added, so they play again from it like Reflex's own; their sync points are not raised for the replay's wrappers, the
+// recorded commands already carry every state change). Each is kept (sub-command, wrapper, path, parameter, value, position) in a ring of its own (AudioRing),
 // in order, belonging to the next recorded frame. The engine packs chosen in the garage play outside FMOD (EnginePackPlayer): their
 // riders' telemetry (rpm, idle / max rpm, throttle, gear, airborne, engine size, position) is kept per recorded frame.
 //

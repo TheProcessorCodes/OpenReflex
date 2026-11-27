@@ -24,7 +24,9 @@ CBUFFER_START(UnityPerMaterial)
     float4 _SunDirection;      // gSunLight: unit vector towards the sun (original world == Unity world axes)
     float4 _SunColor;          // gSunLightColor
     float4 _DetailFade;        // x: start (384), y: range (128)  [vs_hft_lod0 0710..0730]
+    float _UnleashedDetail;
     float4 _MtxDetail;         // experimental terrain only; zero for stock tracks
+    float4 _UxOv;              // Untamed ground overlay: x on, y / z the weight scale of layer A / B
     float _MtxSourceColour;    // source colour map uses the venue palette
     float4 _DetailParams;      // x: detail texldb mip bias (-0.67), y: chroma scale (0.25)
     float4 _RTBumpNeutral;     // RT_Bump sample used when no rut target exists (x, y, z, w)
@@ -116,20 +118,98 @@ float RfxRTBumpFade(float V, float positionY)
 // reads the mip level whose texel covers two height-map cells around the vertex (RT_Bump carries a mip chain, generated per frame), so
 // a sub-texel slide barely changes the height, and the fine and the coarse terrain LODs displace the same smooth relief. The pixel
 // program's taps still read mip 0, as the original.
+// fade * RT.z at a world position, RT_Bump read at the mip level whose texel spans `cell` world units (0 when RT_Bump is off)
+float RfxRTBumpHeight(float3 positionWS, float cell)
+{
+    if (_RfxRTBumpParams.x < 0.5) return 0.0;
+    float2 ruv = RfxRTBumpUV(positionWS);
+    const float eps = 0.05;
+    float2 ux = RfxRTBumpUV(positionWS + float3(eps, 0, 0)) - ruv, uz = RfxRTBumpUV(positionWS + float3(0, 0, eps)) - ruv;
+    float texels = max(length(ux * float2(768.0, 1536.0)), length(uz * float2(768.0, 1536.0))) * (cell / eps);
+    float level = clamp(log2(max(texels, 1.0)), 0.0, 8.0);
+    float4 rt = SAMPLE_TEXTURE2D_LOD(_RfxRTBump, sampler_RfxRTBump, ruv, level);
+    return RfxRTBumpFade(ruv.y, positionWS.y) * rt.z;
+}
+
 float3 RfxRTBumpDisplace(float3 positionWS)
 {
-    if (_RfxRTBumpParams.x > 0.5)
-    {
-        float2 ruv = RfxRTBumpUV(positionWS);
-        const float eps = 0.05;
-        float2 ux = RfxRTBumpUV(positionWS + float3(eps, 0, 0)) - ruv, uz = RfxRTBumpUV(positionWS + float3(0, 0, eps)) - ruv;
-        float cell = max(2.0 * _TerrainHeightmapScale.x, 0.5);                                // two height-map cells
-        float texels = max(length(ux * float2(768.0, 1536.0)), length(uz * float2(768.0, 1536.0))) * (cell / eps);
-        float level = clamp(log2(max(texels, 1.0)), 0.0, 8.0);
-        float4 rt = SAMPLE_TEXTURE2D_LOD(_RfxRTBump, sampler_RfxRTBump, ruv, level);
-        positionWS.y += RfxRTBumpFade(ruv.y, positionWS.y) * rt.z;
-    }
+    positionWS.y += RfxRTBumpHeight(positionWS, max(2.0 * _TerrainHeightmapScale.x, 0.5));   // two height-map cells
     return positionWS;
+}
+
+// ---- TERRAIN TESSELLATION (OPEN REFLEX option, on by default; Rendering/ReflexTerrainClipmap.cs) ----
+// The original draws its terrain as a camera-centred geometry clipmap (the water's mesh class, FUN_007e4280 from 007c49c8: a 129 x 129
+// grid of 0.25-unit cells, each further level twice as coarse; vs_hft_lod0 places a vertex at v0 * gMeshResolution + gVertexOffset,
+// clamped to the terrain) and fetches the height map, the deformation surface and RT_Bump.z at every vertex. Unity's terrain has one
+// vertex per height-map sample (1 or 2 units), where RT_Bump's relief cannot be displaced. With the option on, the same nested grid is
+// drawn around the camera out to the level whose cell is one height-map sample; Unity's terrain sinks under it and goes on beyond.
+float4 _RfxClipOrigin;     // x, y: world (x, z) of the mesh's centre, z: the finest cell (world units), w: 1 while the clipmap is drawn
+float4 _RfxClipRect;       // x, y: world (x, z) half size of the clipmap square, z: the inner margin where Unity's terrain is sunk whole, w: sink depth
+float4 _RfxClipGrid;       // x, y: world (x, z) of height-map texel (0, 0), z: 1 / spacing, w: the height map's size (texels per side)
+float4 _RfxClipHeight;     // x: world y of height 0, y: world units per unpacked height, z: the coarsest level's cell / the finest, w: unused
+float4 _RfxClipBounds;     // the terrain's world extents: min x, min z, max x, max z
+TEXTURE2D(_RfxClipHeightTex);   // Unity's live height map (the collision heights with the ruts, OriginalTerrain)
+
+float RfxClipTexel(int2 t)
+{
+    int n = int(_RfxClipGrid.w) - 1;
+    return UnpackHeightmap(LOAD_TEXTURE2D(_RfxClipHeightTex, clamp(t, 0, n)));
+}
+
+// how far Unity's own terrain vertex at a world position is lowered: a hair under the whole clipmap square (so the clipmap always wins
+// the depth test where both draw the same ground), and out of sight further in
+float RfxClipSink(float2 xz)
+{
+    if (_RfxClipOrigin.w < 0.5) return 0.0;
+    float2 d = _RfxClipRect.xy - abs(xz - _RfxClipOrigin.xy);
+    float e = min(d.x, d.y);
+    return e <= 0.001 ? 0.0 : (e > _RfxClipRect.z ? _RfxClipRect.w : 0.03);
+}
+
+// A clipmap vertex: positionOS.xz = the vertex in finest-cell units from the centre, uv.x = its level's cell in finest cells (2^L).
+// (The world normal it returns must not go through the object's matrices.)
+// Returns the world position; uv becomes the terrain uv Unity's instanced patches carry, normal the height map's.
+float3 RfxClipVertex(float4 positionOS, inout float3 normal, inout float2 uv)
+{
+    float levelCells = uv.x;
+    float2 xz = _RfxClipOrigin.xy + positionOS.xz * _RfxClipOrigin.z;
+    xz = clamp(xz, _RfxClipBounds.xy, _RfxClipBounds.zw);                 // as vs_hft_lod0 04c0 / 04d0: the grid ends at the terrain's edge
+    float2 t = (xz - _RfxClipGrid.xy) * _RfxClipGrid.z;                   // height-map sample coordinates
+    float2 f = floor(t), w = t - f; int2 a = int2(f);
+    float h00 = RfxClipTexel(a), h10 = RfxClipTexel(a + int2(1, 0)), h01 = RfxClipTexel(a + int2(0, 1)), h11 = RfxClipTexel(a + int2(1, 1));
+    float y = _RfxClipHeight.x + lerp(lerp(h00, h10, w.x), lerp(h01, h11, w.x), w.y) * _RfxClipHeight.y;
+    int2 c = int2(round(t));
+    float sx = (RfxClipTexel(c - int2(1, 0)) - RfxClipTexel(c + int2(1, 0))) * _RfxClipHeight.y;
+    float sz = (RfxClipTexel(c - int2(0, 1)) - RfxClipTexel(c + int2(0, 1))) * _RfxClipHeight.y;
+    normal = normalize(float3(sx, 2.0 / _RfxClipGrid.z, sz));
+    uv = t / (_RfxClipGrid.w - 1.0);
+    float3 p = float3(xz.x, y, xz.y);
+
+    // RT_Bump.z: what Unity's vertices get (smoothed over two height-map cells) at the square's rim, so the two meshes meet; inside, the
+    // relief at this level's own vertex spacing - from the world-locked near target at mip 0 where it reaches (the original's fetch: a
+    // ground point keeps its height from frame to frame), from the slices at the level's mip beyond it
+    float spacing = 1.0 / _RfxClipGrid.z;
+    float coarse = RfxRTBumpHeight(p, max(2.0 * spacing, 0.5));
+    float rim = (_RfxClipRect.x - max(abs(xz.x - _RfxClipOrigin.x), abs(xz.y - _RfxClipOrigin.y)) - _RfxClipRect.z) / max(_RfxClipRect.z, 1e-3);
+    float wFine = saturate(rim);
+    if (wFine > 0.0 && _RfxRTBumpParams.x > 0.5)
+    {
+        float fine = RfxRTBumpHeight(p, _RfxClipOrigin.z * levelCells);
+        if (_RfxRTBumpNearOn > 0.5)
+        {
+            float2 nuv = (xz - _RfxRTBumpNearRect.xy) * _RfxRTBumpNearRect.z;
+            float edge = min(min(nuv.x, nuv.y), min(1.0 - nuv.x, 1.0 - nuv.y)) / (_RfxRTBumpNearRect.z * _RfxRTBumpNearRect.w);
+            float wn = saturate(edge);
+            if (wn > 0.0)
+            {
+                float nz = SAMPLE_TEXTURE2D_LOD(_RfxRTBumpNear, sampler_RfxRTBump, nuv, 0).z;
+                fine = lerp(fine, RfxRTBumpFade(RfxRTBumpUV(p).y, y) * nz, wn);
+            }
+        }
+        coarse = lerp(coarse, fine, wFine);
+    }
+    p.y += coarse;
+    return p;
 }
 
 UNITY_INSTANCING_BUFFER_START(Terrain)
@@ -148,6 +228,36 @@ void ReflexTerrainInstancing(inout float4 positionOS, inout float3 normal, inout
     normal = _TerrainNormalmapTexture.Load(int3(sampleCoords, 0)).rgb * 2 - 1;
     uv = sampleCoords * _TerrainHeightmapRecipSize.zw;
 #endif
+}
+
+// The world position of a terrain vertex in every pass: Unity's instanced patch (sunk under the clipmap while TERRAIN TESSELLATION draws
+// it), a clipmap vertex, or a plain mesh.
+float3 ReflexTerrainVertexWS(inout float4 positionOS, inout float3 normal, inout float2 uv)
+{
+    // the clipmap's mesh (y = -(10000 + its level's cell), in either instancing variant): only in the game camera's view (every vertex on
+    // one point elsewhere: nothing is drawn)
+    float3 p = float3(0, 0, 0);
+    bool clipmap = positionOS.y < -5000.0;
+    if (clipmap)
+    {
+        float2 cuv = float2(-positionOS.y - 10000.0, 0.0);
+        float3 cn = float3(0, 1, 0);
+        if (_RfxClipOrigin.w > 0.5) p = RfxClipVertex(positionOS, cn, cuv);
+        normal = cn; uv = cuv;
+    }
+    else
+    {
+#ifdef UNITY_INSTANCING_ENABLED
+        ReflexTerrainInstancing(positionOS, normal, uv);
+        p = TransformObjectToWorld(positionOS.xyz);
+        float sink = RfxClipSink(p.xz);
+        p = RfxRTBumpDisplace(p);
+        p.y -= sink;
+#else
+        p = RfxRTBumpDisplace(TransformObjectToWorld(positionOS.xyz));
+#endif
+    }
+    return p;
 }
 
 // Per-pixel heightmap normal (the original ps_hft_lod0 rebuilds the normal per pixel from heightmap

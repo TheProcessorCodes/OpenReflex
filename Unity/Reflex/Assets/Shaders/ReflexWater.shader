@@ -113,11 +113,16 @@ Shader "Reflex/Original Water"
     TEXTURE2D(pressure_texture); SAMPLER(samplerpressure_texture);
     TEXTURECUBE(usr_sampler_cube_reflection); SAMPLER(samplerusr_sampler_cube_reflection);
     // WEATHER: the reflection cube's sample in direction d under the clouds (the programs below are unchanged otherwise)
+    // (in the rain: with the drops' rings on the surface, the slope RfxWeatherRipples gives at the pixel, set by WaterFrag; 0 otherwise)
+    static float2 gRfxWaterRipple = float2(0.0, 0.0);
     float4 RfxWaterWeather(float4 c, float3 d)
     {
         [branch] if (_RfxWeather.w > 0.5)
         {
             float3 n = normalize(d); n.y = abs(n.y);
+            // a ring tilts the surface, so the mirrored ray: mostly its elevation (the deck's gradient shows the rings), a little its heading
+            n = normalize(float3(n.x - gRfxWaterRipple.x * 0.15, n.y + dot(n.xz, gRfxWaterRipple) * 0.35, n.z - gRfxWaterRipple.y * 0.15));
+            n.y = abs(n.y);
             c.rgb = lerp(c.rgb, RfxWeatherSkyColour(n, 1.0), _RfxWeather.z);
         }
         return c;
@@ -207,22 +212,8 @@ Shader "Reflex/Original Water"
         oC0 = r0.xxxx * r1.zzzz;   // 0108 mul
         return oC0;
     }
-    ENDHLSL
-        Pass
-        {
-            Name "Water"
-            Tags { "LightMode"="UniversalForward" }
-            Cull Back
-            ZWrite On
-            ZTest LEqual
-
-            HLSLPROGRAM
-            #pragma target 3.5
-            #pragma vertex WaterVert
-            #pragma fragment WaterFrag
-            #pragma multi_compile_local _WATER_WATER _WATER_OCEAN _WATER_POOL
-            #pragma multi_compile_local _ _WATER_RIVER
-            #pragma multi_compile_local _ _WATER_LOD1
+    // ---- the water programs (the "Water" and "DepthOnly" passes below; the wake passes have none of the _WATER_* keywords) ----
+    #if defined(_WATER_WATER) || defined(_WATER_OCEAN) || defined(_WATER_POOL)
 
     #if defined(_WATER_WATER) && !defined(_WATER_RIVER) && !defined(_WATER_LOD1)
     // vs_lake_lod0
@@ -3319,6 +3310,15 @@ Shader "Reflex/Original Water"
                 RfxProjection();
                 float4 v[10] = { i.t0, i.t1, i.t2, i.t3, i.t4, i.t5, i.t6, i.t7, i.t8, i.t9 };
                 float4 c;
+                // WEATHER (not the original program): rain on rivers, lakes and the sea, the rings the terrain's puddles have (the
+                // reflection's direction takes their slope in RfxWaterWeather); near the camera only (a ring is a foot across)
+                gRfxWaterRipple = float2(0.0, 0.0);
+                [branch] if (_RfxWeather.w > 0.5 && _RfxWeather2.y > 0.01)
+                {
+                    float3 wxP = ComputeWorldSpacePosition(GetNormalizedScreenSpaceUV(i.positionCS), i.positionCS.z, UNITY_MATRIX_I_VP);
+                    float wxFade = saturate(1.0 - (distance(wxP, _WorldSpaceCameraPos) - 50.0) / 110.0);
+                    [branch] if (wxFade > 0.0) gRfxWaterRipple = RfxWeatherRipples(wxP.xz, _RfxWeather2.w, _RfxWeather2.y) * wxFade;
+                }
             #if defined(_WATER_WATER)
                 #if defined(_WATER_RIVER)
                     #if defined(_WATER_LOD1)
@@ -3370,6 +3370,32 @@ Shader "Reflex/Original Water"
                 if (floor(saturate(c.a) * 255.0 + 0.5) <= 0.0) discard;
                 return float4(RfxOutput(c.rgb), c.a);
             }
+
+            // the depth pre-pass: the water surface with the forward pass's alpha test (the description map's mask), so what reads the
+            // scene depth before the water is drawn (the occlusion, VOLUMETRIC LIGHT, WEATHER's mist, the TAA's reprojection) and after
+            // it (soft particles) finds the surface and not the lake bed under it
+            half WaterDepthFrag(Varyings i) : SV_Target
+            {
+                WaterFrag(i);   // (discards as the forward pass does; its colour is not used)
+                return i.positionCS.z;
+            }
+    #endif
+    ENDHLSL
+        Pass
+        {
+            Name "Water"
+            Tags { "LightMode"="UniversalForward" }
+            Cull Back
+            ZWrite On
+            ZTest LEqual
+
+            HLSLPROGRAM
+            #pragma target 3.5
+            #pragma vertex WaterVert
+            #pragma fragment WaterFrag
+            #pragma multi_compile_local _WATER_WATER _WATER_OCEAN _WATER_POOL
+            #pragma multi_compile_local _ _WATER_RIVER
+            #pragma multi_compile_local _ _WATER_LOD1
             ENDHLSL
         }
 
@@ -3439,6 +3465,26 @@ Shader "Reflex/Original Water"
                 if (floor(saturate(c.a) * 255.0 + 0.5) == 0.0) discard;   // alpha test NOTEQUAL 0, no blending (FUN_007ed300)
                 return c;
             }
+            ENDHLSL
+        }
+
+        // (after the wake passes: OriginalWater draws those by their index, 1 and 2)
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode"="DepthOnly" }
+            Cull Back
+            ZWrite On
+            ZTest LEqual
+            ColorMask R
+
+            HLSLPROGRAM
+            #pragma target 3.5
+            #pragma vertex WaterVert
+            #pragma fragment WaterDepthFrag
+            #pragma multi_compile_local _WATER_WATER _WATER_OCEAN _WATER_POOL
+            #pragma multi_compile_local _ _WATER_RIVER
+            #pragma multi_compile_local _ _WATER_LOD1
             ENDHLSL
         }
     }

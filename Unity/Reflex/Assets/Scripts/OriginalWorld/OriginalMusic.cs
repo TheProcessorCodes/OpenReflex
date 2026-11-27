@@ -60,6 +60,8 @@ namespace Reflex.Port.OriginalWorld
         public string[] titles = new string[0];
         [Range(0, 1)] public float volume = 0.6f;
         public bool playing = true;
+        static bool Streamer => Reflex.Port.Options.ReflexSettings.StreamerMode;
+        bool streamerMuted;
         [Tooltip("Follow the game's own MusicPlayer when an original world runs (its playlist, start delay, transitions).")]
         public bool followGame = true;
         /// The ride is in the front end's own world (the garage's TEST RIDE, the load arena: OriginalWorldRuntime.CreateOpen): the
@@ -142,6 +144,9 @@ namespace Reflex.Port.OriginalWorld
         {
             if (Keyboard.current != null && Keyboard.current.mKey.wasPressedThisFrame && !OriginalOnboardAdjust.KeyboardCaptured) { playing = !playing; if (!playing && source) source.Stop(); }
             if (!source) return;
+            // STREAMER MODE (ReflexSettings.StreamerMode): nothing of the music is heard, whatever MUSIC / M say; back when it is switched off
+            if (Streamer) { if (!source.mute) { source.mute = true; streamerMuted = true; } }
+            else if (streamerMuted) { streamerMuted = false; source.mute = false; }
             // pause ducking: DuckedPercentageWhenPaused over DuckTime (the original's channel ramp 0x8048f0)
             float duckTo = AudioListener.pause && channel != null && channel.duckWhenPaused > 0 ? 1f - channel.duckWhenPaused : 1f;
             float rate = channel != null && channel.duckTime > 0 ? Mathf.Max(channel.duckWhenPaused, 0.01f) / channel.duckTime : 1000f;
@@ -163,7 +168,7 @@ namespace Reflex.Port.OriginalWorld
             FindGame();
             if (FollowingGame) { FollowGame(); return; }
             if (uiWorld) { if (source.isPlaying) source.Stop(); return; }   // the game's jukebox never runs in the front end's world (no shuffle of our own)
-            if (order.Length == 0 || loading || !playing || source.isPlaying || Time.time < startAt) return;
+            if (order.Length == 0 || loading || !playing || Streamer || source.isPlaying || Time.time < startAt) return;
             // (w-fb-hud) the launch's shuffle bag of the whole list (ReflexShuffleBag: no repeat before every track played, across races)
             int tr = ReflexMusicBags.Get(ReflexMusicBags.RaceOffline).Next(order.Length);
             if (tr < 0) return;
@@ -289,7 +294,7 @@ namespace Reflex.Port.OriginalWorld
             Poll();
             while (polled.TryDequeue(out var s)) Observe(s);
             if (info == null) return;
-            if (!playing) { if (source.isPlaying) source.mute = true; return; }
+            if (!playing || Streamer) { if (source.isPlaying) source.mute = true; return; }
             source.mute = false;
             if (!jukebox || fadingOut || loading) return;
             // a track played out: the next entry of the game's playlist (006771b0: position + 1, wrapping)

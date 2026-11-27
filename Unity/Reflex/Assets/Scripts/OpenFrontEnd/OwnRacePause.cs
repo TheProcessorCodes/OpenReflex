@@ -579,7 +579,7 @@ namespace Reflex.Port.OpenFrontEnd
             OwnAaaLoading.Show();
             AudioListener.pause = false;
             owner.StopSimulation();
-            ReflexEventSelect.Launch(ev.key, 0, false, scene, 0, garage, Reflex.Port.RxCore.RxMapScale.Current, weather: Reflex.Port.Rendering.ReflexWeather.RideMode, weatherIntensity: Reflex.Port.Rendering.ReflexWeather.RideIntensity);   // the same world: its MAP SCALE and WEATHER kept
+            ReflexEventSelect.Launch(ev.key, 0, false, scene, 0, garage, Reflex.Port.RxCore.RxMapScale.Current, weather: Reflex.Port.Rendering.ReflexWeather.RideMode, weatherIntensity: Reflex.Port.Rendering.ReflexWeather.RideIntensity, splitScreen: Reflex.Port.RxCore.RxSplitScreen.Requested);   // the same world: its MAP SCALE, WEATHER and SPLIT SCREEN kept
         }
 
         // ------------------------------------------------------------------------------------------------ VEHICLE TUNING
@@ -632,7 +632,11 @@ namespace Reflex.Port.OpenFrontEnd
             var tuning = new ReflexGarage.Tuning { engine1 = v[0], engine2 = v[1], suspension1 = v[2], suspension2 = v[3], tire1 = v[4], tire2 = v[5], braking = v[6], steering = v[7] };
             if (runtime == null) return;
             var saved = ReflexProfile.SetTuning(vehicle, tuning);
-            if (saved.Result) runtime.ApplyOpenTuning(tuning);   // queued on the session owner, before the next resumed frame
+            if (saved.Result)
+            {
+                runtime.ApplyOpenTuning(tuning);   // queued on the session owner, before the next resumed frame
+                if (spec != null && spec.practice) Reflex.Port.Practice.RxPractice.TuningChanged(v);   // PRACTICE: the lap being ridden is not counted
+            }
             else { Debug.LogWarning("[Pause] the tuning could not be saved: " + ReflexProfile.Error); OuSound.Play("Locked"); }
         }
 

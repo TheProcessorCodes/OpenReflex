@@ -31,6 +31,9 @@ namespace Reflex.Port.OriginalWorld
         public sealed class Frame
         {
             public bool valid; public int scenario, step, postState;
+            /// Taken during the race (InProgress / WindDown): the slots' drawn flags only, for the opponents the core took out of play
+            /// (an eliminated rider, an online leaver); the local rider's models are left as they are.
+            public bool racing;
             public int riderCount; public readonly RiderData[] riders = new RiderData[MaxRiders];
             public int slotCount; public readonly int[] slots = new int[MaxRiders];
             public readonly bool[] riderDrawn = new bool[MaxRiders], vehicleDrawn = new bool[MaxRiders];
@@ -75,6 +78,7 @@ namespace Reflex.Port.OriginalWorld
             foreach (var c in byObject.Values) c.shown = false;
             var cam = viewer ? viewer : Camera.main;
             Vector3 eye = cam ? cam.transform.position : Vector3.zero;
+            bool two = ReflexWorldViews.SecondEye(out Vector3 eye2);   // SPLIT SCREEN (w-split): drawn within reach of either viewer
             if (f != null && f.valid)
                 for (int i = 0; i < f.riderCount && i < f.riders.Length; i++)
                 {
@@ -86,7 +90,7 @@ namespace Reflex.Port.OriginalWorld
                     if (cam && d.drawDistance > 0f)
                     {
                         float reach = d.drawDistance * distanceScale;
-                        if ((d.root - eye).sqrMagnitude > reach * reach) continue;
+                        if ((d.root - eye).sqrMagnitude > reach * reach && !(two && (d.root - eye2).sqrMagnitude <= reach * reach)) continue;
                     }
                     if (!byObject.ContainsKey(d.obj) && builtThisFrame) continue;   // one rider model built per frame (as OriginalOpponents)
                     var c = Ensure(d);

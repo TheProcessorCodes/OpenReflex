@@ -65,6 +65,16 @@ namespace Reflex.Port.OriginalWorld
         public int Posed => opponents.Count(o => o.posed);
         public double buildMilliseconds;
         public double LastSlotMilliseconds { get; private set; }
+        /// SPLIT SCREEN (w-split): the rider model drawn at a slot, once built (the second local rider's Dynamic FPV rides its head:
+        /// OriginalWorldRuntime.MoveSecondView binds it every frame, so a rebuilt roster's new model is picked up).
+        public bool TryGetRider(int slot, out OriginalRider rider)
+        {
+            rider = bySlot.TryGetValue(slot, out int k) && k < opponents.Count && opponents[k].built && opponents[k].rider != null ? opponents[k].rider.rider : null;
+            return rider;
+        }
+        /// SPLIT SCREEN: the second local rider's view is its Dynamic FPV camera now: no RIDER MOTION LOOSE on its rider (the camera rides the
+        /// original head, as the first rider's: OriginalWorldRuntime.ApplyRider).
+        [NonSerialized] public bool secondLocalOnboard;
 
         /// The world was made (the roster read before the simulation thread started): builds what changed, tracks the slots.
         public void Begin(ReflexRoster roster, OriginalSimulation sim) => Begin(roster, sim, null);
@@ -76,7 +86,8 @@ namespace Reflex.Port.OriginalWorld
             // (REFLEX_BIGFIELD_LOD=0: a big field drawn as a field of 12 is, every rider in full: the A / B of the drawing cost, tests only)
             BigField = roster.entries.Count > Reflex.Port.RxCore.RxRiderCap.Original && Environment.GetEnvironmentVariable("REFLEX_BIGFIELD_LOD") != "0";
             var wanted = roster.entries.Where(e => !e.Local).ToList();
-            string Key(ReflexRoster.Entry e) => e.slot.slot + "#" + (e.bike?.Key ?? "-") + "#" + (e.rider?.Key ?? "-");
+            string detail = ReflexBikeModel.RaceHighResOthers ? "#hr" : "";   // (BIKE DETAIL changed between races: built again)
+            string Key(ReflexRoster.Entry e) => e.slot.slot + "#" + (e.bike?.Key ?? "-") + "#" + (e.rider?.Key ?? "-") + detail;
             bool same = wanted.Count == opponents.Count && wanted.Select(Key).SequenceEqual(opponents.Select(o => o.key));
             if (!same)
             {
@@ -103,7 +114,11 @@ namespace Reflex.Port.OriginalWorld
                 try
                 {
                     o.root = new GameObject($"Opponent {o.entry.slot.slot} · {o.entry.name}"); o.root.transform.SetParent(transform, false); o.root.SetActive(false);
-                    o.bike = ReflexBikeModel.Build(o.entry.bike);   // null: the default MarsF Lite
+                    // null: the default MarsF Lite (lods: its further LODs by distance, SelectLods). SPLIT SCREEN (w-split): the second local rider's
+                    // own bike is built as the first's is (BIKE DETAIL HIGH: the garage's HR twin; the HR hand guards, bars and pipe), with the LODs
+                    o.bike = o.entry.secondLocal
+                        ? ReflexBikeModel.Build(o.entry.bike, highRes: ReflexBikeModel.RaceHighRes, highResParts: true, lods: true, stand: false)
+                        : ReflexBikeModel.Build(o.entry.bike, highRes: ReflexBikeModel.RaceHighResOthers, lods: true, stand: false);
                     foreach (var g in new[] { o.bike.chassis, o.bike.frontWheel.gameObject, o.bike.rearWheel.gameObject }) g.transform.SetParent(o.root.transform, false);
                 }
                 catch (Exception e) { Debug.LogWarning($"Reflex opponent {o.entry.name}: bike not built: {e.Message}"); }
@@ -112,7 +127,7 @@ namespace Reflex.Port.OriginalWorld
                 watch.Start();
                 try
                 {
-                    o.rider = ReflexRiderModel.Build(o.entry.rider);
+                    o.rider = ReflexRiderModel.Build(o.entry.rider, lods: true, highRes: ReflexBikeModel.RaceHighResOthers);
                     o.rider.root.transform.SetParent(o.root.transform, false);
                 }
                 catch (Exception e) { Debug.LogWarning($"Reflex opponent {o.entry.name}: rider not built: {e.Message}"); }
@@ -150,6 +165,59 @@ namespace Reflex.Port.OriginalWorld
         /// The rider's skinned bounds about its root bone (feet): the off-screen test of an opponent rider (RIDER CAP; Prepare).
         public const float RiderBoundsFeet = 16f;
 
+        // DISTANCE LODS: the original models' further LOD records (Content/ReflexBikeModel.Lod.cs, ReflexRiderModel.SelectLods: the stock bikes
+        // 0 / 40 / 120 ft, the gear 0 / 40 / 80 or 120 ft) on the other riders, by their distance from the camera: each model's own
+        // distances times ReflexDrawDistance.SceneryScale (DRAW DISTANCE ORIGINAL: the original's; HIGH 1.6, ULTRA 2.4 times as far), switched
+        // outward at the distance and back inward FarHysteresis nearer, a zoomed camera (under 60 degrees) counted as nearer by its zoom.
+        // REFLEX_OPPONENT_LOD=0 (or the static, tests): every rider in LOD 0, as before.
+        public static bool DistanceLod = Environment.GetEnvironmentVariable("REFLEX_OPPONENT_LOD") != "0";
+        /// Diagnostics: the riders drawn with a further LOD now.
+        public int LodRiders { get; private set; }
+        const float LodReferenceTan = 0.57735f;   // tan(30 deg): a 60 degree view
+        /// The LODs of one rider's models for the camera (OriginalOpponents' riders, OnlineRide's puppets). True: a further LOD is drawn.
+        public static bool SelectLods(ReflexBikeModel bike, ReflexRiderModel rider, Vector3 position, Camera cam) => SelectLods(bike, rider, LodDistance(position, cam));
+        /// The distance a rider's LODs are chosen by for a camera (zoom counted; 0: LOD 0).
+        static float LodDistance(Vector3 position, Camera cam)
+        {
+            if (!DistanceLod || !cam) return 0f;
+            float d = (position - cam.transform.position).magnitude;
+            if (!cam.orthographic) d *= Mathf.Min(1f, Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad) / LodReferenceTan);
+            return d;
+        }
+        static bool SelectLods(ReflexBikeModel bike, ReflexRiderModel rider, float d)
+        {
+            float scale = Reflex.Port.Rendering.ReflexDrawDistance.SceneryScale;
+            bool further = false;
+            if (bike != null && bike.HasLods) { bike.SelectLods(d, scale, FarHysteresis); further |= bike.MaxLod > 0; }
+            if (rider != null && rider.HasLods) { rider.SelectLods(d, scale, FarHysteresis); further |= rider.MaxLod > 0; }
+            return further;
+        }
+        // (every drawn frame, not only a completed game frame: the camera moves while the game is paused; a LOD part needs no pose of its own)
+        void LateUpdate() => SelectAllLods();
+        // (and before the viewer renders, when the pipeline says so: a camera posed or rendered again within the frame draws its own distances)
+        void OnEnable() { UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering += BeforeCamera; }
+        void OnDisable() { UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= BeforeCamera; }
+        void BeforeCamera(UnityEngine.Rendering.ScriptableRenderContext context, Camera cam) { if (ReflexWorldViews.Is(viewer, cam)) SelectAllLods(); }
+        // SPLIT SCREEN (w-split): one LOD state for both views: each rider by the nearer of the two cameras, and the second local rider's own
+        // bike and rider (the subject of the second view) always in LOD 0, as the first rider's are.
+        void SelectAllLods()
+        {
+            int n = 0;
+            var second = ReflexWorldViews.Second;
+            foreach (var o in opponents)
+            {
+                if (!o.built || !o.posed) continue;
+                float d = o.entry.secondLocal ? 0f : LodDistance(o.position, viewer);
+                if (second && d > 0f) d = Mathf.Min(d, LodDistance(o.position, second));
+                if (SelectLods(o.bike, o.rider, d)) n++;
+            }
+            if (LodLog && n != LodRiders)
+                Debug.Log($"Reflex opponents LOD: {n} of {opponents.Count} riders with a further LOD (scale {Reflex.Port.Rendering.ReflexDrawDistance.SceneryScale:0.0})\n  " + string.Join("\n  ",
+                    opponents.Where(o => o.built && o.posed).Select(o => $"{o.entry.name} {(viewer ? (o.position - viewer.transform.position).magnitude : 0f):0} ft: {o.bike?.LodState} | {o.rider?.LodState}")));
+            LodRiders = n;
+        }
+        static readonly bool LodLog = Environment.GetEnvironmentVariable("REFLEX_OPPONENT_LOD_LOG") == "1";   // tests: a line when the count changes
+
         void SetFar(Opponent o, bool far)
         {
             if (o.far == far) return;
@@ -162,7 +230,6 @@ namespace Reflex.Port.OriginalWorld
         {
             long watch = System.Diagnostics.Stopwatch.GetTimestamp();
             LastSlotMilliseconds = r.slotMilliseconds;
-            Vector3 eye = viewer ? viewer.transform.position : Vector3.zero;
             int farRiders = 0, farParts = 0;
             for (int i = 0; i < r.slotCount; i++)
             {
@@ -175,9 +242,9 @@ namespace Reflex.Port.OriginalWorld
                 var bikeWorld = OriginalBikePose.FromRows(r.slotBikePose[i], 0);
                 o.position = bikeWorld.GetColumn(3);
                 // RIDER CAP: a far rider of a big field (never in a field of 12 or fewer, never without a camera)
-                if (BigField && viewer)
+                if (BigField && viewer && !o.entry.secondLocal)
                 {
-                    float d2 = (o.position - eye).sqrMagnitude, edge = bigFieldFarDistance * (o.far ? 1f - FarHysteresis : 1f + FarHysteresis);
+                    float d2 = ReflexWorldViews.SqrDistance(viewer, o.position), edge = bigFieldFarDistance * (o.far ? 1f - FarHysteresis : 1f + FarHysteresis);
                     SetFar(o, d2 > edge * edge);
                 }
                 else SetFar(o, false);
@@ -192,6 +259,7 @@ namespace Reflex.Port.OriginalWorld
                         {
                             o.bikeAtRiderPose = bikeWorld; o.riderPosed = true;
                             if (!o.far) RiderGripIK.Apply(o.rider.rider, o.bike);   // OPEN REFLEX: the hands closed on the grips (w-grips; not on a far rider of a big field)
+                            if (!o.far && RiderLooseMotion.Loose) RiderLooseMotion.Apply(o.rider.rider, r.slotBikePose[i], r.gameTime, o.entry.secondLocal && secondLocalOnboard ? 0f : RiderLooseMotion.DistanceWeight(o.position, viewer));   // RIDER MOTION LOOSE (drawing only; near riders)
                         }
                     }
                     else if (o.riderPosed)
@@ -205,7 +273,8 @@ namespace Reflex.Port.OriginalWorld
                 if (!o.posed) { o.posed = true; o.root.SetActive(true); }
                 if (ReflexMud.Find(r.mud, r.mudCount, o.entry.slot.slot, out var mud)) ReflexMud.Apply(o.bike, o.rider, mud);   // the slot's mud record
                 if (!o.far) ReflexObjectShading.ApplyVehicleConstants(o.entry.slot.vehicle, o.bike, o.bikeRenderers);   // its run-time shader constants (belt scroll, flywheel blur)
-                if (k < near.Length) near[k] = !viewer || (o.position - eye).sqrMagnitude < riderNearDistance * riderNearDistance;
+                // (SPLIT SCREEN, w-split: near either viewer; the second local rider always: its skeleton every frame, as the first rider's)
+                if (k < near.Length) near[k] = !viewer || o.entry.secondLocal || ReflexWorldViews.SqrDistance(viewer, o.position) < riderNearDistance * riderNearDistance;
             }
             FarRiders = farRiders; FarHiddenParts = farParts;
             // the near flags go to the simulation thread as a new array only when one changed (it keeps the array it was given: no copy a frame, w-rc-client)
@@ -239,7 +308,7 @@ namespace Reflex.Port.OriginalWorld
         void Clear()
         {
             if (building != null) { StopCoroutine(building); building = null; }
-            foreach (var o in opponents) { o.bike?.Destroy(); o.rider?.Destroy(); if (o.root) Destroy(o.root); }
+            foreach (var o in opponents) { if (o.rider != null && o.rider.rider) OriginalOnboardCamera.Forget(o.rider.rider); o.bike?.Destroy(); o.rider?.Destroy(); if (o.root) Destroy(o.root); }   // (the second local rider's cockpit parts: before its model goes)
             opponents.Clear(); bySlot.Clear();
         }
 

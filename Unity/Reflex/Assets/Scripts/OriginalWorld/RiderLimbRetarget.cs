@@ -55,6 +55,15 @@ namespace Reflex.Port.OriginalWorld
             }
         }
 
+        /// A limb never straightens past this share of its length: a straight limb has no bend side, and the next solve (RiderGripIK after
+        /// these offsets) read one from noise, so the elbow / knee flipped inside out from frame to frame (the Alive 50cc's rider as the fork
+        /// compressed, 2026-11-09). 0.98: a 0.17 ft bend in the rider's arm; a target past it stays short by at most 2% of the limb.
+        public const float MaxReach = 0.98f;
+
+        /// A limb bent by more than this share of its upper bone's length off its own line shows its hinge's direction (TwoBone learns it).
+        public const float HingeBend = 0.12f;
+        static readonly System.Collections.Generic.Dictionary<Transform, Vector3> s_hinge = new System.Collections.Generic.Dictionary<Transform, Vector3>();
+
         /// Moves c towards target by turning a and b (the bend plane's side of b and c's world rotation kept).
         public static void TwoBone(Transform a, Transform b, Transform c, Vector3 target)
         {
@@ -63,10 +72,34 @@ namespace Reflex.Port.OriginalWorld
             if (l1 < 1e-4f || l2 < 1e-4f) return;
             var endRotation = c.rotation;
             Vector3 toT = target - A;
-            float dist = Mathf.Clamp(toT.magnitude, Mathf.Abs(l1 - l2) + 1e-3f, l1 + l2 - 1e-3f);
+            float dist = Mathf.Clamp(toT.magnitude, Mathf.Abs(l1 - l2) + 1e-3f, (l1 + l2) * MaxReach);
             if (toT.sqrMagnitude < 1e-8f) return;
             Vector3 dir = toT.normalized;
-            Vector3 bend = (B - A) - dir * Vector3.Dot(B - A, dir);   // the side the joint bends to now
+            // The side the joint bends to, measured against the limb's OWN line (A to C) and carried to the new line. Two mistakes this
+            // replaces (2026-11-16, the legs on a bike mod's pegs as the rider stood or leaned back):
+            //  - measured against the NEW line, a nearly straight limb whose end moves sideways read its bend side from the move itself
+            //    (the foot 0.13 ft in and up: a "bend side" pointing sideways, the knee folded half a foot into the bike);
+            //  - a nearly straight limb's own side is a hundredth of a foot in whatever direction the animation left it (a knee 0.01 ft
+            //    outward), and a shorter reach then bends the joint 0.4 ft THAT way (the knees snapping out wide).
+            // A knee / elbow is a hinge: its bend direction is fixed in the upper bone's own frame. It is learnt from the frames where the
+            // limb is clearly bent (the game's own pose, before this changes it) and used as the limb straightens, blended in by how bent
+            // the limb is now.
+            Vector3 bend = Vector3.zero, own = C - A;
+            if (own.sqrMagnitude > 1e-8f)
+            {
+                own.Normalize();
+                Vector3 side = (B - A) - own * Vector3.Dot(B - A, own);
+                float mag = side.magnitude, strong = HingeBend * l1;
+                if (mag > strong) { if (s_hinge.Count > 512) s_hinge.Clear(); s_hinge[a] = Quaternion.Inverse(a.rotation) * (side / mag); }   // (512: riders long gone)
+                Vector3 use = mag > 1e-5f ? side / mag : Vector3.zero;
+                if (mag < strong && s_hinge.TryGetValue(a, out var local))
+                {
+                    Vector3 hinge = a.rotation * local; hinge -= own * Vector3.Dot(hinge, own);
+                    if (hinge.sqrMagnitude > 1e-6f) { hinge.Normalize(); float t = Mathf.Clamp01(mag / strong); use = Vector3.Slerp(hinge, use.sqrMagnitude > 0f ? use : hinge, t * t); }
+                }
+                if (use.sqrMagnitude > 1e-10f) { bend = Quaternion.FromToRotation(own, dir) * use; bend -= dir * Vector3.Dot(bend, dir); }
+            }
+            if (bend.sqrMagnitude < 1e-10f) bend = (B - A) - dir * Vector3.Dot(B - A, dir);
             if (bend.sqrMagnitude < 1e-8f) bend = Vector3.Cross(Vector3.Cross(dir, C - A), dir);
             if (bend.sqrMagnitude < 1e-8f) return;
             bend.Normalize();

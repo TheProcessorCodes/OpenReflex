@@ -819,36 +819,18 @@ namespace Reflex.Port.FrontEnd
             if (highRes)
             {
                 var hr = HighResRider(rs);
-                if (hr != null) { try { return ReflexRiderModel.Build(hr); } catch (Exception e) { Debug.LogWarning("[Garage] HR rider: " + e.Message + " (the normal gear)"); } }
+                if (hr != null) { try { return TrueBounds(ReflexRiderModel.Build(hr)); } catch (Exception e) { Debug.LogWarning("[Garage] HR rider: " + e.Message + " (the normal gear)"); } }
             }
-            return ReflexRiderModel.Build(rs);
+            return TrueBounds(ReflexRiderModel.Build(rs));
         }
-        public static RiderSpec HighResRider(RiderSpec rs)
+        /// The garage's one rider keeps bounds that follow his bones: the stage's camera is fitted to them (RiderBounds), and the riders' fixed
+        /// 16 ft race bounds (ReflexRiderModel.RiderBoundsFeet: a rider out of view is not skinned) made every shot with the rider in it stand far back.
+        static ReflexRiderModel TrueBounds(ReflexRiderModel r)
         {
-            if (rs == null) return null;
-            var install = VehicleCatalog.Shared.install;
-            (string db, string pkg) Twin(string db, string pkg)
-            {
-                // (a pack's package keeps its namespace: "mod:kit/<hash>>RiderDLC010_graphicskit" -> "mod:kit/<hash>>HR_RiderDLC010_graphicskit", KitPacks)
-                string ns = BikeMods.NamespaceOf(db), bare = BikeMods.BaseDb(db);
-                if (db == null || pkg == null || bare.StartsWith("HR_", StringComparison.Ordinal)) return (db, pkg);
-                if (install.Pkg(ns + "HR_" + bare, "HR_" + pkg) != null) return (ns + "HR_" + bare, "HR_" + pkg);
-                if (install.Pkg(ns + "HR_" + bare, pkg) != null) return (ns + "HR_" + bare, pkg);
-                return (db, pkg);
-            }
-            var o = new RiderSpec { hierarchyDb = rs.hierarchyDb, hierarchyPkg = rs.hierarchyPkg, hierarchyAsset = rs.hierarchyAsset, gearIds = rs.gearIds };
-            (o.skinDb, o.skinPkg) = Twin(rs.skinDb, rs.skinPkg);
-            bool any = false;
-            foreach (var p in rs.parts)
-            {
-                var m = Twin(p.modelDb, p.modelPkg); var t = Twin(p.matsDb, p.matsPkg);
-                any |= m.db != p.modelDb;
-                string asset = p.asset != null && m.db != p.modelDb && install.Pkg(m.db, m.pkg)?.Find("HR_" + p.asset, "model") != null ? "HR_" + p.asset : m.db != p.modelDb ? null : p.asset;
-                o.parts.Add(new RiderSpec.Part { key = p.key, modelDb = m.db, modelPkg = m.pkg, asset = asset, matsDb = t.db, matsPkg = t.pkg });
-            }
-            foreach (var e in rs.extraMaterials) o.extraMaterials.Add(Twin(e.db, e.pkg));
-            return any ? o : null;
+            if (r != null && r.root) foreach (var smr in r.root.GetComponentsInChildren<SkinnedMeshRenderer>(true)) smr.updateWhenOffscreen = true;
+            return r;
         }
+        public static RiderSpec HighResRider(RiderSpec rs) => ReflexRiderModel.HighRes(rs);
 
         static Bounds Bounds(params GameObject[] gs)
         {

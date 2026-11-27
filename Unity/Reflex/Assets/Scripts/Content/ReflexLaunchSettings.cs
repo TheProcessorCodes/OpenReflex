@@ -128,6 +128,20 @@ namespace Reflex.Port.Content
             return s;
         }
 
+        /// The install's own graphics.cfg (the game's built-in defaults without one), never the per-user copy: what OPTIONS > VIDEO's
+        /// RESET VIDEO TO DEFAULTS puts back (ReflexOptionsMenu.Reset.cs).
+        public static ReflexLaunchSettings InstallDefaults()
+        {
+            var s = new ReflexLaunchSettings();
+            try
+            {
+                string f = Path.Combine(ReflexInstall.Dir, "graphics.cfg");
+                if (File.Exists(f)) { s.Parse(File.ReadAllBytes(f)); s.loaded = true; s.source = f; }
+            }
+            catch (Exception) { }
+            return s;
+        }
+
         // GraphicsConfig_Load: "Key=Value" per line, '#' starts a comment; values are integers.
         void Parse(byte[] bytes)
         {

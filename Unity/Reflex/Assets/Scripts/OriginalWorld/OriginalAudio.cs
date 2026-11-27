@@ -123,6 +123,8 @@ namespace Reflex.Port.OriginalWorld
         {
             public AudioSource source; public AudioLowPassFilter lowpass; public AudioHighPassFilter highpass; public AudioDistortionFilter distortion;
             public float gain = 1f, pitch = 1f; public bool started, isNull, paused; public float nullUntil;
+            // a host wrapper's voice whose wave has sync points (HostSync): the wave's markers, the clip position of the last tick, the end reached
+            public SyncPoint[] syncs; public int syncPos; public bool syncDone;
         }
         sealed class SlotState   // one sound instance of a layer
         {
@@ -141,6 +143,7 @@ namespace Reflex.Port.OriginalWorld
             public int channelOverride = -1;                       // AudioEvent_SetChannel (host sub 13, 0080bce0: the wrapper's +0x1a0), -1 = by project
             public int selKind = -1;                               // the owner's SOUNDDEF_SELECTINDEX callback (host sub 14; wrapper +0x19c): the crowd emitters' 006743b0 kind 0 .. 3, -1 none
             public int selIndex = -1;                              // the last programmer-selected index (wrapper +0x124), -1 after a start / stop (0080a810, 0080a890, 0080a8e0)
+            public bool heardBy2;                                  // SPLIT SCREEN (w-split): placed for the second listener (Hear), kept with a hysteresis
         }
 
         Task<ReflexAudioSet> build; float buildStart; string cacheDir;
@@ -273,7 +276,7 @@ namespace Reflex.Port.OriginalWorld
         void Update() { Load(); CheckRoster(); Poll(); Flush(); }
 
         // ---- projects added after the main build (roster engines, on-demand loads) ----
-        sealed class Extension { public Task<ReflexAudioSet> task; public bool gate, clipsDone; public float started; public string[] projects; }
+        sealed class Extension { public Task<ReflexAudioSet> task; public bool gate, clipsDone; public float started; public string[] projects; public string setKey; }
         readonly List<Extension> extensions = new List<Extension>();
         readonly HashSet<string> requested = new HashSet<string>(StringComparer.OrdinalIgnoreCase);       // in the library or being built
         readonly HashSet<string> loadedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -291,6 +294,35 @@ namespace Reflex.Port.OriginalWorld
             extensions.Add(new Extension { task = Task.Run(() => ReflexAudioSet.BuildProjects(label, want)), gate = gate, started = Time.realtimeSinceStartup, projects = want });
         }
 
+        // ---- sets the host builds itself (an MX vs ATV Alive engine set, ReflexAudioSet.BuildAliveSet) and their waves' sync points ----
+        readonly HashSet<string> setKeys = new HashSet<string>(StringComparer.Ordinal), setsLoaded = new HashSet<string>(StringComparer.Ordinal), setsFailed = new HashSet<string>(StringComparer.Ordinal);
+        /// One marker of a wave (FSB4 SYNC: the sample it sits on, its name).
+        public readonly struct SyncPoint { public readonly int sample; public readonly string name; public SyncPoint(int sample, string name) { this.sample = sample; this.name = name; } }
+        readonly Dictionary<string, SyncPoint[]> syncByFile = new Dictionary<string, SyncPoint[]>(StringComparer.Ordinal);
+        /// Adds a library the host builds (`build` runs on a worker thread; merged like AddProjects, the game's and the host's commands wait
+        /// for it, its waves decoded by LoadClips) and keeps its waves' sync points (ReflexAudioSet.syncs) for HostSync. Once per `key`.
+        public void AddSet(Func<ReflexAudioSet> build, string key)
+        {
+            if (build == null || string.IsNullOrEmpty(key) || !setKeys.Add(key)) return;
+            if (library) { setsFailed.Add(key); return; }      // the offline library takes no sets: SetFailed, so the rider plays the original engine
+            Load();
+            if (!loadStarted) { lib = new Library { level = level, events = new EventDef[0], files = new string[0] }; loadStarted = true; ClipsReady = true; libReadyAt = Time.realtimeSinceStartup; }
+            _ = ReflexInstall.Packages;
+            if (cacheDir == null) { cacheDir = Path.Combine(ReflexInstall.CacheDir, "audio"); Directory.CreateDirectory(cacheDir); }
+            extensions.Add(new Extension { task = Task.Run(build), gate = true, started = Time.realtimeSinceStartup, projects = new[] { key }, setKey = key });
+        }
+        /// The set added with AddSet(key) is merged (its events are in the library; its waves may still be decoding).
+        public bool SetLoaded(string key) => key != null && setsLoaded.Contains(key);
+        /// The set added with AddSet(key) was not built (its build threw: a file it cannot read; or the offline library is in use); it never loads.
+        public bool SetFailed(string key) => key != null && setsFailed.Contains(key);
+        /// Whether the library has the event (path as the game names it, any case).
+        public bool HasEvent(string path) => !string.IsNullOrEmpty(path) && events.ContainsKey(Lower(path));
+        /// A host wrapper's voice passed a sync point of its wave (wrapper, serial, marker name): raised on the main thread at the end of
+        /// Tick for every marker a playing voice's timeSamples passed since the last tick (a voice started since: from 0; a looping clip that
+        /// wrapped: the markers to the end, then from the start; a voice that ended: the markers to the end). Only waves with sync points.
+        public event Action<uint, uint, string> HostSync;
+        readonly List<(uint wrapper, uint serial, string name)> syncOut = new List<(uint, uint, string)>(32);
+
         /// The roster hook: the engine project of every vehicle in the race (VehicleModel -> VehicleEngineSize -> AudioEngineStates),
         /// so a car-type vehicle (UTV RHINO_ENGINE_02, Pro 2 PRO_02_02, Pro Lite PRO_LITE_ENGINE_01, Super Buggy BUGGY_ENGINE_01)
         /// brings its engine. Called by itself once OriginalWorldRuntime has read the roster.
@@ -306,6 +338,7 @@ namespace Reflex.Port.OriginalWorld
             }
             RaceEngines = engines.ToArray();
             AddProjects(engines, true);
+            OriginalVehicleSound.PreloadAlive(this, roster);   // the Alive engine sets the riders play (ALIVE_ENGINE_SOUNDS.md section 6)
         }
         public string[] RaceEngines { get; private set; } = new string[0];
         OriginalWorldRuntime runtime; bool rosterSeen; int runtimeSearches;
@@ -327,12 +360,17 @@ namespace Reflex.Port.OriginalWorld
                 var x = extensions[i];
                 if (x.task == null || !x.task.IsCompleted || lib == null) continue;
                 var t = x.task; x.task = null;
-                if (t.IsFaulted || t.IsCanceled) { Debug.LogWarning("Audio projects " + string.Join(", ", x.projects) + " not loaded: " + t.Exception?.GetBaseException().Message); x.clipsDone = true; continue; }
+                if (t.IsFaulted || t.IsCanceled) { Debug.LogWarning("Audio projects " + string.Join(", ", x.projects) + " not loaded: " + t.Exception?.GetBaseException().Message); x.clipsDone = true; if (x.setKey != null) setsFailed.Add(x.setKey); continue; }
                 var set = t.Result;
                 foreach (var m in set.missing) Debug.LogWarning("Audio project " + m + " is not in the install's audio databases");
                 var added = new List<EventDef>();
                 foreach (var e in set.library.events) if (!events.ContainsKey(e.path)) { events[e.path] = e; added.Add(e); }
                 foreach (var pn in set.projects) loadedProjects.Add(pn);
+                if (set.syncs != null)
+                    foreach (var kv in set.syncs)
+                        if (kv.Value != null && kv.Value.Count > 0 && !syncByFile.ContainsKey(kv.Key))
+                            syncByFile[kv.Key] = kv.Value.Select((p, i) => (p, i)).OrderBy(q => q.p.sample).ThenBy(q => q.i).Select(q => new SyncPoint(q.p.sample, q.p.name ?? "")).ToArray();
+                if (x.setKey != null) setsLoaded.Add(x.setKey);
                 lib.events = lib.events.Concat(added).ToArray();
                 lib.files = lib.files.Union(set.library.files).ToArray();
                 var newWaves = set.waves.Where(kv => !clipByFile.ContainsKey(kv.Key)).ToList();
@@ -819,14 +857,47 @@ namespace Reflex.Port.OriginalWorld
             float dist = Vector3.Distance(p, listener), mn = d.minDistance, mx = Mathf.Max(d.maxDistance, mn + 0.01f);
             return dist <= mn ? 1f : dist >= mx ? 0f : 1f - (dist - mn) / (mx - mn);
         }
-        float Rolloff(EventDef d, Vector3 p) => Rolloff(d, p, listenerAt);
+        float Rolloff(EventDef d, Vector3 p) => Rolloff(d, Hear(p), listenerAt);
+
+        // SPLIT SCREEN (w-split): the second local rider's ears. There is one AudioListener (the first rider's camera); while two views are
+        // shown the world gives the second rider's camera pose here, and a 3D sound nearer to it is placed, for the mix only, where the first
+        // listener hears it as the second would (the same distance and side): each sound has the level and pan of its nearer rider, and each
+        // rider hears the own bike at the own camera's distance. The stored positions stay the game's (the commands, the replay's record).
+        // Main thread only (never the audio thread). Off: Hear(p) == p, a one-rider world is as before.
+        bool listener2On; Vector3 l2Pos; Quaternion l1Rot = Quaternion.identity, l2Inv = Quaternion.identity;
+        /// A sound changes ears only when it is this much nearer (squared distances: about 10 %) to the other listener: a rider between the two does not flip sides every frame.
+        public const float HearKeep = 0.81f;
+        public bool SecondListener => listener2On;
+        /// The second listener's position (the first's while there is none).
+        public Vector3 Listener2 => listener2On ? l2Pos : listenerAt;
+        /// The second rider's camera (game coordinates) before Tick, every frame two views are shown; off otherwise.
+        public void SetSecondListener(bool on, Vector3 pos, Quaternion rot)
+        {
+            listener2On = on; if (!on) return;
+            l2Pos = pos; l2Inv = Quaternion.Inverse(rot);
+        }
+        /// Where the one listener hears a sound at p: p itself, or p as the second listener has it when that one is nearer. The distance
+        /// of Hear(p) from Listener is the nearer listener's.
+        public Vector3 Hear(Vector3 p)
+        {
+            if (!listener2On || (p - l2Pos).sqrMagnitude >= (p - listenerAt).sqrMagnitude) return p;
+            return listenerAt + l1Rot * (l2Inv * (p - l2Pos));
+        }
+        /// Hear for a lasting source (an event instance, an engine pack): by2 is its current ear, changed only past HearKeep.
+        public Vector3 Hear(Vector3 p, ref bool by2)
+        {
+            if (!listener2On) { by2 = false; return p; }
+            float d1 = (p - listenerAt).sqrMagnitude, d2 = (p - l2Pos).sqrMagnitude;
+            if (by2 ? d1 < d2 * HearKeep : d2 < d1 * HearKeep) by2 = !by2;
+            return by2 ? listenerAt + l1Rot * (l2Inv * (p - l2Pos)) : p;
+        }
         /// FMOD_INIT_OCCLUSION_LOWPASS: the cutoff of a fully open event (22050 Hz; the occlusion only low-passes).
         public const float OcclusionCutoff = 22050f;
         float Audibility(Instance o, Vector3 p) => o.gain * o.volumeCmd * o.fade * (o.muted ? 0f : 1f) * RolloffOf(o, p);
         float RolloffOf(Instance o, Vector3 p)
         {
             if (o.minDistance < 0f || !o.def.is3d) return Rolloff(o.def, p);
-            float dist = Vector3.Distance(p, listenerAt), mn = o.minDistance, mx = Mathf.Max(o.maxDistance, mn + 0.01f);
+            float dist = Vector3.Distance(Hear(p), listenerAt), mn = o.minDistance, mx = Mathf.Max(o.maxDistance, mn + 0.01f);
             return dist <= mn ? 1f : dist >= mx ? 0f : 1f - (dist - mn) / (mx - mn);
         }
 
@@ -865,10 +936,11 @@ namespace Reflex.Port.OriginalWorld
         }
 
         // ---- per frame ----
-        public void Tick(float dt, Vector3 listener)
+        public void Tick(float dt, Vector3 listener, Quaternion listenerRotation = default)
         {
             int liveEvents = 0, liveVoices = 0;
             listenerAt = listener;
+            l1Rot = listenerRotation.x == 0f && listenerRotation.y == 0f && listenerRotation.z == 0f && listenerRotation.w == 0f ? Quaternion.identity : listenerRotation;   // SPLIT SCREEN: the remap's frame (Hear); the front end passes none
             UpdateChannelGains();
             Reverb.Update(listener, FirstPersonView());
             Virtualize();
@@ -879,6 +951,7 @@ namespace Reflex.Port.OriginalWorld
                 liveEvents++;
                 // the max-playbacks ranking mutes a voice (Virtualize); the gain follows over VirtualRamp seconds so that a voice joining or leaving the loudest set does not click
                 // (an event on its first tick takes its rank at once: it was never audible before)
+                if (!inst.ticked) inst.heardBy2 = listener2On && (inst.position - l2Pos).sqrMagnitude < (inst.position - listenerAt).sqrMagnitude;   // SPLIT SCREEN: a new sound starts on its nearer listener
                 inst.virtGain = !inst.ticked ? (inst.virtualized ? 0f : 1f) : Mathf.MoveTowards(inst.virtGain, inst.virtualized ? 0f : 1f, dt / VirtualRamp);
                 inst.ticked = true;
                 int chIndex = inst.channelOverride >= 0 ? inst.channelOverride : inst.def.channel == 0 ? (int)ReflexChannel.Effects : inst.def.channel;
@@ -887,7 +960,7 @@ namespace Reflex.Port.OriginalWorld
                 // never set by the game); the lower of it and the event's own low-pass envelope
                 const float occGain = 1f;
                 float occCutoff = inst.occlusion > 0.001f ? Mathf.Max(10f, OcclusionCutoff * (1f - inst.occlusion) * (1f - inst.occlusion)) : -1f;
-                inst.node.transform.position = inst.def.is3d ? inst.position : listener;
+                inst.node.transform.position = inst.def.is3d ? Hear(inst.position, ref inst.heardBy2) : listener;   // (SPLIT SCREEN: by the nearer listener)
                 if (inst.fadeRate != 0)
                 {
                     inst.fade = Mathf.Clamp01(inst.fade + inst.fadeRate * dt);
@@ -895,6 +968,7 @@ namespace Reflex.Port.OriginalWorld
                     if (inst.stopping && inst.fade <= 0f) { StopVoices(inst); inst.playing = false; continue; }
                 }
                 bool anyAlive = false;
+                bool hostSyncs = syncByFile.Count > 0 && inst.wrapper >= HostWrapperBase && inst.wrapper < ReplayWrapperBase;
                 for (int l = 0; l < inst.def.layers.Length; l++)
                 {
                     var layer = inst.def.layers[l];
@@ -923,6 +997,7 @@ namespace Reflex.Port.OriginalWorld
                             if (si.fadeIn > 0) rangeGain *= Mathf.Clamp01((v - si.start) / si.fadeIn);
                             if (si.fadeOut > 0) rangeGain *= Mathf.Clamp01((si.start + si.length - v) / si.fadeOut);
                         }
+                        if (hostSyncs) for (int i = 0; i < st.voices.Count; i++) if (st.voices[i].syncs != null) Syncs(inst, st.voices[i]);   // before a loop slot replaces an ended voice
                         if (inRange && !st.active) { st.active = true; st.fired = false; st.spawnTimer = 0; }
                         if (!inRange && st.active) { st.active = false; if (si.loop) StopSlot(st); }
                         bool spawns = !si.loop && (sd.spawnMaxMs > 0 || sd.maxSpawned > 1) && sd.spawnMaxMs > 0;
@@ -960,6 +1035,30 @@ namespace Reflex.Port.OriginalWorld
                 if (!anyAlive && !inst.stopping) { inst.playing = false; Finish(inst.wrapper, inst.serial); }
             }
             ActiveEvents = liveEvents; ActiveVoices = liveVoices; if (liveVoices > PeakVoices) PeakVoices = liveVoices;
+            if (syncOut.Count > 0)
+            {   // after the instance loop: a handler's Host commands may start events (new instances)
+                for (int i = 0; i < syncOut.Count; i++) { var m = syncOut[i]; HostSync?.Invoke(m.wrapper, m.serial, m.name); }
+                syncOut.Clear();
+            }
+        }
+
+        // the sync points a host voice passed since the last tick, queued for HostSync (no allocation)
+        void Syncs(Instance inst, Voice v)
+        {
+            if (v.syncDone || !v.started || v.isNull || v.paused) return;
+            var src = v.source; var clip = src.clip;
+            if (!clip || (AudioListener.pause && !src.ignoreListenerPause)) return;   // held by the pause menu: not ended
+            int len = clip.samples;
+            bool ended = !src.isPlaying;
+            int now = ended ? len : Mathf.Clamp(src.timeSamples, 0, len), from = v.syncPos;
+            var s = v.syncs;
+            if (now >= from) { for (int i = 0; i < s.Length; i++) { int p = s[i].sample; if (p >= from && (p < now || ended && p <= len)) syncOut.Add((inst.wrapper, inst.serial, s[i].name)); } }
+            else
+            {   // a looping clip wrapped: to its end, then from its start
+                for (int i = 0; i < s.Length; i++) if (s[i].sample >= from) syncOut.Add((inst.wrapper, inst.serial, s[i].name));
+                for (int i = 0; i < s.Length; i++) if (s[i].sample < now) syncOut.Add((inst.wrapper, inst.serial, s[i].name));
+            }
+            v.syncPos = now; if (ended) v.syncDone = true;
         }
 
         float Norm(Instance inst, int p)
@@ -1034,6 +1133,7 @@ namespace Reflex.Port.OriginalWorld
                 return;
             }
             if (inst.stat != null) inst.stat.voices++;
+            if (syncByFile.Count > 0 && inst.wrapper >= HostWrapperBase && inst.wrapper < ReplayWrapperBase && syncByFile.TryGetValue(file, out var syncs)) voice.syncs = syncs;
             var src = voice.source;
             src.clip = clip; src.loop = loopSingle;
             src.priority = Mathf.Clamp(inst.def.priority, 0, 256);                          // FMOD event priority (0 = most important, as Unity)
@@ -1056,13 +1156,13 @@ namespace Reflex.Port.OriginalWorld
             }
             v.source.transform.SetParent(inst.node.transform, false);
             v.source.gameObject.SetActive(true);
-            v.started = false; v.isNull = false; v.paused = false;
+            v.started = false; v.isNull = false; v.paused = false; v.syncs = null; v.syncPos = 0; v.syncDone = false;
             return v;
         }
 
         void Release(Voice v)
         {
-            v.source.Stop(); v.source.clip = null; v.started = false; v.isNull = false;
+            v.source.Stop(); v.source.clip = null; v.started = false; v.isNull = false; v.syncs = null;
             if (v.lowpass) v.lowpass.enabled = false; if (v.highpass) v.highpass.enabled = false; if (v.distortion) v.distortion.enabled = false;
             v.source.transform.SetParent(transform, false);
             pool.Push(v);

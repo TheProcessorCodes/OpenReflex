@@ -197,6 +197,13 @@ namespace Reflex.Port.Options
             }
         }
         public static Entry Current => Find(CurrentId) ?? Entries[0];
+        /// CurrentId's rule on a selection given as values (SPLIT SCREEN, w-split: the second local rider's own, ReflexPlayerView).
+        public static string CurrentIdOf(int mode, int dc, CameraPreset custom)
+        {
+            if (mode == 1) return FpvId;
+            if (custom != null && custom.baseView == dc) return custom.Id;
+            return BuiltinId(Mathf.Clamp(dc, 0, 3));
+        }
 
         /// The custom preset the game camera shows now (OriginalWorldRuntime.ApplyGameCamera): camera mode 0 (the game's camera) with the selected
         /// preset's BASE as the driving preset (dc); the editor's preset while it previews. Null: the game's view as it is.

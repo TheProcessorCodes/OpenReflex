@@ -619,7 +619,7 @@ namespace Reflex.Port.FrontEnd
     }
 
     // JerseyNameEntryPopup.lua / JerseyNumberEntryPopup.lua (the motocard's CHANGE RIDER NAME / NUMBER): the current PlayerRider Name /
-    // Number, typed text replaces it (name: alphanumeric, 8, upper case; number: numeric, 3). Accept: the name through
+    // Number, typed text replaces it (name: alphanumeric, upper case, 8 in the original, here ReflexPlateRaster.MaxName; number: numeric, 3). Accept: the name through
     // App.ValidateJerseyName + App.IsStringSafe ("" or unsafe -> "RIDER" and the invalid name popup, MotocardNameError "jersey"),
     // NameStatus 0; the number "" -> "998"; then App.SaveUISettings and App.RequestSaveGame; HideJersey{Name,Number}EntryPopup.
     public sealed class JerseyEntryPopupScript : FeScript
@@ -644,7 +644,7 @@ namespace Reflex.Port.FrontEnd
             value = FeCareerScripts.T("PlayerRider").Str(number ? "Number" : "Name", 0) ?? "";
             message?.SetText(value);
             input = number ? new FeTextInput(3, false, true, t => { message?.SetText(t); value = t; })
-                           : new FeTextInput(8, true, true, t => { message?.SetText(t.ToUpperInvariant()); value = t; });
+                           : new FeTextInput(ReflexPlateRaster.MaxName, true, true, t => { message?.SetText(t.ToUpperInvariant()); value = t; });
             KeyGlyph.Refresh(fe, layer.root);
         }
         public override void End() { input?.End(); input = null; fe.vars.Remove("MotocardNameError"); }

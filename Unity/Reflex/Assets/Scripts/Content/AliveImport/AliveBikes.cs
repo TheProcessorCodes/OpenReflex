@@ -49,9 +49,19 @@ namespace Reflex.Port.Content.AliveImport
         public string ownClass;
         public (string db, string pkg) chassis, kit;
         public readonly List<AlivePart> parts = new List<AlivePart>();
+        /// Every part type the bike can be customized with and its options (the VehicleModelParts rows, default or not): its other graphic
+        /// kits, exhausts, handlebars, tyres ... (AliveBikeParts.cs makes the bike's "parts" .rxmod from them).
+        public readonly List<AlivePartSlot> slots = new List<AlivePartSlot>();
         /// The default parts' colours (VehiclePartCustomColor -> CustomColor.ConstantName, CustomDynamicColor RGB), by the material constant they
         /// set ("usr_mxhubdyncolor"): Alive's run-time colours, over the materials' own defaults.
         public readonly Dictionary<string, float[]> colors = new Dictionary<string, float[]>(StringComparer.OrdinalIgnoreCase);
+        /// Alive's colour palette (CustomDynamicColor rows with UserSelectable, in their order): what the player may paint the rims, hubs and
+        /// an ATV's frame, swing arm and A-arms with (CustomColor.UserCustomizable). The same for every vehicle.
+        public readonly List<(int id, float[] rgb)> palette = new List<(int id, float[] rgb)>();
+        /// A high-res twin's source (AliveBikeHr.cs): the lowest point of the race model's frame surfaces (its OBJ_Frame node's, model
+        /// space). The HR frame mesh also holds the base pads of Alive's garage stand, on the ground under the bike: what lies wholly
+        /// below this (less a margin) is cut. Null: not a twin.
+        public float? hrFloor;
         /// Why it cannot be imported (null: it can).
         public string problem;
         public bool Importable => problem == null && ridesAs >= 0;
@@ -59,9 +69,25 @@ namespace Reflex.Port.Content.AliveImport
         public string Slug => "alive-" + aliveId + "-" + new string(Label.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray()).Trim('-').Replace("--", "-");
     }
 
+    /// A part type of an Alive bike (VehiclePartType: "GraphicKits", "Exhausts", "Handlebars", "Tires" ...) and the parts of it the bike takes.
+    public sealed class AlivePartSlot
+    {
+        public string type, factory, tuning = ""; public int ordinal;
+        public readonly List<AlivePartOption> options = new List<AlivePartOption>();
+    }
+
+    /// One part an Alive bike can wear (a VehicleModelParts row): its store names, Alive's tuning bonus, its packages and the colours it sets.
+    public sealed class AlivePartOption
+    {
+        public int partId; public string name = "", line = "", brand = ""; public bool isDefault; public int tune1, tune2;
+        public (string db, string pkg)? model, materials;
+        public readonly Dictionary<string, float[]> colors = new Dictionary<string, float[]>(StringComparer.OrdinalIgnoreCase);
+    }
+
     /// A default part of an Alive bike: its type (VehiclePartType.Name) and its model / material packages (null: none).
     public sealed class AlivePart
     {
+        public int partId = -1;
         public string type; public (string db, string pkg)? model, materials;
         public override string ToString() => $"{type}: model {(model == null ? "-" : model.Value.db + "/" + model.Value.pkg)}, materials {(materials == null ? "-" : materials.Value.db + "/" + materials.Value.pkg)}";
     }
@@ -71,9 +97,15 @@ namespace Reflex.Port.Content.AliveImport
         public AliveBikeSource bike; public bool ok; public string error, folder;
         public int surfaces, vertices, triangles, maps; public long bytes; public double seconds;
         public readonly List<string> notes = new List<string>();
+        /// The bike's other kits and parts (AliveBikeParts.cs): the "parts" .rxmod folder made (null: none), what it holds, or why not.
+        public string partsFolder, partsError; public int partSlots, partOptions, partMaps, partMeshes; public long partBytes;
+        public readonly List<string> partNotes = new List<string>();
+        /// The bike's high-res set (AliveBikeHr.cs): the "hr" folder made (null: the vehicle has no HR model in Alive's data, or why not).
+        public string hrFolder, hrError; public int hrSurfaces, hrVertices, hrOptions; public long hrBytes;
+        public readonly List<string> hrNotes = new List<string>(), hrMaterialNotes = new List<string>();
     }
 
-    public static class AliveBikes
+    public static partial class AliveBikes
     {
         public const string Folder = "AliveBikes";
         public const string Author = "MX vs ATV Alive";
@@ -172,6 +204,7 @@ namespace Reflex.Port.Content.AliveImport
             var brands = t.Of("Brand").Where(x => Tables.L(x, "BrandId") != null).GroupBy(x => Tables.L(x, "BrandId").Value).ToDictionary(g => g.Key, g => Tables.S(g.Last(), "BrandName"));
             var types = t.Of("VehicleType").Where(x => Tables.L(x, "VehicleTypeId") != null).GroupBy(x => Tables.L(x, "VehicleTypeId").Value).ToDictionary(g => g.Key, g => g.Last());
             var hierarchies = t.Of("VehicleHierarchies").Where(x => Tables.L(x, "VehicleHierarchyId") != null).GroupBy(x => Tables.L(x, "VehicleHierarchyId").Value).ToDictionary(g => g.Key, g => Tables.S(g.Last(), "AssetName"));
+            var partTypeRows = t.Of("VehiclePartType").Where(x => Tables.L(x, "VehiclePartTypeId") != null).GroupBy(x => Tables.L(x, "VehiclePartTypeId").Value).ToDictionary(g => g.Key, g => g.Last());
             var partTypes = t.Of("VehiclePartType").Where(x => Tables.L(x, "VehiclePartTypeId") != null).GroupBy(x => Tables.L(x, "VehiclePartTypeId").Value).ToDictionary(g => g.Key, g => Tables.S(g.Last(), "Name"));
             var parts = t.Of("VehiclePart").Where(x => Tables.L(x, "VehiclePartId") != null).GroupBy(x => Tables.L(x, "VehiclePartId").Value).ToDictionary(g => g.Key, g => g.Last());
             var pkgs = t.Of("AssetPackage").Where(x => Tables.L(x, "PackageId") != null).GroupBy(x => Tables.L(x, "PackageId").Value).ToDictionary(g => g.Key, g => Tables.S(g.Last(), "PackageName"));
@@ -210,13 +243,55 @@ namespace Reflex.Port.Content.AliveImport
                             if (colorNames.TryGetValue(Tables.L(pc, "CustomColorId") ?? -1, out var cn) && !string.IsNullOrEmpty(cn) && dynColors.TryGetValue(Tables.L(pc, "CustomDynamicColorId") ?? -1, out var dc)
                                 && Tables.D(dc, "R") is double cr && Tables.D(dc, "G") is double cg && Tables.D(dc, "B") is double cb)
                                 b.colors["usr_" + cn] = new[] { (float)cr, (float)cg, (float)cb, 1f };
-                    var p = new AlivePart { type = partTypes.TryGetValue(Tables.L(part, "VehiclePartTypeId") ?? -1, out var pt) ? pt : "?",
+                    var p = new AlivePart { partId = (int)(Tables.L(mp, "VehiclePartId") ?? -1), type = partTypes.TryGetValue(Tables.L(part, "VehiclePartTypeId") ?? -1, out var pt) ? pt : "?",
                                             model = PkgOf(Tables.L(part, "ModelPackageDatabaseId")), materials = PkgOf(Tables.L(part, "MaterialPackageDatabaseId")) };
                     if (p.model == null && p.materials == null) continue;
                     if (b.parts.Any(x => x.type == p.type)) continue;   // (one of each type: the first default)
                     if (p.type == "GraphicKits") { b.chassis = p.model ?? default; b.kit = p.materials ?? default; }
                     b.parts.Add(p);
                 }
+                // every part the bike takes, by type (the garage's lists): the default first
+                foreach (var g in t.Of("VehicleModelParts").Where(x => Tables.L(x, "VehicleModelId") == id && Tables.L(x, "VehiclePartId") != null).GroupBy(x => Tables.L(x, "VehiclePartId").Value))
+                {
+                    var mp = g.Last();
+                    if (!parts.TryGetValue(g.Key, out var part) || !partTypeRows.TryGetValue(Tables.L(part, "VehiclePartTypeId") ?? -1, out var ty)) continue;
+                    string tn = Tables.S(ty, "Name") ?? "?";
+                    if (Tables.L(ty, "AllowCustomization") != 1 || tn == "EngineAudio" || tn == "Performance") continue;
+                    long? spid = Tables.L(part, "StoreProductId");
+                    products.TryGetValue(spid ?? -1, out var sprow);
+                    if (sprow != null && Tables.L(sprow, "Hidden") == 1) continue;
+                    var slot = b.slots.FirstOrDefault(s => s.type == tn);
+                    if (slot == null) b.slots.Add(slot = new AlivePartSlot { type = tn, factory = Tables.S(ty, "FactoryName") ?? tn, tuning = Tables.S(ty, "TuningAttribute") ?? "", ordinal = (int)(Tables.L(ty, "Ordinal") ?? 99) });
+                    var o = new AlivePartOption { partId = (int)g.Key, name = (Str(spid) ?? "").Trim(), isDefault = b.parts.Any(q => q.partId == g.Key),
+                                                  tune1 = (int)(Tables.L(part, "DefaultTuneAttribute1") ?? 0), tune2 = (int)(Tables.L(part, "DefaultTuneAttribute2") ?? 0),
+                                                  model = PkgOf(Tables.L(part, "ModelPackageDatabaseId")), materials = PkgOf(Tables.L(part, "MaterialPackageDatabaseId")) };
+                    if (sprow != null)
+                    {
+                        long parent = Tables.L(sprow, "ParentStoreProductId") ?? -1;
+                        if (parent >= 0) o.line = (Str(parent) ?? "").Trim();
+                        if (brands.TryGetValue(Tables.L(sprow, "BrandId") ?? -1, out var obn) && !string.IsNullOrEmpty(obn) && !obn.StartsWith(".", StringComparison.Ordinal) && obn != "None") o.brand = obn;
+                    }
+                    if (o.name.Length == 0) o.name = "Part " + o.partId;
+                    if (partColors.TryGetValue(g.Key, out var ocs))
+                        foreach (var pc in ocs)
+                            if (colorNames.TryGetValue(Tables.L(pc, "CustomColorId") ?? -1, out var cn) && !string.IsNullOrEmpty(cn) && dynColors.TryGetValue(Tables.L(pc, "CustomDynamicColorId") ?? -1, out var dc)
+                                && Tables.D(dc, "R") is double cr && Tables.D(dc, "G") is double cg && Tables.D(dc, "B") is double cb)
+                                o.colors["usr_" + cn] = new[] { (float)cr, (float)cg, (float)cb, 1f };
+                    slot.options.Add(o);
+                }
+                foreach (var s in b.slots)
+                {   // (a type whose default part has no package is not among the bike's parts: its first Default row is the default)
+                    if (!s.options.Any(o => o.isDefault))
+                    {
+                        var d = s.options.FirstOrDefault(o => t.Of("VehicleModelParts").Any(x => Tables.L(x, "VehicleModelId") == id && Tables.L(x, "VehiclePartId") == o.partId && Tables.L(x, "Default") == 1));
+                        if (d != null) d.isDefault = true;
+                    }
+                    s.options.Sort((a, c) => a.isDefault != c.isDefault ? (a.isDefault ? -1 : 1) : string.CompareOrdinal(a.line + "\u0001" + a.name + "\u0001" + a.partId.ToString("D6"), c.line + "\u0001" + c.name + "\u0001" + c.partId.ToString("D6")));
+                }
+                b.slots.Sort((a, c) => a.ordinal != c.ordinal ? a.ordinal.CompareTo(c.ordinal) : string.CompareOrdinal(a.type, c.type));
+                foreach (var dc in dynColors.Values.Where(x => Tables.L(x, "UserSelectable") == 1).OrderBy(x => Tables.L(x, "Ordinal") ?? 0).ThenBy(x => Tables.L(x, "CustomDynamicColorId")))
+                    if (Tables.D(dc, "R") is double pr && Tables.D(dc, "G") is double pg && Tables.D(dc, "B") is double pb)
+                        b.palette.Add(((int)(Tables.L(dc, "CustomDynamicColorId") ?? -1), new[] { (float)pr, (float)pg, (float)pb }));
                 Name(b);
                 Classify(b, index, cancel);
                 result.Add(b);
@@ -349,15 +424,35 @@ namespace Reflex.Port.Content.AliveImport
         /// A resolved material: where it is, its parsed (converted) definition.
         sealed class Mat { public string key; public PackageAssets pkg; public Rfx.Material def; public string template; }
 
-        /// The bike's model assembled in the chassis' model space (feet, X right, Y up, Z forward): the .rxmesh's surfaces.
-        sealed class Part { public Rfx.Surface s; public int node; public Mat mat; public string from; }
+        /// The bike's model assembled in the chassis' model space (feet, X right, Y up, Z forward): the .rxmesh's surfaces. slot: the part
+        /// type whose default part's model it came from (null: the chassis); binding / model / own: what its material was resolved from.
+        sealed class Part { public Rfx.Surface s; public int node; public Mat mat; public string from, slot, binding; public PackageAssets model, own; }
 
-        /// Converts one bike into a .rxmod folder at `folder` (created; must not exist). Returns the result (ok or why not).
-        public static AliveBikeResult Convert(AliveBikeSource b, AliveSources sources, string folder, CancellationToken cancel)
+        /// Converts one bike into a .rxmod folder at `folder` (created; must not exist). Returns the result (ok or why not). partsFolder: the
+        /// bike's other graphic kits and parts (AliveBikeParts.cs: a "parts" .rxmod that names this bike) into that folder too (created only
+        /// when the bike has any).
+        public static AliveBikeResult Convert(AliveBikeSource b, AliveSources sources, string folder, CancellationToken cancel, string partsFolder = null, string hrFolder = null)
         {
             var res = new AliveBikeResult { bike = b, folder = folder };
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            try { ConvertBike(b, new PackageIndex(sources.volumes), folder, res, cancel); res.ok = true; }
+            try
+            {
+                var index = new PackageIndex(sources.volumes);
+                var build = ConvertBike(b, index, folder, res, cancel);
+                res.ok = true;
+                if (hrFolder != null)
+                {   // the high-res garage set (AliveBikeHr.cs): a failure leaves the bike as it is
+                    try { ConvertHr(b, index, hrFolder, res, cancel); }
+                    catch (Exception e) when (e is AliveImportException || e is InvalidDataException || e is IOException || e is ArgumentException || e is IndexOutOfRangeException)
+                    { res.hrError = e.Message; res.hrFolder = null; try { if (Directory.Exists(hrFolder)) Directory.Delete(hrFolder, true); } catch (IOException) { } }
+                }
+                if (partsFolder != null)
+                {
+                    try { ConvertParts(build, partsFolder, res); }
+                    catch (Exception e) when (e is AliveImportException || e is InvalidDataException || e is IOException || e is ArgumentException || e is IndexOutOfRangeException)
+                    { res.partsError = e.Message; res.partsFolder = null; try { if (Directory.Exists(partsFolder)) Directory.Delete(partsFolder, true); } catch (IOException) { } }
+                }
+            }
             catch (OperationCanceledException) { throw; }
             catch (Exception e) when (e is AliveImportException || e is InvalidDataException || e is IOException || e is ArgumentException || e is IndexOutOfRangeException)
             { res.error = e.Message; }
@@ -365,42 +460,94 @@ namespace Reflex.Port.Content.AliveImport
             return res;
         }
 
-        static void ConvertBike(AliveBikeSource b, PackageIndex index, string folder, AliveBikeResult res, CancellationToken cancel)
+        /// The maps of one .rxmod folder: each texture decoded once, each PNG written once (the same bytes under two names: one file).
+        sealed class MapOut
         {
-            Bin.Require(b.Importable, b.problem ?? "rides as no Reflex bike");
-            var chassis = index.Read(b.chassis.db, b.chassis.pkg, cancel) ?? throw new AliveImportException($"{b.chassis.db}/{b.chassis.pkg} is not in the sources");
-            // the material pool in part order, the graphic kit first (BikeSpec.materials)
-            var pool = new List<PackageAssets>();
-            void AddPool((string db, string pkg)? p) { if (p == null) return; var a = index.Read(p.Value.db, p.Value.pkg, cancel); if (a != null && !pool.Contains(a)) pool.Add(a); }
-            AddPool(b.kit);
-            foreach (var p in b.parts) if (p.type != "GraphicKits") AddPool(p.materials);
-
-            var body = ReadModel(chassis, ModelName(chassis, b.hierarchy), out var bodySurfaces);
-            var hierBytes = chassis.Find(b.hierarchy, "model");
-            var hier = hierBytes != null ? Rfx.ParseModel(Converters.Model(hierBytes)) : body;
-            var mats = new Dictionary<string, Mat>(StringComparer.OrdinalIgnoreCase);
-            var parts = new List<Part>();
-            int NodeOf(string name) { int i = hier.NodeIndex(name); return i >= 0 ? i : 0; }
-            Matrix4x4 BindOf(string name) { int i = body.NodeIndex(name); return i >= 0 ? body.nodes[i].world : hier.nodes[NodeOf(name)].world; }
-
-            // the chassis, first LOD: static surfaces carry their node's world matrix, skinned ones are stored in model space
-            foreach (var bd in body.Lod(0))
+            public string folder; public AliveBikeResult res; public bool dedupe;
+            public Action<int, long> count;   // (maps, bytes) written
+            readonly Dictionary<string, string> written = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            readonly Dictionary<string, string> byContent = new Dictionary<string, string>(StringComparer.Ordinal);
+            public readonly Dictionary<string, (int w, int h, byte[] px)?> decoded = new Dictionary<string, (int w, int h, byte[] px)?>(StringComparer.OrdinalIgnoreCase);
+            public string Write(string entryName, (int w, int h, byte[] px)? img)
             {
-                var s = bodySurfaces[bd.surface];
-                parts.Add(new Part { s = Place(s, s.skinned ? Matrix4x4.identity : body.nodes[bd.node].world, body, hier), node = NodeOf(body.nodes[bd.node].name),
-                                     mat = Resolve(mats, bd.material, chassis, pool, index, cancel), from = b.chassis.pkg });
+                if (img == null) return null;
+                string entry = "maps/" + Safe(entryName) + ".png";
+                if (written.TryGetValue(entry, out var at)) return at;
+                var png = AliveBikeMaps.Png(img.Value.w, img.Value.h, img.Value.px);
+                if (dedupe)
+                {
+                    string id; using (var sha = SHA256.Create()) id = BitConverter.ToString(sha.ComputeHash(png), 0, 12);
+                    if (byContent.TryGetValue(id, out var same)) return written[entry] = same;
+                    byContent[id] = entry;
+                }
+                Directory.CreateDirectory(Path.Combine(folder, "maps"));
+                File.WriteAllBytes(Path.Combine(folder, entry.Replace('/', Path.DirectorySeparatorChar)), png);
+                count(1, png.Length); written[entry] = entry;
+                return entry;
             }
-            // the parts: tyres on the chassis' tyre nodes, the others on the node their model's first node names
-            foreach (var p in b.parts.Where(p => p.type != "GraphicKits" && p.model != null))
+        }
+
+        /// A bike being converted: its packages, its hierarchy and its assembled parts (what the bike's other kits and parts are made against).
+        sealed class BikeBuild
+        {
+            public AliveBikeSource b; public PackageIndex index; public CancellationToken cancel; public AliveBikeResult res;
+            public PackageAssets chassis; public List<PackageAssets> pool = new List<PackageAssets>();
+            public Rfx.Model body, hier; public Rfx.Surface[] bodySurfaces;
+            public readonly Dictionary<string, Mat> mats = new Dictionary<string, Mat>(StringComparer.OrdinalIgnoreCase);
+            public readonly List<Part> parts = new List<Part>();
+            public List<Mat> used;
+            /// The run-time colours (CustomColor.ConstantName) some material written for the bike's parts is painted by (TintEntry).
+            public readonly HashSet<string> tintColors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            /// A material's run-time colour for the client (RXMOD.md "Colours"; RxTint): which of Alive's colours paints it, how, the source
+            /// map it is baked from (written to o) and the colour baked into the material's diffuse; null: none.
+            public JObj TintEntry(MapOut o, Mat m, Dictionary<string, float[]> colors, List<PackageAssets> pool, string prefix)
             {
-                var pa = index.Read(p.model.Value.db, p.model.Value.pkg, cancel);
-                if (pa == null) { res.notes.Add($"{p.type}: {p.model.Value.db}/{p.model.Value.pkg} is not in the sources"); continue; }
-                var own = p.materials != null ? index.Read(p.materials.Value.db, p.materials.Value.pkg, cancel) : null;
+                var def = new Rfx.Material { name = m.def.name, pixelShader = m.def.pixelShader };
+                foreach (var kv in m.def.parameters) def.parameters[kv.Key] = colors.TryGetValue(kv.Key.TrimEnd('_'), out var col) ? col : kv.Value;
+                var (diffuse, sfx, _) = Roles(m);
+                string ps = def.pixelShader ?? "";
+                bool Is(string s) => ps.IndexOf(s, StringComparison.OrdinalIgnoreCase) >= 0;
+                float[] P(string k) => def.Param(k) ?? def.Param(k + "_");
+                string color = null, bake = null, source = null; float[] baked = null;
+                if (Is("ATV_FrameRefl"))
+                {
+                    bool swing = m.key.IndexOf("Swing", StringComparison.OrdinalIgnoreCase) >= 0;
+                    baked = swing ? P("usr_atvswingdyncolor") : P("usr_atvframedyncolor");
+                    color = swing ? "AtvSwingDynColor" : "AtvFrameDynColor"; bake = "tint"; source = diffuse ?? sfx;
+                }
+                else if (Is("Aarms")) { baked = P("usr_atvarmdyncolor"); color = "ATVArmDynColor"; bake = "tint"; source = diffuse ?? sfx; }
+                else if (Is("Vehicle_Wheel")) { baked = def.Param("usr_atvrimdyncolor"); color = "AtvRimDynColor"; bake = "tint"; source = diffuse ?? sfx; }
+                else if (Is("DynPlastic") && diffuse != null) { baked = def.Param("usr_dynnumplate"); color = "DynNumPlate"; bake = "plate"; source = sfx; }
+                else if (Is("Wheel") && diffuse == null)
+                {
+                    bool hub = m.key.IndexOf("Hub", StringComparison.OrdinalIgnoreCase) >= 0;
+                    baked = def.Param(hub ? "usr_mxhubdyncolor" : "usr_mxrimdyncolor"); color = hub ? "MxHubDynColor" : "MxRimDynColor"; bake = hub ? "hub" : "rim"; source = sfx;
+                }
+                if (color == null || baked == null || baked.Length < 3 || source == null) return null;
+                var px = Pixels(o, m, source, pool, true);
+                string entry = px == null ? null : o.Write(prefix + source + "_source", px);
+                if (entry == null) return null;
+                tintColors.Add(color);
+                return new JObj().Set("color", color).Set("bake", bake).Set("source", entry).Set("default", new List<object> { (double)baked[0], (double)baked[1], (double)baked[2] });
+            }
+
+            public int NodeOf(string name) { int i = hier.NodeIndex(name); return i >= 0 ? i : 0; }
+            public Matrix4x4 BindOf(string name) { int i = body.NodeIndex(name); return i >= 0 ? body.nodes[i].world : hier.nodes[NodeOf(name)].world; }
+
+            /// A part's model(s) on the bike: tyres on the chassis' tyre nodes, the others on the node their model's first node names.
+            /// resolve(binding, the model's package, the part's own material package): the binding's material.
+            public List<Part> PartModel(string type, (string db, string pkg) model, (string db, string pkg)? materials, Func<string, PackageAssets, PackageAssets, Mat> resolve, List<string> notes)
+            {
+                var made = new List<Part>();
+                var pa = index.Read(model.db, model.pkg, cancel);
+                if (pa == null) { notes.Add($"{type}: {model.db}/{model.pkg} is not in the sources"); return made; }
+                var own = materials != null ? index.Read(materials.Value.db, materials.Value.pkg, cancel) : null;
                 foreach (string mn in pa.Names("model").Where(n => n.IndexOf("Hierarchy", StringComparison.OrdinalIgnoreCase) < 0).ToList())
                 {
                     var pm = ReadModel(pa, mn, out var ps);
                     string attach = pm.nodes[0].name;
-                    if (hier.NodeIndex(attach) < 0 && body.NodeIndex(attach) < 0) { res.notes.Add($"{p.type}: {mn} hangs on {attach}, not a node of the bike"); continue; }
+                    if (hier.NodeIndex(attach) < 0 && body.NodeIndex(attach) < 0) { notes.Add($"{type}: {mn} hangs on {attach}, not a node of the bike"); continue; }
                     var attachWorld = BindOf(attach); var rootInv = RigidInverse(pm.nodes[0].world);
                     foreach (var bd in pm.Lod(0))
                     {
@@ -409,102 +556,131 @@ namespace Reflex.Port.Content.AliveImport
                         string bound = pm.nodes[bd.node].name;
                         bool onNode = bd.node != 0 && !string.Equals(bound, attach, StringComparison.OrdinalIgnoreCase) && (hier.NodeIndex(bound) >= 0 || body.NodeIndex(bound) >= 0);
                         var m = s.skinned ? Matrix4x4.identity : onNode ? BindOf(bound) : attachWorld * rootInv * pm.nodes[bd.node].world;
-                        var mat = Resolve(mats, bd.material, pa, own != null ? new List<PackageAssets> { own }.Concat(pool).ToList() : pool, index, cancel);
-                        parts.Add(new Part { s = Place(s, m, pm, hier), node = NodeOf(onNode ? bound : attach), mat = mat, from = p.model.Value.pkg });
+                        made.Add(new Part { s = Place(s, m, pm, hier), node = NodeOf(onNode ? bound : attach), mat = resolve(bd.material, pa, own), from = model.pkg, slot = type, binding = bd.material, model = pa, own = own });
                     }
                 }
+                return made;
             }
+
+            /// A texture of a material's package (else the chassis', else the pool's), decoded; null: none / not converted (noted).
+            public (int w, int h, byte[] px)? Pixels(MapOut o, Mat m, string texture, List<PackageAssets> pool, bool perPackage)
+            {
+                if (string.IsNullOrEmpty(texture)) return null;
+                string key = perPackage ? m.pkg.db + "/" + m.pkg.pkg + "/" + texture : texture;
+                if (o.decoded.TryGetValue(key, out var c)) return c;
+                byte[] src = m.pkg.Find(texture, "texture") ?? chassis.Find(texture, "texture") ?? pool.Select(x => x.Find(texture, "texture")).FirstOrDefault(x => x != null);
+                if (src == null) o.res.notes.Add($"material {m.key}: texture {texture} not found");
+                (int w, int h, byte[] px)? d = null;
+                try { d = src == null ? null : AliveBikeMaps.Decode(Textures.Convert(src).Item1); }
+                catch (AliveImportException e) { o.res.notes.Add($"material {m.key}: texture {texture}: {e.Message}"); return o.decoded[key] = null; }
+                if (src != null && d == null) o.res.notes.Add($"material {m.key}: texture {texture}: format not converted");
+                return o.decoded[key] = d;
+            }
+
+            /// A material's mod.json entry (its template and maps, written to o), with Alive's part colours (colors: by the constant they set)
+            /// over the material's own constants. prefix: the entry names' prefix ("" the bike's own: its material keys and texture names).
+            public JObj MaterialEntry(MapOut o, Mat m, Dictionary<string, float[]> colors, List<PackageAssets> pool, string prefix, bool note)
+            {
+                // Alive's part colours (the tables) over the material's own constants
+                var def = new Rfx.Material { name = m.def.name, pixelShader = m.def.pixelShader, alphaBlend = m.def.alphaBlend, alphaTest = m.def.alphaTest, alphaRef = m.def.alphaRef, cull = m.def.cull };
+                def.textures.AddRange(m.def.textures);
+                foreach (var kv in m.def.parameters) def.parameters[kv.Key] = colors.TryGetValue(kv.Key.TrimEnd('_'), out var col) ? col : kv.Value;   // (a few materials spell the constant with a '_' at its end: usr_atvarmdyncolor_)
+                bool per = prefix.Length > 0;
+                var (diffuse, sfx, normal) = Roles(m);
+                if (note) o.res.notes.Add($"material {m.key} ({m.pkg.pkg}): {def.pixelShader} [{string.Join(", ", def.textures)}] {{{string.Join(" ", def.parameters.Select(kv => kv.Key + "=" + string.Join(",", kv.Value.Select(x => x.ToString("0.###")))))}}} -> {m.template}: diffuse {diffuse ?? "-"}, sfx {sfx ?? "-"}, normal {normal ?? "-"}");
+                var e = new JObj().Set("template", m.template);
+                var D = Pixels(o, m, diffuse, pool, per); var C = Pixels(o, m, sfx, pool, per);
+                string d = null, x = null;
+                bool dynPlastic = (def.pixelShader ?? "").IndexOf("DynPlastic", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool wheel = (def.pixelShader ?? "").IndexOf("Wheel", StringComparison.OrdinalIgnoreCase) >= 0;
+                // the ATV programs that colour a combo map at run time (Template_ATV_FrameRefl_FNL: frame / swing arm / A-arm colour; Template_Vehicle_Wheel_FNL:
+                // the rim colour; Template_ATV_Spring_FNL: usr_color): their "diffuse" is the combo map (R the shading, G mud)
+                string ps = def.pixelShader ?? "";
+                float[] tint = null;
+                float[] P(string k) => def.Param(k) ?? def.Param(k + "_");
+                if (ps.IndexOf("ATV_FrameRefl", StringComparison.OrdinalIgnoreCase) >= 0)
+                    tint = (m.key.IndexOf("Swing", StringComparison.OrdinalIgnoreCase) >= 0 ? P("usr_atvswingdyncolor") : P("usr_atvframedyncolor")) ?? P("usr_frame_color");
+                else if (ps.IndexOf("Aarms", StringComparison.OrdinalIgnoreCase) >= 0) tint = P("usr_atvarmdyncolor");
+                else if (ps.IndexOf("Vehicle_Wheel", StringComparison.OrdinalIgnoreCase) >= 0) tint = def.Param("usr_atvrimdyncolor");
+                else if (ps.IndexOf("ATV_Spring", StringComparison.OrdinalIgnoreCase) >= 0) tint = def.Param("usr_color");
+                var combo = tint != null ? (D ?? C) : null;
+                if (combo != null)
+                {
+                    d = o.Write(prefix + m.key + "_diffuse", AliveBikeMaps.BakeTint(combo.Value, tint));
+                    x = o.Write(prefix + (D != null ? diffuse : sfx) + "_sfx", AliveBikeMaps.Channels(combo.Value, 0, 1, 0));
+                }
+                else if (dynPlastic && D != null)
+                {   // the dynamic colour and the plate's colour baked in; R of the SFX (the plate mask) cleared: Reflex's plastics light the diffuse by it
+                    d = o.Write(prefix + m.key + "_diffuse", AliveBikeMaps.BakePlastic(D.Value, C, def.Param("usr_userdyncolor"), def.Param("usr_dynnumplate")));
+                    if (C != null) x = o.Write(prefix + m.key + "_sfx", AliveBikeMaps.Channels(C.Value, -1, 1, 2));
+                    if (def.textures.Any(t => string.Equals(t, "Numbers", StringComparison.OrdinalIgnoreCase))) e.Set("numbers", true);   // (the rider's plate on uv1, as Alive's own)
+                }
+                else if (wheel && D == null && C != null)
+                {
+                    bool hub = m.key.IndexOf("Hub", StringComparison.OrdinalIgnoreCase) >= 0;
+                    var col = def.Param(hub ? "usr_mxhubdyncolor" : "usr_mxrimdyncolor") ?? def.parameters.Where(kv => kv.Key.IndexOf("dyncolor", StringComparison.OrdinalIgnoreCase) >= 0).Select(kv => kv.Value).FirstOrDefault();
+                    d = o.Write(prefix + m.key + "_diffuse", AliveBikeMaps.BakeWheel(C.Value, col, hub));
+                    x = o.Write(prefix + sfx + "_wheel", AliveBikeMaps.Channels(C.Value, 2, 1, 2));   // (R the shine where the colour is, G mud, B the reflection)
+                }
+                else
+                {
+                    d = o.Write(prefix + diffuse, D);
+                    // Alive's frame SFX (Template_MX_FrameRefl_FNL) keeps the shine in R and a flat B: B := R (Reflex's frame combo: B the reflection)
+                    if (C != null) x = m.template == "frame" && (def.pixelShader ?? "").IndexOf("FrameRefl", StringComparison.OrdinalIgnoreCase) >= 0
+                        ? o.Write(prefix + sfx + "_frame", AliveBikeMaps.Channels(C.Value, 0, 1, 0)) : o.Write(prefix + sfx, C);
+                }
+                if (d != null) e.Set("diffuse", d);
+                if (x != null) e.Set("sfx", x);
+                string n = o.Write(prefix + normal, Pixels(o, m, normal, pool, per)); if (n != null) e.Set("normal", n);
+                if (def.alphaTest) e.Set("alphaTest", true).Set("alphaRef", (long)Math.Max(1, Math.Min(255, def.alphaRef)));
+                if (def.cull == 1) e.Set("twoSided", true);
+                if (per) { var tintEntry = TintEntry(o, m, colors, pool, prefix); if (tintEntry != null) e.Set("tint", tintEntry); }   // (a part's material: never in the bike's own mod.json, which stays as it was)
+                return e;
+            }
+        }
+
+        static BikeBuild ConvertBike(AliveBikeSource b, PackageIndex index, string folder, AliveBikeResult res, CancellationToken cancel)
+        {
+            Bin.Require(b.Importable, b.problem ?? "rides as no Reflex bike");
+            var x = new BikeBuild { b = b, index = index, cancel = cancel, res = res };
+            var chassis = x.chassis = index.Read(b.chassis.db, b.chassis.pkg, cancel) ?? throw new AliveImportException($"{b.chassis.db}/{b.chassis.pkg} is not in the sources");
+            // the material pool in part order, the graphic kit first (BikeSpec.materials)
+            var pool = x.pool;
+            void AddPool((string db, string pkg)? p) { if (p == null) return; var a = index.Read(p.Value.db, p.Value.pkg, cancel); if (a != null && !pool.Contains(a)) pool.Add(a); }
+            AddPool(b.kit);
+            foreach (var p in b.parts) if (p.type != "GraphicKits") AddPool(p.materials);
+
+            var body = x.body = ReadModel(chassis, ModelName(chassis, b.hierarchy), out x.bodySurfaces);
+            var hierBytes = chassis.Find(b.hierarchy, "model");
+            var hier = x.hier = hierBytes != null ? Rfx.ParseModel(Converters.Model(hierBytes)) : body;
+            var parts = x.parts;
+
+            // the chassis, first LOD: static surfaces carry their node's world matrix, skinned ones are stored in model space
+            foreach (var bd in body.Lod(0))
+            {
+                if (bd.material.IndexOf("Stand", StringComparison.OrdinalIgnoreCase) >= 0) continue;   // (an HR model's garage stand: MX_Stand_Suzuki; the race models have none)
+                var s = x.bodySurfaces[bd.surface];
+                var placed = Place(s, s.skinned ? Matrix4x4.identity : body.nodes[bd.node].world, body, hier);
+                if (b.hrFloor != null && !s.skinned && string.Equals(body.nodes[bd.node].name, "OBJ_Frame", StringComparison.OrdinalIgnoreCase)) placed = CutBelow(placed, b.hrFloor.Value - 0.15f);
+                if (placed.triangles.Length == 0) continue;
+                parts.Add(new Part { s = placed, node = x.NodeOf(body.nodes[bd.node].name),
+                                     mat = Resolve(x.mats, bd.material, chassis, pool, index, cancel), from = b.chassis.pkg, binding = bd.material, model = chassis });
+            }
+            // the parts: tyres on the chassis' tyre nodes, the others on the node their model's first node names
+            foreach (var p in b.parts.Where(p => p.type != "GraphicKits" && p.model != null))
+                parts.AddRange(x.PartModel(p.type, p.model.Value, p.materials, (binding, pa, own) => Resolve(x.mats, binding, pa, own != null ? new List<PackageAssets> { own }.Concat(pool).ToList() : pool, index, cancel), res.notes));
             Bin.Require(parts.Count > 0, "the bike's model has no surfaces");
             Bin.Require(b.atv ? hier.NodeIndex("SWP_FRT_RHT_Tire") >= 0 && hier.NodeIndex("SWP_BCK_LFT_Tire") >= 0 : hier.NodeIndex("OBJ_FRT_Tire") >= 0 && hier.NodeIndex("OBJ_BCK_Tire") >= 0, "the hierarchy has no tyre nodes");
 
             // the maps (one PNG per texture) and the manifest's materials
             Directory.CreateDirectory(folder);
-            var written = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var decoded = new Dictionary<string, (int w, int h, byte[] px)?>(StringComparer.OrdinalIgnoreCase);
-            (int w, int h, byte[] px)? Pixels(Mat m, string texture)
-            {
-                if (string.IsNullOrEmpty(texture)) return null;
-                if (decoded.TryGetValue(texture, out var c)) return c;
-                byte[] src = m.pkg.Find(texture, "texture") ?? chassis.Find(texture, "texture") ?? pool.Select(x => x.Find(texture, "texture")).FirstOrDefault(x => x != null);
-                if (src == null) res.notes.Add($"material {m.key}: texture {texture} not found");
-                (int w, int h, byte[] px)? d = null;
-                try { d = src == null ? null : AliveBikeMaps.Decode(Textures.Convert(src).Item1); }
-                catch (AliveImportException e) { res.notes.Add($"material {m.key}: texture {texture}: {e.Message}"); return decoded[texture] = null; }
-                if (src != null && d == null) res.notes.Add($"material {m.key}: texture {texture}: format not converted");
-                return decoded[texture] = d;
-            }
-            string Write(string entryName, (int w, int h, byte[] px)? img)
-            {
-                if (img == null) return null;
-                string entry = "maps/" + Safe(entryName) + ".png";
-                if (written.ContainsKey(entry)) return entry;
-                var png = AliveBikeMaps.Png(img.Value.w, img.Value.h, img.Value.px);
-                Directory.CreateDirectory(Path.Combine(folder, "maps"));
-                File.WriteAllBytes(Path.Combine(folder, entry.Replace('/', Path.DirectorySeparatorChar)), png);
-                res.maps++; res.bytes += png.Length; written[entry] = entry;
-                return entry;
-            }
-            var used = parts.Select(p => p.mat).Distinct().ToList();
-            // Alive's part colours (the tables) over the materials' own constants
-            foreach (var m in used)
-                foreach (var k in m.def.parameters.Keys.ToList())
-                    if (b.colors.TryGetValue(k.TrimEnd('_'), out var col)) m.def.parameters[k] = col;   // (a few materials spell the constant with a '_' at its end: usr_atvarmdyncolor_)
+            var o = new MapOut { folder = folder, res = res, count = (n, bytes) => { res.maps += n; res.bytes += bytes; } };
+            var used = x.used = parts.Select(p => p.mat).Distinct().ToList();
             var materialsJson = new JObj();
-            foreach (var m in used)
-            {
-                var (diffuse, sfx, normal) = Roles(m);
-                res.notes.Add($"material {m.key} ({m.pkg.pkg}): {m.def.pixelShader} [{string.Join(", ", m.def.textures)}] {{{string.Join(" ", m.def.parameters.Select(kv => kv.Key + "=" + string.Join(",", kv.Value.Select(x => x.ToString("0.###")))))}}} -> {m.template}: diffuse {diffuse ?? "-"}, sfx {sfx ?? "-"}, normal {normal ?? "-"}");
-                var o = new JObj().Set("template", m.template);
-                var D = Pixels(m, diffuse); var C = Pixels(m, sfx);
-                string d = null, x = null;
-                bool dynPlastic = (m.def.pixelShader ?? "").IndexOf("DynPlastic", StringComparison.OrdinalIgnoreCase) >= 0;
-                bool wheel = (m.def.pixelShader ?? "").IndexOf("Wheel", StringComparison.OrdinalIgnoreCase) >= 0;
-                // the ATV programs that colour a combo map at run time (Template_ATV_FrameRefl_FNL: frame / swing arm / A-arm colour; Template_Vehicle_Wheel_FNL:
-                // the rim colour; Template_ATV_Spring_FNL: usr_color): their "diffuse" is the combo map (R the shading, G mud)
-                string ps = m.def.pixelShader ?? "";
-                float[] tint = null;
-                float[] P(string k) => m.def.Param(k) ?? m.def.Param(k + "_");
-                if (ps.IndexOf("ATV_FrameRefl", StringComparison.OrdinalIgnoreCase) >= 0)
-                    tint = (m.key.IndexOf("Swing", StringComparison.OrdinalIgnoreCase) >= 0 ? P("usr_atvswingdyncolor") : P("usr_atvframedyncolor")) ?? P("usr_frame_color");
-                else if (ps.IndexOf("Aarms", StringComparison.OrdinalIgnoreCase) >= 0) tint = P("usr_atvarmdyncolor");
-                else if (ps.IndexOf("Vehicle_Wheel", StringComparison.OrdinalIgnoreCase) >= 0) tint = m.def.Param("usr_atvrimdyncolor");
-                else if (ps.IndexOf("ATV_Spring", StringComparison.OrdinalIgnoreCase) >= 0) tint = m.def.Param("usr_color");
-                var combo = tint != null ? (D ?? C) : null;
-                if (combo != null)
-                {
-                    d = Write(m.key + "_diffuse", AliveBikeMaps.BakeTint(combo.Value, tint));
-                    x = Write((D != null ? diffuse : sfx) + "_sfx", AliveBikeMaps.Channels(combo.Value, 0, 1, 0));
-                }
-                else if (dynPlastic && D != null)
-                {   // the dynamic colour and the plate's colour baked in; R of the SFX (the plate mask) cleared: Reflex's plastics light the diffuse by it
-                    d = Write(m.key + "_diffuse", AliveBikeMaps.BakePlastic(D.Value, C, m.def.Param("usr_userdyncolor"), m.def.Param("usr_dynnumplate")));
-                    if (C != null) x = Write(m.key + "_sfx", AliveBikeMaps.Channels(C.Value, -1, 1, 2));
-                    if (m.def.textures.Any(t => string.Equals(t, "Numbers", StringComparison.OrdinalIgnoreCase))) o.Set("numbers", true);   // (the rider's plate on uv1, as Alive's own)
-                }
-                else if (wheel && D == null && C != null)
-                {
-                    bool hub = m.key.IndexOf("Hub", StringComparison.OrdinalIgnoreCase) >= 0;
-                    var col = m.def.Param(hub ? "usr_mxhubdyncolor" : "usr_mxrimdyncolor") ?? m.def.parameters.Where(kv => kv.Key.IndexOf("dyncolor", StringComparison.OrdinalIgnoreCase) >= 0).Select(kv => kv.Value).FirstOrDefault();
-                    d = Write(m.key + "_diffuse", AliveBikeMaps.BakeWheel(C.Value, col, hub));
-                    x = Write(sfx + "_wheel", AliveBikeMaps.Channels(C.Value, 2, 1, 2));   // (R the shine where the colour is, G mud, B the reflection)
-                }
-                else
-                {
-                    d = Write(diffuse, D);
-                    // Alive's frame SFX (Template_MX_FrameRefl_FNL) keeps the shine in R and a flat B: B := R (Reflex's frame combo: B the reflection)
-                    if (C != null) x = m.template == "frame" && (m.def.pixelShader ?? "").IndexOf("FrameRefl", StringComparison.OrdinalIgnoreCase) >= 0
-                        ? Write(sfx + "_frame", AliveBikeMaps.Channels(C.Value, 0, 1, 0)) : Write(sfx, C);
-                }
-                if (d != null) o.Set("diffuse", d);
-                if (x != null) o.Set("sfx", x);
-                string n = Write(normal, Pixels(m, normal)); if (n != null) o.Set("normal", n);
-                if (m.def.alphaTest) o.Set("alphaTest", true).Set("alphaRef", (long)Math.Max(1, Math.Min(255, m.def.alphaRef)));
-                if (m.def.cull == 1) o.Set("twoSided", true);
-                materialsJson.Set(m.key, o);
-            }
+            foreach (var m in used) materialsJson.Set(m.key, x.MaterialEntry(o, m, b.colors, pool, "", true));
 
             // the mesh
-            var mesh = WriteMesh(hier, parts, used, res);
+            var mesh = WriteMesh(hier, parts, used.Select(m => m.key).ToList(), p => used.IndexOf(p.mat), res);
             File.WriteAllBytes(Path.Combine(folder, "bike.rxmesh"), mesh);
             res.bytes += mesh.Length;
             // a bike of its own class: Alive's physics file as it is in the install (the mx*_vehicle schema the core reads), and for a bike of another
@@ -533,10 +709,14 @@ namespace Reflex.Port.Content.AliveImport
                     physicsJson.Set("nodes", "physics/nodes.txt");
                 }
             }
-            var bike = new JObj().Set("bike", (long)b.ridesAs).Set("original", b.ridesAsName).Set("id", Safe(b.Label).ToLowerInvariant())
+            var bike = new JObj().Set("bike", (long)b.ridesAs).Set("original", b.ridesAsName).Set("id", BikeId(b))
                 .Set("brand", b.brand).Set("model", b.model).Set("mesh", "bike.rxmesh").Set("fit", ownSize ? "keep" : b.atv ? "nodes" : "axles");
             if (physicsJson != null) bike.Set("physics", physicsJson).Set("class", b.ownClass == "mx50" ? "50CC" : b.ownClass == "atv1000" ? "ATV 1000" : "650");
             if (ownSize) bike.Set("pose", "physics");
+            // the 50cc's rider on its own seat: the core seats its rider as on the 125 (0.17 ft further back than there on the 50cc's frame,
+            // at the 125's height over a seat 0.3 ft lower), so the arms could not reach the low bars and locked straight; 0.28 down and
+            // 0.15 forward leave the arms at 0.75 - 0.8 of their reach (the 125's rider: 0.8) and the knees up (ALIVE_BIKES.md "Rider")
+            if (ownSize && b.ownClass == "mx50") bike.Set("riderOffset", new List<object> { 0.0, -0.28, 0.15 });
             bike.Set("materials", materialsJson);
             var manifest = new JObj().Set("format", "reflex-mod").Set("version", 1L).Set("type", "bikes").Set("id", b.Slug)
                 .Set("name", b.Label).Set("author", Author)
@@ -545,7 +725,11 @@ namespace Reflex.Port.Content.AliveImport
             var text = Encoding.UTF8.GetBytes(Json.Dumps(manifest, 1) + "\n");
             File.WriteAllBytes(Path.Combine(folder, "mod.json"), text);
             res.bytes += text.Length;
+            return x;
         }
+
+        /// The bike's id in its mod.json (a parts mod names it).
+        internal static string BikeId(AliveBikeSource b) => Safe(b.Label).ToLowerInvariant();
 
         /// The model asset of a chassis package (the one that is not the hierarchy).
         static string ModelName(PackageAssets p, string hierarchy) => p.Names("model").FirstOrDefault(n => !string.Equals(n, hierarchy, StringComparison.OrdinalIgnoreCase) && n.IndexOf("Hierarchy", StringComparison.OrdinalIgnoreCase) < 0)
@@ -579,6 +763,21 @@ namespace Reflex.Port.Content.AliveImport
             }
             else o.skinned = false;
             return o;
+        }
+
+        /// A placed static surface without the triangles that lie wholly below y (and the vertices only they used).
+        static Rfx.Surface CutBelow(Rfx.Surface s, float y)
+        {
+            var keep = new List<int>();
+            for (int t = 0; t + 2 < s.triangles.Length; t += 3)
+                if (s.positions[s.triangles[t]].y >= y || s.positions[s.triangles[t + 1]].y >= y || s.positions[s.triangles[t + 2]].y >= y) { keep.Add(s.triangles[t]); keep.Add(s.triangles[t + 1]); keep.Add(s.triangles[t + 2]); }
+            if (keep.Count == s.triangles.Length) return s;
+            var map = new int[s.positions.Length]; for (int i = 0; i < map.Length; i++) map[i] = -1;
+            var order = new List<int>();
+            foreach (int i in keep) if (map[i] < 0) { map[i] = order.Count; order.Add(i); }
+            T[] Pick<T>(T[] a, int per = 1) { if (a == null) return null; var o = new T[order.Count * per]; for (int i = 0; i < order.Count; i++) for (int k = 0; k < per; k++) o[i * per + k] = a[order[i] * per + k]; return o; }
+            return new Rfx.Surface { skinned = false, positions = Pick(s.positions), normals = Pick(s.normals), uv0 = Pick(s.uv0), uv1 = Pick(s.uv1), colors = Pick(s.colors),
+                                     triangles = keep.Select(i => map[i]).ToArray() };
         }
 
         /// The inverse of a rigid (rotation + translation) matrix.
@@ -691,6 +890,8 @@ namespace Reflex.Port.Content.AliveImport
             {
                 if (string.IsNullOrEmpty(t)) continue;
                 bool H(string s) => t.IndexOf(s, StringComparison.OrdinalIgnoreCase) >= 0;
+                // (the HR materials: "HR_MX_Fork" is the fork sticker as MX_Fork is; the HR ATV tyre's second map is its mud layer, ATV_Tires_Stock_1_Mud)
+                if (t.StartsWith("HR_MX_Fork", StringComparison.OrdinalIgnoreCase) || t.EndsWith("_Mud", StringComparison.OrdinalIgnoreCase)) continue;
                 if (H("Mud_Noise") || t.Equals("Numbers", StringComparison.OrdinalIgnoreCase) || H("CarReflect") || H("SpecStudio") || H("ReflectStudio") || H("Editor_") || H("Blur") || H("_Fork") && m.template != "frame") continue;
                 if (H("_SFX") || H("Combo")) { sfx ??= t; continue; }
                 if (H("Nrml") || H("_Norm") || t.EndsWith("_N", StringComparison.OrdinalIgnoreCase)) { normal ??= t; continue; }
@@ -703,20 +904,20 @@ namespace Reflex.Port.Content.AliveImport
         static string Safe(string s) => new string((s ?? "").Select(c => char.IsLetterOrDigit(c) || c == '_' || c == '-' ? c : '_').ToArray());
 
         /// The .rxmesh (core/plan/RXMOD.md "Mesh"; RxModBikes.ParseMesh): the hierarchy's nodes, the materials, the surfaces in model space.
-        static byte[] WriteMesh(Rfx.Model hier, List<Part> parts, List<Mat> mats, AliveBikeResult res)
+        static byte[] WriteMesh(Rfx.Model hier, List<Part> parts, List<string> materials, Func<Part, int> materialOf, AliveBikeResult res)
         {
             var ms = new MemoryStream(); var w = new BinaryWriter(ms, Encoding.UTF8);
             void Str(string s) { var b = Encoding.UTF8.GetBytes(s ?? ""); w.Write((ushort)b.Length); w.Write(b); }
             w.Write(Encoding.ASCII.GetBytes("RXMS")); w.Write(1); w.Write(0);
             w.Write(hier.nodes.Length);
             foreach (var n in hier.nodes) { Str(n.name); w.Write(n.parent); for (int k = 0; k < 16; k++) w.Write(n.world[k / 4, k % 4]); }
-            w.Write(mats.Count); foreach (var m in mats) Str(m.key);
+            w.Write(materials.Count); foreach (var m in materials) Str(m);
             w.Write(parts.Count);
             foreach (var p in parts)
             {
                 var s = p.s; int v = s.positions.Length;
                 bool uv1 = s.uv1 != null && s.uv1.Any(x => x != Vector2.zero), skin = s.skinned && s.bones != null;
-                w.Write(mats.IndexOf(p.mat)); w.Write(p.node); w.Write((skin ? 1 : 0) | (uv1 ? 2 : 0)); w.Write(v); w.Write(s.triangles.Length);
+                w.Write(materialOf(p)); w.Write(p.node); w.Write((skin ? 1 : 0) | (uv1 ? 2 : 0)); w.Write(v); w.Write(s.triangles.Length);
                 foreach (var x in s.positions) { w.Write(x.x); w.Write(x.y); w.Write(x.z); }
                 foreach (var x in s.normals) { w.Write(x.x); w.Write(x.y); w.Write(x.z); }
                 foreach (var x in s.uv0) { w.Write(x.x); w.Write(1f - x.y); }
@@ -727,7 +928,7 @@ namespace Reflex.Port.Content.AliveImport
                     for (int i = 0; i < v * 4; i++) w.Write(s.bones[i] < 0 ? 0f : s.weights[i]);
                 }
                 foreach (int k in s.triangles) w.Write(k);
-                res.surfaces++; res.vertices += v; res.triangles += s.triangles.Length / 3;
+                if (res != null) { res.surfaces++; res.vertices += v; res.triangles += s.triangles.Length / 3; }
             }
             w.Flush();
             return ms.ToArray();
@@ -743,7 +944,7 @@ namespace Reflex.Port.Content.AliveImport
 
         /// Converts and installs the given bikes into <content>/AliveBikes/<slug> (each staged, then moved in; a bike imported before by this
         /// importer is replaced). A failed bike leaves nothing behind.
-        public static List<AliveBikeResult> Import(IEnumerable<AliveBikeSource> bikes, AliveSources sources, string content, Action<string> status, CancellationToken cancel)
+        public static List<AliveBikeResult> Import(IEnumerable<AliveBikeSource> bikes, AliveSources sources, string content, Action<string> status, CancellationToken cancel, bool parts = true, bool hr = true)
         {
             content = Path.GetFullPath(content);
             string root = Root(content);
@@ -755,30 +956,54 @@ namespace Reflex.Port.Content.AliveImport
                 if (cancel.IsCancellationRequested) break;
                 status?.Invoke("Converting " + b.Label);
                 string stage = Path.Combine(root, ".ab-" + Guid.NewGuid().ToString("N").Substring(0, 8)), dest = Path.Combine(root, b.Slug);
+                string partsStage = stage + "p", partsDest = dest + PartsSuffix, hrStage = stage + "h", hrDest = dest + HrSuffix;
                 AliveBikeResult res;
                 try
                 {
-                    res = Convert(b, sources, stage, cancel);
+                    res = Convert(b, sources, stage, cancel, parts ? partsStage : null, hr ? hrStage : null);
                     if (res.ok)
                     {
-                        string manifest = Path.Combine(root, b.Slug + ".import.json");
-                        if (Directory.Exists(dest))
+                        // (a folder is replaced only when this importer made it: its <name>.import.json beside it)
+                        void Install(string from, string to, string name, JObj about)
                         {
-                            Bin.Require(File.Exists(manifest), b.Label + ": " + dest + " exists and was not made by this importer; remove it first");
-                            Directory.Delete(dest, true);
+                            string manifest = Path.Combine(root, name + ".import.json");
+                            if (Directory.Exists(to))
+                            {
+                                Bin.Require(File.Exists(manifest), b.Label + ": " + to + " exists and was not made by this importer; remove it first");
+                                Directory.Delete(to, true);
+                            }
+                            Directory.Move(from, to);
+                            var files = Directory.GetFiles(to, "*", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal)
+                                .Select(f => (object)new JObj().Set("path", f.Substring(to.Length + 1).Replace('\\', '/')).Set("sha256", LevelInstaller.Sha256(f))).ToList();
+                            about.Set("imported_utc", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture)).Set("files", files);
+                            File.WriteAllText(manifest, Json.Dumps(about, 1) + "\n", new UTF8Encoding(false));
                         }
-                        Directory.Move(stage, dest);
+                        Install(stage, dest, b.Slug, new JObj().Set("version", 1L).Set("alive_id", (long)b.aliveId).Set("name", b.Label).Set("pack", b.pack).Set("rides_as", (long)b.ridesAs));
                         res.folder = dest;
-                        var files = Directory.GetFiles(dest, "*", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal)
-                            .Select(f => (object)new JObj().Set("path", f.Substring(dest.Length + 1).Replace('\\', '/')).Set("sha256", LevelInstaller.Sha256(f))).ToList();
-                        var m = new JObj().Set("version", 1L).Set("alive_id", (long)b.aliveId).Set("name", b.Label).Set("pack", b.pack).Set("rides_as", (long)b.ridesAs)
-                            .Set("imported_utc", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture)).Set("files", files);
-                        File.WriteAllText(manifest, Json.Dumps(m, 1) + "\n", new UTF8Encoding(false));
+                        if (res.partsFolder != null)
+                        {   // the bike's other kits and parts: a failure here leaves the bike installed (its own kit and parts)
+                            try
+                            {
+                                Install(partsStage, partsDest, b.Slug + PartsSuffix, new JObj().Set("version", 1L).Set("alive_id", (long)b.aliveId).Set("name", b.Label + " kits and parts").Set("fits", b.Slug)
+                                    .Set("slots", (long)res.partSlots).Set("options", (long)res.partOptions));
+                                res.partsFolder = partsDest;
+                            }
+                            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is AliveImportException) { res.partsError = e.Message; res.partsFolder = null; }
+                        }
+                        if (res.hrFolder != null)
+                        {   // the high-res garage set: a failure here leaves the bike installed
+                            try
+                            {
+                                Install(hrStage, hrDest, b.Slug + HrSuffix, new JObj().Set("version", 1L).Set("alive_id", (long)b.aliveId).Set("name", b.Label + " high-res model").Set("fits", b.Slug).Set("vertices", (long)res.hrVertices));
+                                res.hrFolder = hrDest;
+                            }
+                            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is AliveImportException) { res.hrError = e.Message; res.hrFolder = null; }
+                        }
                     }
                 }
                 catch (OperationCanceledException) { res = new AliveBikeResult { bike = b, error = "Cancelled" }; results.Add(res); break; }
                 catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is AliveImportException) { res = new AliveBikeResult { bike = b, error = e.Message }; }
-                finally { try { if (Directory.Exists(stage)) Directory.Delete(stage, true); } catch (Exception) { } }
+                finally { foreach (var st in new[] { stage, partsStage, hrStage }) try { if (Directory.Exists(st)) Directory.Delete(st, true); } catch (Exception) { } }
                 results.Add(res);
             }
             return results;

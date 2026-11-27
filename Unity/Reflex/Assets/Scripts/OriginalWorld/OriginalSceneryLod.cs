@@ -109,6 +109,8 @@ namespace Reflex.Port.OriginalWorld
             var cam = viewer ? viewer : (level && level.runtime && level.runtime.chaseCamera ? level.runtime.chaseCamera : Camera.main);
             if (!cam) return;
             Vector3 eye = cam.transform.position;
+            // SPLIT SCREEN (w-split): one renderer state for both views, so each model is measured from the nearer of the two cameras
+            bool two = ReflexWorldViews.SecondEye(out Vector3 eye2);
             float mapScale2 = level ? level.MapScale * level.MapScale : 1f;
             mpb ??= new MaterialPropertyBlock();
             int nCulled = 0, nFading = 0, nLod = 0, nChanges = 0, nFlips = 0, nShadowOnly = 0;
@@ -126,6 +128,7 @@ namespace Reflex.Port.OriginalWorld
                 Vector3 c = li.dynamic ? li.instance.transform.TransformPoint(li.model.boundsCentre) : centres[i];
                 float dx = c.x - eye.x, dy = c.y - eye.y, dz = c.z - eye.z;
                 float f = dx * dx + dy * dy + dz * dz;
+                if (two) { float ex = c.x - eye2.x, ey = c.y - eye2.y, ez = c.z - eye2.z, f2 = ex * ex + ey * ey + ez * ez; if (f2 < f) f = f2; }
                 if (mapScale2 != 1f) f /= mapScale2;   // MAP SCALE: the level's draw / LOD distances measured in its own (unscaled) feet
                 uint d2 = f >= 4.2949673e9f ? uint.MaxValue : (uint)Math.Round(f, MidpointRounding.ToEven);   // ROUND (fistp, nearest)
                 uint D = divisor == 0 ? li.model.drawDistance : li.model.drawDistance / divisor;

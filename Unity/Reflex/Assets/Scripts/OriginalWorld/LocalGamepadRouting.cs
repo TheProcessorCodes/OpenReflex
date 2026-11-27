@@ -15,16 +15,25 @@ namespace Reflex.Port.OriginalWorld
         bool begun, recovering;
         double recoveryAfter;
         public static Gamepad ActiveLocalPad => active == null ? null : active.Pad(0);
-        public static void RememberMenuSubmit(Gamepad pad) { menuSubmitPad = Usable(pad) ? pad : null; }
+        /// SPLIT SCREEN (w-split): the controller that joined as player 2 on the setup page's PLAYERS tab (null: none, or it went away). A split
+        /// world puts it in slot 1 (the core's controller 1) and never gives it to player 1; its menu presses are never player 1's pad.
+        public static Gamepad Player2Pad { get => Usable(player2Pad) ? player2Pad : null; set { player2Pad = value; if (value != null && menuSubmitPad == value) menuSubmitPad = null; } }
+        static Gamepad player2Pad;
+        /// The pad player 1 last pressed a menu submit with (null: none yet, or the keyboard).
+        public static Gamepad MenuPad => Usable(menuSubmitPad) ? menuSubmitPad : null;
+        public static void RememberMenuSubmit(Gamepad pad) { if (pad != null && pad == Player2Pad) return; menuSubmitPad = Usable(pad) ? pad : null; }
         static bool Usable(Gamepad pad) => pad != null && pad.added && pad.enabled;
         static bool Intent(Gamepad pad) => pad.buttonSouth.isPressed || pad.buttonEast.isPressed || pad.buttonWest.isPressed || pad.buttonNorth.isPressed || pad.startButton.isPressed || pad.selectButton.isPressed || pad.leftShoulder.isPressed || pad.rightShoulder.isPressed || pad.dpad.ReadValue().sqrMagnitude > .1f || pad.leftTrigger.ReadUnprocessedValue() > .1f || pad.rightTrigger.ReadUnprocessedValue() > .1f || pad.leftStick.ReadUnprocessedValue().sqrMagnitude > .0625f || pad.rightStick.ReadUnprocessedValue().sqrMagnitude > .0625f;
         public void BeginSession()
         {
             if (begun) return; // World rebuild/F5 never silently reselects a different pad.
             begun = true; active = this;
-            Gamepad chosen = Usable(menuSubmitPad) ? menuSubmitPad : Usable(Gamepad.current) ? Gamepad.current : null;
-            if (chosen == null) foreach (var pad in Gamepad.all) if (Usable(pad)) { chosen = pad; break; }
+            // SPLIT SCREEN (w-split): player 2's joined pad is slot 1 and is never chosen for player 1
+            var p2 = Reflex.Port.RxCore.RxSplitScreen.Requested ? Player2Pad : null;
+            Gamepad chosen = Usable(menuSubmitPad) && menuSubmitPad != p2 ? menuSubmitPad : Usable(Gamepad.current) && Gamepad.current != p2 ? Gamepad.current : null;
+            if (chosen == null) foreach (var pad in Gamepad.all) if (Usable(pad) && pad != p2) { chosen = pad; break; }
             Assign(0, chosen); recovering = chosen == null;
+            if (p2 != null) Assign(1, p2);
             recoveryAfter = double.NegativeInfinity;
             Refresh();
         }
@@ -41,8 +50,10 @@ namespace Reflex.Port.OriginalWorld
             if (recovering)
             {
                 Gamepad replacement = null;
+                // SPLIT SCREEN (w-split): the second rider's pad (slot 1) is never taken for the first rider; slot 0 waits for its own pad or a free one.
+                var held = Reflex.Port.RxCore.RxSplitScreen.Active ? slots[1] : null;
                 foreach (var pad in Gamepad.all)
-                    if (Usable(pad) && pad.lastUpdateTime > recoveryAfter && Intent(pad) && (replacement == null || pad.lastUpdateTime > replacement.lastUpdateTime)) replacement = pad;
+                    if (pad != held && Usable(pad) &&pad.lastUpdateTime > recoveryAfter && Intent(pad) && (replacement == null || pad.lastUpdateTime > replacement.lastUpdateTime)) replacement = pad;
                 if (replacement != null)
                 {
                     for (int i = 1; i < 4; i++) if (slots[i] == replacement) Assign(i, null);

@@ -108,6 +108,7 @@ Shader "Reflex/Original Crowd Billboard"
             #pragma target 3.0
             #pragma vertex Vert
             #pragma fragment Frag
+            #include "ReflexWeather.hlsl"   // WEATHER: the clouds' share of the crowd's baked light (nothing without weather)
 
             half4 Frag(Varyings i) : SV_Target
             {
@@ -118,6 +119,7 @@ Shader "Reflex/Original Crowd Billboard"
                 float3 rgb = band ? tex.rgb * i.tint.rgb : tex.rgb;
                 float3 colour = rgb * i.color.rgb;
                 colour = RfxAliveAlbedo(colour);                               // Alive: the albedo is squared (a Reflex level: unchanged)
+                colour *= RfxWeatherLightScale();                              // WEATHER (not the original program): the crowd is unlit, it dims with the clouds
                 colour = colour * i.fog.w + i.fog.rgb;
                 return half4(RfxOutput(colour), 1.0);   // raw values for ReflexRenderPipeline's HDR target
             }

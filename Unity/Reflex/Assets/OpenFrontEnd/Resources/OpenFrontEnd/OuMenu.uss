@@ -309,11 +309,6 @@
     color: rgba(242, 242, 238, 0.32);
 }
 
-.mxa-untamed-track > .mxa-track-name {
-    flex-shrink: 1;
-    white-space: normal;
-}
-
 .mxa-track-on > .mxa-track-name {
     color: rgb(245, 180, 0);
 }

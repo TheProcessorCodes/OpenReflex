@@ -68,6 +68,11 @@ namespace Reflex.Port.OpenFrontEnd
             public string EventLabel = "";
             public bool HasModeResults; public RxModeResultsState ModeResults;
             public bool HasRaceHud; public RxRaceHudState RaceHud;
+            /// SPLIT SCREEN (w-split): the race ends once both local riders finished or 60 s after the first of them (00566ee0), so the
+            /// first rider may be a rider still racing (the page shows its projected total, as for the computer riders).
+            public bool AllowUnfinishedLocal;
+            /// SPLIT SCREEN (w-split): the second local rider's slot (-1 none): its row is marked as the first rider's is.
+            public int SecondSlot = -1;
         }
 
         public long Generation { get; }
@@ -85,13 +90,15 @@ namespace Reflex.Port.OpenFrontEnd
         public bool HasRaceHud { get; }
         public RxRaceHudState RaceHud { get; }
         public int SectionCount { get; }
+        /// SPLIT SCREEN (w-split): the second local rider's slot (-1: one local rider).
+        public int SecondSlot { get; }
 
         OwnRaceResultsSnapshot(long generation, string identity, ReflexRaceState race, RxEventUiState ui, Row[] rows, Context context)
         {
             Generation = generation; EventIdentity = identity; Race = race; EventUi = ui;
             this.rows = rows; Rows = new ReadOnlyCollection<Row>(rows);
             Mode = context.Mode; EventLabel = context.EventLabel ?? ""; HasRaceHud = context.HasRaceHud; RaceHud = context.RaceHud;
-            SectionCount = context.HasModeResults ? context.ModeResults.sectionCount : -1;
+            SectionCount = context.HasModeResults ? context.ModeResults.sectionCount : -1; SecondSlot = context.SecondSlot;
         }
 
         // offlineExhibitionOpen is explicit caller policy, not inferred from activity enum or rider count. The modes with a results page of
@@ -133,12 +140,13 @@ namespace Reflex.Port.OpenFrontEnd
                     localCount++;
                     // a lap race ends with the local rider's last lap; the timed modes (Freestyle, Section Race) end by their clock
                     // (RESTORED CONTENT, a timed championship stage: a lapped rider is flagged at its next crossing, with fewer laps)
-                    if (OwnModes.LapType(eventUi.activity_type) && (d.finished == 0 || (d.laps_completed < race.num_laps && !Reflex.Port.RxCore.RxChampWeekend.TimedStageInSession(out _, out _))))
+                    if (!context.AllowUnfinishedLocal && OwnModes.LapType(eventUi.activity_type) && (d.finished == 0 || (d.laps_completed < race.num_laps && !Reflex.Port.RxCore.RxChampWeekend.TimedStageInSession(out _, out _))))
                     { reason = "The local rider has not finished."; return false; }
                 }
                 string name = null;
                 names?.TryGetValue(d.slot, out name);
                 if (string.IsNullOrWhiteSpace(name)) name = d.local != 0 ? "You" : "Rider " + (d.slot + 1).ToString(CultureInfo.InvariantCulture);
+                if (context.SecondSlot >= 0 && d.local == 0 && d.slot == context.SecondSlot) name = Reflex.Port.Hud.ReflexHudModel.SecondPlayerName;   // SPLIT SCREEN: the second rider is "Player 2" (as on the HUD's boards)
                 // the core writes the standings in the activity's order (+0x2d0): the original's page numbers its rows by it (00613dd0's
                 // Index), not by the places, which repeat once the race left InProgress
                 copied[i] = new Row(d, name, race.riders, i + 1);

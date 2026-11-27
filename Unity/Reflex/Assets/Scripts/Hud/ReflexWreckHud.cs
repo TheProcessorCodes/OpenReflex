@@ -29,15 +29,17 @@ namespace Reflex.Port.Hud
         public Cap cap; public string capName = "";
         public float seconds;          // the window left in seconds (the gallery's labels)
 
+        bool padOnly;   // SPLIT SCREEN (w-split): the second rider plays on a pad whatever CONTROLLER GLYPHS says: never a key's cap
         float lastActiveAt = -10f; int lastDirection; bool synced; uint seenSuccess, seenFail, seenBegin;
 
         /// The prompt is on screen: only while the component is shown (the original hides it the frame of the save / the fall, nothing lingers).
         public bool Visible(float now) => active;
 
         /// From the runtime's last completed frame.
-        public void Fill(OriginalWorldRuntime rt, float now)
+        public void Fill(IReflexHudSource rt, float now)
         {
-            if (!rt || !rt.HasReflexHud) { Apply(default, false, now, null); return; }
+            padOnly = rt != null && rt.PadOnly;
+            if (rt == null || !rt.Alive || !rt.HasReflexHud) { Apply(default, false, now, null); return; }
             Apply(rt.ReflexHud, true, now, null);
         }
 
@@ -82,7 +84,7 @@ namespace Reflex.Port.Hud
             if (source == 3) { cap = Cap.Tilt; capName = "TILT"; return; }
             if (source == 1) { cap = Cap.RightStick; capName = "R STICK"; return; }
             if (source == 2) { cap = Cap.LeftStick; capName = "L STICK"; return; }
-            if (OuGlyphs.Current != OuGlyphs.Device.Keyboard) { cap = Cap.RightStick; capName = "R STICK"; return; }
+            if (padOnly || OuGlyphs.Current != OuGlyphs.Device.Keyboard) { cap = Cap.RightStick; capName = "R STICK"; return; }
             KeyCap(dir);
         }
 

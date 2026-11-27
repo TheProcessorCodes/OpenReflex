@@ -3,9 +3,15 @@
 // layer (6 vertices per particle, SV_VertexID), every particle's place computed here from its index and the time.
 //   rain / snow (_PMode 0 / 1): each particle has a fixed random place in a box that wraps around the camera (so it is still in the world
 //     while the camera moves: the drops stream past at the right parallax), falls at its own speed with the wind (snow sways), and is drawn
-//     as a segment from where it is to where it was _PFall.z seconds ago relative to the camera: the streak a camera's shutter sees. Thin
+//     as a segment from where it is to where it was _PFall.z seconds ago: its own fall and wind, plus a small share of the camera's
+//     motion (_PFollow.w). The full camera motion made every drop a long line pointing away from the direction of travel at riding speed
+//     (the "warp drive" look), so: a streak is never longer than 1.5x a drop's in still air, a flake stays a flake (its smear at most
+//     half its width), the particles drift along with the camera by a share of its travel (_PFollow.xyz: they stream past slower), and
+//     the ones nearest the lens fade out further away the faster the camera moves. Thin
 //     particles are widened to 1.25 pixels with their alpha scaled down by as much (no shimmering sub-pixel lines). Faded near the box's
-//     edges. Lit by the sky (_PLight) and the sun (forward scattering towards it for the rain, diffuse for the snow).
+//     edges. Lit by the scene: the sky under the clouds (_PLight) and the sun (forward scattering towards it for the rain, diffuse for
+//     the snow) where the sun reaches the particle: the level's static shadow (hills, stands: the volume shadow map) and the real-time
+//     shadow map (trees, scenery, riders) are looked up per particle, so rain and snow darken as they fall through a shadow.
 //   splashes (_PMode 2): drops landing on the terrain around the camera (heights from _PGround, the ground under the camera sampled by the
 //     CPU), a short crown of droplets each, one after another on new random spots.
 // Blended (straight alpha) after the opaque world, the volumetric haze in front of them (ReflexVolumetricApply.hlsl).
@@ -24,7 +30,9 @@ Shader "Hidden/Reflex/Precipitation"
             #pragma target 4.5
             #pragma vertex Vert
             #pragma fragment Frag
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "../ReflexCommon.hlsl"
             #include "../ReflexWeather.hlsl"
             #include "../ReflexVolumetricApply.hlsl"
@@ -33,6 +41,7 @@ Shader "Hidden/Reflex/Precipitation"
             float4 _PBox;        // xyz: the box (m), w: how far above the camera its centre is (m)
             float4 _PFall;       // x fall speed (m/s), y size (m: the drop's / flake's width), z shutter (s), w alpha
             float4 _PCamVel;     // xyz the camera's velocity (m/s), w pixel size at 1 m (2 tan(fov / 2) / screen height)
+            float4 _PFollow;     // xyz how far the particles have drifted along with the camera (m, wrapped to the box), w the share of the camera's velocity in a streak
             float4 _PLight;      // rgb the sky light on a particle (raw), w the mode's brightness
             float4 _PSun;        // rgb the sun (raw, after the clouds), w sway (snow, m)
             float4 _PGroundRect; // x0, z0 of the ground texture, 1 / its size (m), w valid
@@ -54,6 +63,15 @@ Shader "Hidden/Reflex/Precipitation"
                 return float3((k >> 8) & 0xffffffu) / float(0xffffff);
             }
             float3 WrapBox(float3 p, float3 lo, float3 size) { float3 r = p - lo; return lo + r - size * floor(r / size); }
+            // how much of the sun reaches a particle at p (one hard compare: a particle is a point)
+            float SunAt(float3 p)
+            {
+                float lit = RfxVolumeShadow(p) * RfxMapShadow(p);
+            #if defined(_MAIN_LIGHT_SHADOWS) || defined(_MAIN_LIGHT_SHADOWS_CASCADE)
+                lit *= MainLightRealtimeShadow(TransformWorldToShadowCoord(p));
+            #endif
+                return lit;
+            }
 
             Varyings Vert(uint vid : SV_VertexID)
             {
@@ -72,7 +90,7 @@ Shader "Hidden/Reflex/Precipitation"
                 {
                     float speed = _PFall.x * (0.8 + 0.4 * h2.x);
                     float3 vel = mode < 0.5 ? float3(_RfxWeatherWind.x, -speed, _RfxWeatherWind.z) : float3(_RfxWeatherWind.x * (0.25 + 0.25 * h2.y), -speed, _RfxWeatherWind.z * (0.25 + 0.25 * h2.y));
-                    float3 p = h * _PBox.xyz + vel * t;
+                    float3 p = h * _PBox.xyz + vel * t + _PFollow.xyz;
                     if (mode > 0.5)
                     {   // snow sways: two slow circles of its own
                         float w1 = t * (0.7 + h2.z * 0.9) + h.x * 6.283, w2 = t * (1.9 + h2.y) + h.z * 6.283;
@@ -81,22 +99,29 @@ Shader "Hidden/Reflex/Precipitation"
                     float3 lo = cam - 0.5 * _PBox.xyz + float3(0, _PBox.w, 0);
                     p = WrapBox(p, lo, _PBox.xyz);
                     float3 rel = (p - lo) / _PBox.xyz * 2.0 - 1.0;
-                    alpha *= smoothstep(0.6, 2.2, length(p - cam));   // (no thick streaks across the lens)
+                    // (no thick streaks across the lens; at speed the nearest ones cross the screen in a frame or two: faded out further away)
+                    float near = min(length(_PCamVel.xyz) * 0.07, 3.0);
+                    alpha *= smoothstep(0.6 + near, 2.2 + 2.5 * near, length(p - cam));
                     float edge = max(abs(rel.x), max(abs(rel.z), abs(rel.y)));
                     alpha *= 1.0 - smoothstep(0.72, 1.0, edge);
-                    float3 vr = vel - _PCamVel.xyz;
-                    head = p; tail = p - vr * _PFall.z;
                     width = _PFall.y * (mode < 0.5 ? (0.7 + 0.6 * h2.z) : (0.45 + 1.1 * h2.z * h2.z));
+                    float3 smear = (vel - _PCamVel.xyz * _PFollow.w) * _PFall.z;
+                    float longest = mode < 0.5 ? 1.5 * speed * _PFall.z : 0.5 * width;
+                    smear *= min(1.0, longest / max(length(smear), 1e-5));
+                    head = p; tail = p - smear;
                     float3 toSun = _RfxSunDir.xyz;
                     float3 vd = normalize(p - cam);
+                    float lit = alpha > 0.002 ? SunAt(p) : 1.0;
                     if (mode < 0.5)
                     {   // a drop: the sky it refracts, brighter looking towards the sun (forward scattering), a little of its glint
                         float fwd = pow(saturate(dot(vd, toSun)), 6.0);
-                        col = _PLight.rgb * (0.85 + 0.3 * h.y) + _PSun.rgb * (0.08 + 0.7 * fwd);
+                        col = _PLight.rgb * (0.85 + 0.3 * h.y) * (0.82 + 0.18 * lit) + _PSun.rgb * ((0.08 + 0.7 * fwd) * lit);
                     }
                     else
                     {   // a flake: white, the sky light from all round, the sun on it
-                        col = (_PLight.rgb * 1.05 + _PSun.rgb * 0.55) * (0.85 + 0.15 * h.y);
+                        // (in the shade only the sky lights it: cooler and darker; towards the sun the light comes through the flake)
+                        float thru = pow(saturate(dot(vd, toSun)), 4.0);
+                        col = (_PLight.rgb * float3(0.96, 1.0, 1.08) * (0.92 + 0.13 * lit) + _PSun.rgb * ((0.55 + 0.6 * thru) * lit)) * (0.85 + 0.15 * h.y);
                     }
                     col *= _PLight.w;
                 }
@@ -129,7 +154,7 @@ Shader "Hidden/Reflex/Precipitation"
                     width = size;
                     alpha *= inside ? 1.0 : 0.0;
                     alpha *= 1.0 - smoothstep(0.6, 1.0, rad / _PMisc.z);
-                    col = (_PLight.rgb * 1.2 + _PSun.rgb * 0.25) * _PLight.w;
+                    col = (_PLight.rgb * 1.2 + _PSun.rgb * (0.25 * (inside ? SunAt(g0) : 1.0))) * _PLight.w;
                     o.misc = float2(age, r.z);
                 }
 

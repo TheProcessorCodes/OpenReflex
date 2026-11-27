@@ -7,6 +7,7 @@
 //                 the pacing (same-frame / one frame later) and its budget
 //   DRAWS         SetPass calls, draw calls (development players only report them), triangles
 //   LIGHTING      ORIGINAL / ENHANCED and the SHADOW QUALITY tier, the resolution and render scale
+//   DRAWN AT      the share of the resolution the world is drawn at now and DYNAMIC RESOLUTION's state (ReflexDynamicResolution)
 // The text is refreshed four times a second (a UI Toolkit label change re-lays out the panel; once a frame would cost more than it shows).
 using System;
 using System.Text;
@@ -138,9 +139,11 @@ namespace Reflex.Port.Platform
             if (dc > 0) sb.Append("   DRAWS ").Append(dc);
             sb.Append("   TRIS ").Append(tris.Valid ? (tris.LastValue / 1e6).ToString("0.00") + " M" : "-").Append('\n');
             bool enh = ReflexEnhancedLighting.Requested;
-            sb.Append("LIGHTING ").Append(enh ? "ENHANCED " + (ReflexEnhancedLighting.Tier == 0 ? "LOW" : ReflexEnhancedLighting.Tier == 1 ? "MEDIUM" : "HIGH") : "ORIGINAL")
+            sb.Append("LIGHTING ").Append(enh ? (ReflexEnhancedLighting.Tier == 0 ? "LOW" : ReflexEnhancedLighting.Tier == 1 ? "MEDIUM" : "HIGH") : "ORIGINAL (DEV)")
               .Append("   ").Append(Screen.width).Append('x').Append(Screen.height);
             if (ReflexSettings.RenderScale != 100) sb.Append(" @ ").Append(ReflexSettings.RenderScale).Append('%');
+            // the share of that the world is drawn at (UPSCALING / DYNAMIC RESOLUTION; the TAA rebuilds the full picture)
+            sb.Append("\nDRAWN AT ").Append(Mathf.RoundToInt(ReflexDynamicResolution.CurrentScale * 100f)).Append("%   DYNAMIC RESOLUTION ").Append(ReflexDynamicResolution.Status);
             text.text = sb.ToString();
             cpuMain = cpuRender = gpu = 0; timed = gpuTimed = 0;
             gameFrames = 0; gameWindow = 0; simJob = simCore = 0; simN = 0;

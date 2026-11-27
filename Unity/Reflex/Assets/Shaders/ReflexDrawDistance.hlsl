@@ -16,10 +16,13 @@ float RfxForestDepth(float3 offset, float3 fwd)
     return lerp(viewDepth, length(offset), _RfxDrawDist.y) * _RfxDrawDist.x;
 }
 
-// interleaved gradient noise (Jimenez) at a pixel: the dither threshold in [0, 1)
+float4 _RfxFoliageDither;   // (described below; w: the frame's noise offset, advances while the TAA runs only, else 0)
+
+// interleaved gradient noise (Jimenez) at a pixel: the dither threshold in [0, 1). Shifted per frame while the TAA runs (as RfxFoliageNoise
+// below), so a model's distance fade and a tree's LOD cross-fade resolve to their coverage instead of a standing stipple; still without TAA.
 float RfxDitherNoise(float2 pixel)
 {
-    return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+    return frac(52.9829189 * frac(dot(pixel + 5.588238 * _RfxFoliageDither.w, float2(0.06711056, 0.00583715))));
 }
 
 // MX vs ATV Alive's foliage alpha (w-alivetrees, OriginalForest sets it per camera): T_EcoLeaves / T_EcoBranches (normal and colour pass) and
@@ -28,7 +31,6 @@ float RfxDitherNoise(float2 pixel)
 // fade (leaf LODs, 3D to billboard) are a screen-door dissolve instead of a hard alpha test.
 //   x: 1 on the levels with Alive's content, 0 elsewhere (Reflex's own trees keep their alpha test); y: the threshold (32 / 255);
 //   z: the noise span (1 - y: a texel of alpha 1 at full fade always stays); w: the frame's noise offset (advances with the TAA only)
-float4 _RfxFoliageDither;
 bool RfxFoliageDither() { return _RfxFoliageDither.x > 0.5; }
 // the screen noise: interleaved gradient noise on the transposed pixel (decorrelated from RfxDitherNoise, which the LOD cross-fade of the
 // same pixels uses), shifted per frame while the TAA runs (it then resolves to the coverage)

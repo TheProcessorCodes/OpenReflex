@@ -40,7 +40,7 @@ namespace Reflex.Port.Rendering
         /// REFLEX_SHARPEN, REFLEX_UPSCALE at start.
         public static int ModeOverride = -1, SharpenOverride = -1, UpscaleOverride = -1;
 
-        /// TAA chosen (the default of this test build: nothing saved = TAA). Applies with LIGHTING ENHANCED only.
+        /// TAA chosen (the default: nothing saved = TAA).
         public static bool TaaSelected => ModeOverride >= 0 ? ModeOverride == (int)Mode.Taa : Options.ReflexSave.GetInt(KeyTaa, 1) == 1;
         public static Mode Current
         {
@@ -81,7 +81,7 @@ namespace Reflex.Port.Rendering
 
         public static void Cycle(int d) { int n = ModeNames.Length; Set((Mode)((((int)Current + d) % n + n) % n)); }
 
-        public static string Label => Current == Mode.Taa ? (ReflexEnhancedLighting.Requested ? "TAA" : "TAA (ENHANCED)") : ModeNames[(int)Current];
+        public static string Label => ModeNames[(int)Current];
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         static void ReadEnvironment()
@@ -150,7 +150,7 @@ namespace Reflex.Port.Rendering
 
         void Update()
         {
-            // F9: the A/B key of this test build (once per frame, whichever pipeline sees it first)
+            // CTRL+F9: a developers' A/B key (once per frame, whichever pipeline sees it first)
             var kb = UnityEngine.InputSystem.Keyboard.current;
             if (kb != null && kb.ctrlKey.isPressed && kb.f9Key.wasPressedThisFrame && f9Frame != Time.frameCount)
             {
@@ -159,7 +159,7 @@ namespace Reflex.Port.Rendering
                 var m = ReflexAntiAliasing.Current;
                 labelText = "ANTI-ALIASING: " + ReflexAntiAliasing.ModeNames[(int)m]
                             + (m == ReflexAntiAliasing.Mode.Taa ? $"  (SHARPENING {ReflexAntiAliasing.Sharpening}%, UPSCALING {ReflexAntiAliasing.UpscalingNames[ReflexAntiAliasing.Upscaling]})" : "")
-                            + (ReflexEnhancedLighting.Requested ? "" : "  - LIGHTING ORIGINAL: TAA needs ENHANCED");
+                            + (ReflexEnhancedLighting.Requested ? "" : "  - REFLEX_LIGHTING=original: TAA draws as OFF");
                 labelUntil = Time.unscaledTime + 2.5f;
                 Debug.Log("[Reflex AA] CTRL+F9: " + labelText);
             }
@@ -210,11 +210,14 @@ namespace Reflex.Port.Rendering
             var urp = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
             float baseScale = urp ? urp.renderScale : 1f;
             outputSize = new Vector2Int(Mathf.Max(1, (int)(c.pixelWidth * baseScale)), Mathf.Max(1, (int)(c.pixelHeight * baseScale)));
-            float factor = ReflexAntiAliasing.UpscalingScales[upscale];
-            if (urp && upscale > 0) { savedScale = baseScale; scaledAsset = urp; urp.renderScale = baseScale * factor; }
-            float inScale = baseScale * (upscale > 0 ? factor : 1f);
+            // (DYNAMIC RESOLUTION: a share at or under UPSCALING's own, ReflexDynamicResolution; the output and so the history keep their size)
+            float factor = Application.isEditor ? 1f : ReflexDynamicResolution.Factor(ReflexAntiAliasing.UpscalingScales[upscale]);
+            bool scaled = factor < 0.999f;
+            float inScale = scaled ? ReflexDynamicResolution.UrpScale(baseScale * factor) : baseScale;
+            if (urp && scaled) { savedScale = baseScale; scaledAsset = urp; urp.renderScale = inScale; }
             inputSize = new Vector2Int(Mathf.Max(1, (int)(c.pixelWidth * inScale)), Mathf.Max(1, (int)(c.pixelHeight * inScale)));
-            if (upscale == 0) outputSize = inputSize;
+            if (!scaled) outputSize = inputSize;
+            ReflexDynamicResolution.CurrentScale = scaled ? inScale / Mathf.Max(baseScale, 1e-3f) : 1f;
 
             // history reset: the first frame, a gap, a new size or mode, a camera cut (a replay's new shot, a teleport, a FOV jump)
             var t = c.transform;
@@ -227,7 +230,7 @@ namespace Reflex.Port.Rendering
             lastFrame = Time.frameCount;
 
             // the jitter: Halton (2, 3), centred, in input pixels
-            int phases = upscale == 0 ? 8 : upscale == 1 ? 16 : 24;
+            int phases = factor > 0.95f ? 8 : factor > 0.62f ? 16 : 24;   // (by the share drawn: 100 %, UPSCALING QUALITY's 67 %, BALANCED's 58 %)
             if (!sameFrame) frameIndex++;
             int k = frameIndex % phases + 1;
             jitterPixels = new Vector2(Halton(k, 2) - 0.5f, Halton(k, 3) - 0.5f);

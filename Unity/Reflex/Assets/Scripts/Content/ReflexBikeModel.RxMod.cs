@@ -14,6 +14,17 @@ namespace Reflex.Port.Content
 {
     public sealed partial class ReflexBikeModel
     {
+        /// An imported MX vs ATV Alive bike (the importer's AliveBikes folder; a bike's own folder carries no "importer", only its parts
+        /// folder does, so RxMod.importer alone did not tell: 2026-11-16, the Alive bikes' riders had their feet moved to template pegs and
+        /// their knees folded into the bike as they stood).
+        static bool AliveImported(RxMod m)
+        {
+            if (m == null) return false;
+            if (m.importer > 0) return true;
+            string path = (m.path ?? "").Replace('\\', '/'), mark = "/" + AliveImport.AliveBikes.Folder;
+            return path.IndexOf(mark + "/", StringComparison.OrdinalIgnoreCase) >= 0 || path.EndsWith(mark, StringComparison.OrdinalIgnoreCase);
+        }
+
         /// What the last .rxmod build measured (diagnostics / tests): the fit's scale and pitch, the steering axis offset from the original's,
         /// the tyre radius corrections.
         public string rxFit;
@@ -21,7 +32,12 @@ namespace Reflex.Port.Content
         /// Reads the mod's mesh off the main thread (the garage's Prefetch).
         static void PrefetchRx(BikeSpec spec)
         {
-            try { RxModBikes.Mesh(spec.rx); Load(VehicleCatalog.Shared.install, spec.chassisDb, spec.chassisPkg, spec.chassisModel); } catch (Exception) { }
+            try
+            {
+                RxModBikes.Mesh(spec.rx); if (spec.rx.hr != null) RxModBikes.Mesh(spec.rx.hr); Load(VehicleCatalog.Shared.install, spec.chassisDb, spec.chassisPkg, spec.chassisModel);
+                if (spec.rxParts != null) foreach (var o in spec.rxParts) if (o.mesh != null) RxModBikes.Mesh(o.mod, o.mesh);
+            }
+            catch (Exception) { }
         }
 
         /// The original tyre's radius (its tyre-material surface's half height), 0 when it cannot be read.
@@ -71,7 +87,32 @@ namespace Reflex.Port.Content
             return Matrix4x4.Translate(new Vector3(center, R.y, R.z)) * M * Matrix4x4.Translate(new Vector3(-(Fm.x + Rm.x) * 0.5f, -Rm.y, -Rm.z));
         }
 
-        static ReflexBikeModel BuildRx(BikeSpec spec)
+        /// The spec with the bike's high-res twin (RxModBike.hr: the garage's model of an imported MX vs ATV Alive bike) and the twins of the
+        /// worn parts (the same slot and option ids). The spec itself when the bike has no twin, a worn part has none, or a skin paints the
+        /// bike (a skin names the bike's own materials).
+        public static BikeSpec RxHighRes(BikeSpec spec)
+        {
+            var hr = spec?.rx?.hr;
+            if (hr == null || spec.rxSkin != null) return spec;
+            var worn = new List<RxPartOption>();
+            if (spec.rxParts != null)
+                foreach (var o in spec.rxParts)
+                {
+                    var t = hr.slots.FirstOrDefault(s => string.Equals(s.id, o.slot.id, StringComparison.OrdinalIgnoreCase))?.Find(o.id);
+                    if (t == null) return spec;
+                    if (!t.isDefault) worn.Add(t);
+                }
+            var c = spec.Clone(); c.rx = hr; c.rxParts = worn;
+            return c;
+        }
+
+        /// A twin's race model takes over beyond this distance from the camera (feet, times DRAW DISTANCE's scale as the original models'
+        /// LOD distances are: the original bikes' first LOD record is at 40 ft).
+        const int RxFarDistance = 40;
+
+        /// farSpec (BIKE DETAIL HIGH: ALL RIDERS, the other riders of a race): spec is the bike's high-res twin and farSpec its race model,
+        /// drawn instead beyond RxFarDistance (one further LOD, built when first reached: ReflexBikeModel.Lod.cs); null: spec at any distance.
+        static ReflexBikeModel BuildRx(BikeSpec spec, BikeSpec farSpec = null, bool stand = true)
         {
             var cat = VehicleCatalog.Shared; var install = cat.install; var b = spec.rx;
             var mesh = RxModBikes.Mesh(b);
@@ -115,15 +156,20 @@ namespace Reflex.Port.Content
                 steer = $", steering axis {off.magnitude * 12f:F2} in off the original's, {Vector3.Angle(am, ah):F1} deg apart";
             }
             // the wheels: scaled about their axles to the original tyres' radius (where the physics rolls them)
-            var wheelScale = new Dictionary<int, float>();
-            foreach (var (node, model) in ownWheels && !own ? new[] { ("OBJ_FRT_Tire", spec.frontModel), ("OBJ_BCK_Tire", spec.rearModel) } : new (string, string)[0])
+            Dictionary<int, float> WheelScale(RxMesh m, bool log, float scale)
             {
-                int mi = mesh.NodeIndex(node); float want = TyreRadius(install, spec, model), have = ModWheelRadius(mesh, mi) * scale;
-                float k = want > 0.3f && have > 0.3f ? want / have : 1f;
-                if (k < 0.85f || k > 1.15f) { Debug.LogWarning($"Reflex bike {b.mod.name}: {node} radius {have:F3} ft against the original's {want:F3}: left as modelled"); k = 1f; }
-                if (mi >= 0) wheelScale[mi] = k;
-                steer += $", {node} {have * 12f:F2} in -> {want * 12f:F2} in";
+                var ws = new Dictionary<int, float>();
+                foreach (var (node, model) in ownWheels && !own ? new[] { ("OBJ_FRT_Tire", spec.frontModel), ("OBJ_BCK_Tire", spec.rearModel) } : new (string, string)[0])
+                {
+                    int mi = m.NodeIndex(node); float want = TyreRadius(install, spec, model), have = ModWheelRadius(m, mi) * scale;
+                    float k = want > 0.3f && have > 0.3f ? want / have : 1f;
+                    if (k < 0.85f || k > 1.15f) { if (have > 0.3f) Debug.LogWarning($"Reflex bike {b.mod.name}: {node} radius {have:F3} ft against the original's {want:F3}: left as modelled"); k = 1f; }
+                    if (mi >= 0) ws[mi] = k;
+                    if (log) steer += $", {node} {have * 12f:F2} in -> {want * 12f:F2} in";
+                }
+                return ws;
             }
+            var wheelScale = WheelScale(mesh, true, scale);
             result.rxFit = $"scale {scale:F4}, pitch {pitch * Mathf.Rad2Deg:F2} deg" + steer + (ownWheels ? "" : ", the original's wheels");
             Debug.Log($"Reflex bike {b.mod.name} / {b.name?.Full}{(spec.rxSkin != null ? " / skin " + spec.rxSkin.Title + " (" + spec.rxSkin.mod.name + ")" : "")}: {mesh.surfaces.Count} surfaces, {mesh.Vertices} vertices, {mesh.Triangles} triangles on {spec.chassisPkg}'s hierarchy: {result.rxFit}");
 
@@ -133,38 +179,107 @@ namespace Reflex.Port.Content
             var front = Holder("RxMod front wheel · body 2", hfn); var rear = Holder("RxMod rear wheel · body 3", hbn);
             result.frontWheel = front.transform; result.rearWheel = rear.transform;
 
-            var materials = new Dictionary<string, UnityEngine.Material>(StringComparer.OrdinalIgnoreCase);
-            var boneOf = new Dictionary<int, Transform>();
-            Transform Bone(int j)
+            var worn = spec.rxParts;   // (the bike's own kits / parts the player wears: Content/RxParts.cs)
+            var replaced = RxParts.Replaced(worn);
+            // a mesh's surfaces on the pose: the bike's own (but the ones a worn part replaces), then each worn part's mesh (made in the bike's
+            // mesh space, on its nodes: fitted and wheel-scaled as the bike's own)
+            void AddMesh(RxMesh m, int[] poseOfM, Dictionary<int, float> ws, string label, Func<string, UnityEngine.Material> materialOf, HashSet<int> skip, Matrix4x4 T, Matrix4x4 R3)
             {
-                if (boneOf.TryGetValue(j, out var t)) return t;
-                var go = new GameObject("bone " + mesh.nodes[j]); go.transform.SetParent(root.transform, false);
-                result.bones.Add((go.transform, poseOf[j], bindW[poseOf[j]]));
-                return boneOf[j] = go.transform;
-            }
-            for (int si = 0; si < mesh.surfaces.Count; si++)
-            {
-                var (src, mi, node) = mesh.surfaces[si];
-                string matName = mesh.materials[mi];
-                int pn = poseOf[node];
-                bool wheel = !src.skinned && (pn == hfn || pn == hbn) && wheelScale.TryGetValue(node, out _);
-                Vector3 axle = wheel ? (Vector3)hier.nodes[pn].world.GetColumn(3) : Vector3.zero; float k = wheel ? wheelScale[node] : 1f;
-                var s = new Rfx.Surface { skinned = src.skinned, uv0 = src.uv0, uv1 = src.uv1, triangles = src.triangles, strip = src.strip, bones = src.bones, weights = src.weights,
-                                          positions = new Vector3[src.positions.Length], normals = new Vector3[src.normals.Length] };
-                for (int i = 0; i < s.positions.Length; i++)
+                bool lod = result.lodSink != null;   // (a further LOD's parts hang under the posed parts: no wheel holder, no skin of their own)
+                var boneOf = new Dictionary<int, Transform>();
+                Transform Bone(int j)
                 {
-                    var p = T.MultiplyPoint3x4(src.positions[i]);
-                    s.positions[i] = wheel ? axle + (p - axle) * k : p;
-                    s.normals[i] = R3.MultiplyVector(src.normals[i]).normalized;
+                    if (boneOf.TryGetValue(j, out var t)) return t;
+                    var go = new GameObject("bone " + m.nodes[j]); go.transform.SetParent(root.transform, false);
+                    result.bones.Add((go.transform, poseOfM[j], bindW[poseOfM[j]]));
+                    return boneOf[j] = go.transform;
                 }
-                if (src.tangents != null) { s.tangents = new Vector3[src.tangents.Length]; for (int i = 0; i < s.tangents.Length; i++) s.tangents[i] = R3.MultiplyVector(src.tangents[i]); }
-                if (!materials.TryGetValue(matName, out var mat)) materials[matName] = mat = RxMaterial(cat, install, spec, matName);   // (the skin's maps, if any)
-                var parent = wheel ? (pn == hfn ? front.transform : rear.transform) : root.transform;
-                var t = result.AddPart(parent, $"{Path.GetFileNameWithoutExtension(b.mesh)}_{si}_{hier.nodes[pn].name}", s, Matrix4x4.identity, pn, bindW[pn], matName, mat);
-                if (wheel) t.position = Vector3.zero;   // (the holder sits on the axle: the parts stay at the model origin, as the original's)
-                if (s.skinned && s.bones != null) result.Skin(t, s, node, Bone);
+                for (int si = 0; si < m.surfaces.Count; si++)
+                {
+                    if (skip != null && skip.Contains(si)) continue;
+                    var (src, mi, node) = m.surfaces[si];
+                    string matName = m.materials[mi];
+                    if (!stand && IsStand(matName, m.nodes[node])) continue;   // (a race: no garage stand under a twin)
+                    int pn = poseOfM[node];
+                    bool wheel = !src.skinned && (pn == hfn || pn == hbn) && ws.TryGetValue(node, out _);
+                    Vector3 axle = wheel ? (Vector3)hier.nodes[pn].world.GetColumn(3) : Vector3.zero; float k = wheel ? ws[node] : 1f;
+                    var s = new Rfx.Surface { skinned = src.skinned, uv0 = src.uv0, uv1 = src.uv1, triangles = src.triangles, strip = src.strip, bones = src.bones, weights = src.weights,
+                                              positions = new Vector3[src.positions.Length], normals = new Vector3[src.normals.Length] };
+                    for (int i = 0; i < s.positions.Length; i++)
+                    {
+                        var p = T.MultiplyPoint3x4(src.positions[i]);
+                        s.positions[i] = wheel ? axle + (p - axle) * k : p;
+                        s.normals[i] = R3.MultiplyVector(src.normals[i]).normalized;
+                    }
+                    if (src.tangents != null) { s.tangents = new Vector3[src.tangents.Length]; for (int i = 0; i < s.tangents.Length; i++) s.tangents[i] = R3.MultiplyVector(src.tangents[i]); }
+                    else RxTangents(s);   // (a mesh without tangents: the Alive importer's, most mods': the tyre program's normal map needs the frame)
+                    var mat = materialOf(matName);
+                    var parent = wheel ? (pn == hfn ? front.transform : rear.transform) : root.transform;
+                    var t = result.AddPart(parent, $"{label}_{si}_{hier.nodes[pn].name}", s, Matrix4x4.identity, pn, bindW[pn], matName, mat);
+                    if (wheel && !lod) t.position = Vector3.zero;   // (the holder sits on the axle: the parts stay at the model origin, as the original's)
+                    if (s.skinned && s.bones != null && !lod) result.Skin(t, s, node, Bone);
+                }
             }
+            // a bike's mesh and its worn parts' meshes (sp: the spec they belong to, the twin's or the race model's)
+            void AddBike(BikeSpec sp, RxMesh bm, int[] poseOfB, List<RxPartOption> wornB, HashSet<int> replacedB, Matrix4x4 Tb, float scaleB, string suffix)
+            {
+                var bb = sp.rx; var Rb = Matrix4x4.Rotate(Tb.rotation);
+                var materials = new Dictionary<string, UnityEngine.Material>(StringComparer.OrdinalIgnoreCase);
+                AddMesh(bm, poseOfB, bm == mesh ? wheelScale : WheelScale(bm, false, scaleB), Path.GetFileNameWithoutExtension(bb.mesh) + suffix, name =>
+                {
+                    if (!materials.TryGetValue(name, out var mat)) materials[name] = mat = RxMaterial(cat, install, sp, name, RxParts.Material(wornB, name, RxModBikes.MaterialOf(bb, sp.rxSkin, name), bb));   // (the skin's maps, the worn kit's)
+                    return mat;
+                }, replacedB, Tb, Rb);
+                if (wornB == null) return;
+                foreach (var o in wornB)
+                {
+                    if (o.mesh == null) continue;
+                    try
+                    {
+                        var pm = RxModBikes.Mesh(o.mod, o.mesh);
+                        var partPose = new int[pm.nodes.Length];
+                        for (int i = 0; i < pm.nodes.Length; i++) { int j = i; while (j >= 0 && hier.NodeIndex(pm.nodes[j]) < 0) j = pm.parents[j]; partPose[i] = j < 0 ? frame : hier.NodeIndex(pm.nodes[j]); }
+                        var own2 = new Dictionary<string, UnityEngine.Material>(StringComparer.OrdinalIgnoreCase);
+                        AddMesh(pm, partPose, WheelScale(pm, false, scaleB), o.slot.id + "_" + Path.GetFileNameWithoutExtension(o.mesh) + suffix, name =>
+                        {
+                            if (own2.TryGetValue(name, out var mat)) return mat;
+                            // the option's own material of that name, else the bike's (a part mesh may reuse the bike's materials)
+                            var mm = o.materials.TryGetValue(name, out var e) ? RxParts.Tinted(wornB, e.m) : RxParts.Material(wornB, name, RxModBikes.MaterialOf(bb, sp.rxSkin, name), bb);
+                            return own2[name] = RxMaterial(cat, install, sp, name, mm);
+                        }, null, Tb, Rb);
+                    }
+                    catch (Exception e) when (e is IOException || e is InvalidDataException) { Debug.LogWarning($"Reflex bike {bb.mod.name}: part {o.slot.name} {o.Title}: {e.Message} (not drawn)"); }
+                }
+            }
+            AddBike(spec, mesh, poseOf, worn, replaced, T, scale, "");
+            if (worn != null && worn.Count > 0) Debug.Log($"Reflex bike {b.mod.name} / {b.name?.Full}: wears " + string.Join(", ", worn.Select(o => o.slot.name + " " + o.Title)) + (replaced.Count > 0 ? $" ({replaced.Count} of its own surfaces replaced)" : ""));
             if (!ownWheels && !spec.atv && spec.tireDb != null) RxOriginalWheels(result, spec, install, cat, hier, front, rear);
+            // the twin's race model beyond RxFarDistance (the other riders of a race): one further LOD over every part of the twin
+            if (farSpec?.rx != null && farSpec.rx != b && !own && !farSpec.rx.OwnNodes && result.parts.Count > 0)
+                try
+                {
+                    var fb = farSpec.rx; var fm = RxModBikes.Mesh(fb);
+                    var farPose = new int[fm.nodes.Length];
+                    for (int i = 0; i < fm.nodes.Length; i++) { int j = i; while (j >= 0 && hier.NodeIndex(fm.nodes[j]) < 0) j = fm.parents[j]; farPose[i] = j < 0 ? frame : hier.NodeIndex(fm.nodes[j]); }
+                    bool farWheels = fm.surfaces.Any(x => !x.surface.skinned && (farPose[x.node] == hfn || farPose[x.node] == hbn));
+                    if (farWheels != ownWheels) throw new InvalidDataException("the race model and the twin differ in having wheels of their own");
+                    var Tf = RxFit(fm, hier, fb.fit, out float farScale, out _);
+                    var farWorn = farSpec.rxParts; var farReplaced = RxParts.Replaced(farWorn);
+                    // (a posed, empty carrier on every hierarchy node the twin draws nothing on: AddLodPart)
+                    var used = new HashSet<int>(result.parts.Select(p => p.node));
+                    for (int i = 0; i < hier.nodes.Length; i++)
+                    {
+                        if (used.Contains(i)) continue;
+                        var go = new GameObject("lod carrier " + hier.nodes[i].name); go.transform.SetParent(root.transform, false);
+                        result.bones.Add((go.transform, i, bindW[i]));
+                    }
+                    result.highResLods = true;
+                    bool farNew = false;
+                    result.AddLodModel("rx " + fb.mod.name, new[] { (0, 0, 0), (0, 0, RxFarDistance) }, 0, result.parts.Count,
+                        (lod, parent) => { AddBike(farSpec, fm, farPose, farWorn, farReplaced, Tf, farScale, " far"); farNew = true; });
+                    result.LodNewMaterials = () => { bool n = farNew; farNew = false; return n; };
+                }
+                catch (Exception e) when (e is IOException || e is InvalidDataException) { Debug.LogWarning($"Reflex bike {b.mod.name}: its race model for the distance: {e.Message} (the high-res twin at any distance)"); }
             if (own)
             {
                 result.rxFit = b.physicsPose ? "its own size and hierarchy (pose: physics)" : "its own nodes (fit: nodes)";
@@ -177,27 +292,94 @@ namespace Reflex.Port.Content
                     result.forkFix = new OriginalBikePose.ForkFix { upr = hu2, lwr = hl, frt = ht, restUL = Local(ml), restLT = Local(mt),
                                                                      subtree = Enumerable.Range(0, hier.nodes.Length).Where(i => i != hl && i != ht && Under(i)).ToArray() };
                 }
-                // the rider's hands and feet on the bike's own grips and pegs (RiderLimbRetarget): its locators' change in their parents' frames
-                // (the core's lean animations keep the original's locators)
+                int msw = mesh.NodeIndex("OBJ_Swingarm"), mbt = mesh.NodeIndex("OBJ_BCK_Tire"), hsw = hier.NodeIndex("OBJ_Swingarm"), hbt = hier.NodeIndex("OBJ_BCK_Tire");
+                if (b.physicsPose && msw >= 0 && mbt >= 0 && hsw >= 0 && hbt >= 0 && mesh.parents[mbt] == msw)
+                {   // the swing arm onto the simulation's rear wheel (OriginalBikePose.SwingFix)
+                    bool UnderArm(int i) { for (int p = hier.nodes[i].parent; p >= 0; p = hier.nodes[p].parent) if (p == hsw) return true; return false; }
+                    result.swingFix = new OriginalBikePose.SwingFix { arm = hsw, tyre = hbt, restTyre = Local(mbt).GetColumn(3),
+                                                                       subtree = Enumerable.Range(0, hier.nodes.Length).Where(i => i != hbt && UnderArm(i)).ToArray() };
+                }
+                // the rider's hands and feet on the bike's own grips and pegs (RiderLimbRetarget): the core's rider reaches for the original's
+                // (its lean animations keep the original's locators), so each limb moves by the locator's change, carried in the frame of the
+                // locator's parent as the core poses it. "pose": "physics" (the core poses the mod's own nodes): the change in the bike frame's
+                // space (the mod's rest pose against the original's, each from its frame node: the parents themselves move on a bike of another
+                // size, the 50cc's steering head 0.3 ft lower and back), less the rider's own move (riderOffset), in the mod parent's rest frame.
+                // "fit": "nodes" (the core poses the original's nodes): the change in the parent's frame.
+                result.riderShift = b.physicsPose ? b.riderOffset : Vector3.zero;
+                int mfr = mesh.NodeIndex("OBJ_Frame"), hfr = hier.NodeIndex("OBJ_Frame");
+                Matrix4x4 meshFrame = mfr >= 0 ? mesh.world[mfr] : Matrix4x4.identity, hierFrame = hfr >= 0 ? hier.nodes[hfr].world : Matrix4x4.identity;
                 var limbs = new List<RiderLimbRetarget.Offset>();
                 foreach (string n in new[] { "NDE_RHT_Hand", "NDE_LFT_Hand", "NDE_RHT_Foot", "NDE_LFT_Foot" })
                 {
                     int i = hier.NodeIndex(n), j = mesh.NodeIndex(n);
                     if (i < 0 || j < 0 || hier.nodes[i].parent < 0 || mesh.parents[j] < 0) continue;
                     if (!string.Equals(hier.nodes[hier.nodes[i].parent].name, mesh.nodes[mesh.parents[j]], StringComparison.OrdinalIgnoreCase)) continue;
-                    Vector3 d = (Vector3)(Local(j).GetColumn(3) - hier.nodes[i].local.GetColumn(3));
+                    Vector3 d;
+                    if (b.physicsPose)
+                    {
+                        Vector3 inFrame = meshFrame.inverse.MultiplyPoint3x4(mesh.world[j].GetColumn(3)) - hierFrame.inverse.MultiplyPoint3x4(hier.nodes[i].world.GetColumn(3)) - result.riderShift;
+                        d = (meshFrame.inverse * mesh.world[mesh.parents[j]]).inverse.MultiplyVector(inFrame);   // (in the parent's rest frame)
+                    }
+                    else d = (Vector3)(Local(j).GetColumn(3) - hier.nodes[i].local.GetColumn(3));   // ("fit": "nodes": the core poses the original's parents)
                     if (d.sqrMagnitude < 1e-8f || !RiderLimbRetarget.Chain(n, out int u, out int l, out int e)) continue;
                     limbs.Add(new RiderLimbRetarget.Offset { locator = n, node = i, parent = hier.nodes[i].parent, delta = d, upper = u, lower = l, end = e });
                 }
                 if (limbs.Count > 0) { result.limbOffsets = limbs.ToArray(); Debug.Log($"Reflex bike {b.mod.name}: its own grips and pegs: " + string.Join(", ", limbs.Select(o => o.locator + " " + o.delta.ToString("F3")))); }
             }
+            else if (!AliveImported(b.mod))   // (an imported Alive bike stays as it was tuned: its rider keeps the original's grips and pegs)
+            {   // "fit": "axles" / "keep" (2026-11-15: the Reflex Skin Builder's bikes, whose bars sit higher than the original's: the hands
+                // were drawn below the grips): the mod's hand / foot locators as fitted (T) against the original's, in the rest frame of the
+                // locator's parent in the hierarchy, as RiderLimbRetarget carries it. A mesh without the locators changes nothing.
+                var limbs = new List<RiderLimbRetarget.Offset>();
+                foreach (string n in new[] { "NDE_RHT_Hand", "NDE_LFT_Hand", "NDE_RHT_Foot", "NDE_LFT_Foot" })
+                {
+                    int i = hier.NodeIndex(n), j = mesh.NodeIndex(n);
+                    if (i < 0 || j < 0 || hier.nodes[i].parent < 0) continue;
+                    Vector3 fitted = T.MultiplyPoint3x4(mesh.world[j].GetColumn(3));
+                    Vector3 d = hier.nodes[hier.nodes[i].parent].world.inverse.MultiplyVector(fitted - (Vector3)hier.nodes[i].world.GetColumn(3));
+                    if (d.sqrMagnitude < 1e-8f || d.sqrMagnitude > 1f || !RiderLimbRetarget.Chain(n, out int u, out int l, out int e)) continue;   // (within 1 ft)
+                    limbs.Add(new RiderLimbRetarget.Offset { locator = n, node = i, parent = hier.nodes[i].parent, delta = d, upper = u, lower = l, end = e });
+                }
+                if (limbs.Count > 0) { result.limbOffsets = limbs.ToArray(); Debug.Log($"Reflex bike {b.mod.name}: its own grips and pegs (fitted): " + string.Join(", ", limbs.Select(o => o.locator + " " + o.delta.ToString("F3")))); }
+            }
             var pose = root.AddComponent<OriginalBikePose>();
-            pose.forkFix = result.forkFix;
+            pose.forkFix = result.forkFix; pose.swingFix = result.swingFix;
             pose.parts = result.parts.Select(p => p.part).Concat(result.bones.Select(x => x.bone)).ToArray();
             pose.nodes = result.parts.Select(p => p.node).Concat(result.bones.Select(x => x.node)).ToArray();
             pose.inverseBind = result.binds.Concat(result.bones.Select(x => x.bind)).Select(w => w.inverse).ToArray();
             result.pose = pose;
             return result;
+        }
+
+        /// The tangents of a .rxmod surface that has none (the Alive importer's .rxmesh files and most mods carry positions, normals and UVs only;
+        /// the vertex programs then got a zero tangent: the tyre program's normal map, x T + y (T x N) + z N, lost its x / y). As the game's own
+        /// meshes have them: the unit direction of growing u on the surface, made square to the normal - the rider gear's rule
+        /// (ReflexRiderModel.GearTangents, private to that class: the same maths here).
+        static void RxTangents(Rfx.Surface s)
+        {
+            if (s.tangents != null || s.positions == null || s.uv0 == null || s.normals == null) return;
+            int n = s.positions.Length; var tu = new Vector3[n];
+            var tri = s.Triangles().ToArray();
+            for (int t = 0; t + 2 < tri.Length; t += 3)
+            {
+                int i0 = tri[t], i1 = tri[t + 1], i2 = tri[t + 2];
+                Vector3 e1 = s.positions[i1] - s.positions[i0], e2 = s.positions[i2] - s.positions[i0];
+                Vector2 d1 = s.uv0[i1] - s.uv0[i0], d2 = s.uv0[i2] - s.uv0[i0];
+                float det = d1.x * d2.y - d2.x * d1.y; if (Mathf.Abs(det) < 1e-12f) continue;
+                // (the direction only, weighted by the triangle's area: a sliver with a huge 1 / det does not outvote its neighbours)
+                var su = (e1 * d2.y - e2 * d1.y) * Mathf.Sign(det); float len = su.magnitude; if (len < 1e-12f) continue;
+                su *= Vector3.Cross(e1, e2).magnitude / len;
+                tu[i0] += su; tu[i1] += su; tu[i2] += su;
+            }
+            var tan = new Vector3[n];
+            for (int i = 0; i < n; i++)
+            {
+                var N = s.normals[i].normalized;
+                var T = tu[i] - N * Vector3.Dot(N, tu[i]);
+                if (T.sqrMagnitude < 1e-12f) T = Vector3.Cross(N, Mathf.Abs(N.y) < 0.9f ? Vector3.up : Vector3.right);   // (no UV direction there: any direction square to the normal)
+                tan[i] = T.normalized;
+            }
+            s.tangents = tan;
         }
 
         /// The original bike's tyres and rims on the wheel holders (as Build draws them: a tyre model is modelled in its node's space and hangs
@@ -245,12 +427,20 @@ namespace Reflex.Port.Content
         /// A .rxmod material: the original bike's material of its template (as the game resolves that binding: the graphic kit first) with
         /// the mod's diffuse, its SFX map (from its spec map) and its normal map in place of the original's maps; the mud noise and the
         /// render states stay. Falls back to the plastics template, then to a plain grey.
-        static UnityEngine.Material RxMaterial(VehicleCatalog cat, Rfx.Install install, BikeSpec spec, string name)
+        static readonly HashSet<string> s_oddTemplates = new HashSet<string>();
+        /// Tests: REFLEX_RXMOD_LEGACY_TEMPLATES=1 builds a .rxmod bike's materials as before 2026-11-17 (a before / after in one build).
+        static readonly bool LegacyTemplates = Environment.GetEnvironmentVariable("REFLEX_RXMOD_LEGACY_TEMPLATES") == "1";
+        static UnityEngine.Material RxMaterial(VehicleCatalog cat, Rfx.Install install, BikeSpec spec, string name, RxModMaterial mm)
         {
-            var b = spec.rx;
-            var mm = RxModBikes.MaterialOf(b, spec.rxSkin, name);   // (painted by the chosen skin, RxSkin)
+            var b = spec.rx;   // (mm: the bike's material painted by the chosen skin, RxSkin, and the worn kit / part, RxParts; or a part mesh's own)
             if (mm == null) { Debug.LogWarning($"Reflex bike {b.mod.name}: material {name} is not in mod.json (plastic, no maps)"); mm = new RxModMaterial { name = name, diffuseMod = b.mod, specMod = b.mod, normalMod = b.mod, sfxMod = b.mod }; }
             var pool = spec.materials != null && spec.materials.Count > 0 ? spec.materials : spec.kitPkg != null ? new List<(string db, string pkg)> { (spec.kitDb, spec.kitPkg) } : new List<(string db, string pkg)>();
+            // The template is never a gear / kit pack's material (KitPacks: a community graphics kit the player wears on the original bike of
+            // this model, "mod:kit/<hash>>..." packages): such a material is made for that kit's own maps and layout (its own parameters, its
+            // textures under any names), and borrowed for a .rxmod bike it drew the mod's kit in patches over plastics of the pack's colour
+            // (2026-11-17, a player's report: Alive bikes "showing other kits' graphics"). The game's own materials only; with none left, the
+            // chassis' own material, else the reference bike's.
+            if (!LegacyTemplates) pool = pool.Where(x => BikeMods.NamespaceOf(x.db).Length == 0).ToList();
             // the programs whose texture slots a .rxmod's maps are known to fit (core/plan/RXMOD.md "Materials"); another program (the KTM 450's
             // Template_ATV_MX_Plstc: a dirt mask and a wet-mud normal map) is not borrowed: the chassis' own material, else the reference bike's
             bool Fits(VehicleMaterialDef d) => d != null && Array.IndexOf(RxPrograms, d.pixelShader) >= 0;
@@ -284,25 +474,56 @@ namespace Reflex.Port.Content
             var d = new VehicleMaterialDef { db = t.db, pkg = t.pkg, name = t.name, pixelShader = t.pixelShader, package = t.package, cull = mm.twoSided ? 1 : t.cull, alphaRef = mm.alphaTest ? mm.alphaRef : t.alphaRef,
                                              alphaFunc = mm.alphaTest ? 7 : t.alphaFunc, srcBlend = t.srcBlend, destBlend = t.destBlend, zwrite = t.zwrite, alphaTest = mm.alphaTest || t.alphaTest, alphaBlend = t.alphaBlend };
             foreach (var kv in t.parameters) d.parameters[kv.Key] = kv.Value;
-            int diffuse = -1;
+            // Each texture slot of the template by what the PROGRAM does with it (its sampler: usr_sampler_number is the rider's plate on the
+            // second UV set, usr_sampler_combo_map the SFX map, usr_sampler_diffuse_texture the base colour), then by the texture's name as
+            // before. By the name alone (until 2026-11-17) a template whose plate texture was not called "Numbers" (the material of an
+            // original graphics kit the player had on that bike) counted as one more colour slot, and being the last it got the mod's
+            // diffuse: the mod's kit was drawn through the plate's UV set (patches of it on the number plates and fenders) over plastics
+            // left without their colour map.
+            int diffuse = -1, diffuseBySampler = -1; bool normalBound = false; var slotLog = new System.Text.StringBuilder();
             foreach (var x in t.textures)
             {
                 var c = new VehicleMaterialDef.Tex { name = x.name, sampler = x.sampler, addrU = x.addrU, addrV = x.addrV, mipFilter = x.mipFilter, magFilter = x.magFilter, minFilter = x.minFilter, maxAniso = x.maxAniso, mipBias = x.mipBias, asset = x.asset };
-                string n = x.name ?? "";
+                string n = x.name ?? "", sm = x.sampler ?? "";
+                bool Sampler(string part) => !LegacyTemplates && sm.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0;
+                bool plate = n.Equals("Numbers", StringComparison.OrdinalIgnoreCase) || n.IndexOf("namnum", StringComparison.OrdinalIgnoreCase) >= 0 || Sampler("sampler_number");
+                bool sfx = !plate && (n.EndsWith("_SFX", StringComparison.OrdinalIgnoreCase) || n.IndexOf("Combo", StringComparison.OrdinalIgnoreCase) >= 0 || Sampler("combo"));
+                bool nrm = !plate && !sfx && (n.IndexOf("NRML", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("_Norm", StringComparison.OrdinalIgnoreCase) >= 0 || Sampler("normal"));
+                slotLog.Append(' ').Append(n).Append('@').Append(sm);
                 if (n.IndexOf("Mud_Noise", StringComparison.OrdinalIgnoreCase) >= 0) { }
-                else if (n.Equals("Numbers", StringComparison.OrdinalIgnoreCase) || n.IndexOf("namnum", StringComparison.OrdinalIgnoreCase) >= 0)
+                else if (plate)
                 { if (!mm.numbers) { c.name = "rxmod no plate"; c.external = VehicleCatalog.ClearTexture; } }   // ("numbers": the original's binding: the rider's plate)   // (the plates are in the mod's own diffuse: no run-time number on its second UV set)
-                else if (n.EndsWith("_SFX", StringComparison.OrdinalIgnoreCase) || n.IndexOf("Combo", StringComparison.OrdinalIgnoreCase) >= 0) c.external = RxModBikes.Sfx(mm) ?? VehicleCatalog.ClearTexture;
-                else if (n.IndexOf("NRML", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("_Norm", StringComparison.OrdinalIgnoreCase) >= 0) c.external = RxModBikes.Normal(mm) ?? FlatNormal;
-                else { c.external = VehicleCatalog.ClearTexture; diffuse = d.textures.Count; }   // (a fork sticker on the frame's second UV set: clear)
-                c.addrU = 1; c.addrV = 1;   // (the mod's maps repeat; its UVs are in 0..1)
+                else if (sfx) c.external = RxModBikes.Sfx(mm) ?? VehicleCatalog.ClearTexture;
+                else if (nrm) { c.external = RxModBikes.Normal(mm) ?? FlatNormal; normalBound = true; }
+                else
+                {   // (a fork sticker on the frame's second UV set: clear)
+                    c.external = VehicleCatalog.ClearTexture;
+                    if (Sampler("diffuse") && diffuseBySampler < 0) diffuseBySampler = d.textures.Count;
+                    diffuse = d.textures.Count;
+                }
+                // (the mod's maps repeat; its UVs are in 0..1.) Not the rider's plate: its second UV set is laid out for a CLAMPED texture (the
+                // plates span a little past 0..1 - the Alive CRF450R's frame plastics -0.28 .. 1.44 - and every other part is parked on a
+                // clear corner texel), so repeated it drew the number again beside the plate and on the fenders (2026-11-17, the Alive OEM bikes)
+                if (plate && !LegacyTemplates) { c.addrU = 3; c.addrV = 3; } else { c.addrU = 1; c.addrV = 1; }
                 d.textures.Add(c);
             }
-            if (diffuse >= 0) d.textures[diffuse].external = RxModBikes.Map(mm.diffuseMod, mm.diffuse) ?? Texture2D.grayTexture;
+            if (!LegacyTemplates && diffuseBySampler >= 0 && diffuseBySampler != diffuse)
+            {
+                if (s_oddTemplates.Add(t.db + "/" + t.pkg + "/" + t.name)) Debug.Log($"Reflex bike {b.mod.name}: template {t.name} ({t.pkg}) has more than one colour slot:{slotLog}: the mod's diffuse goes to the program's diffuse sampler");
+                diffuse = diffuseBySampler;
+            }
+            if (diffuse >= 0) d.textures[diffuse].external = (mm.tintValue != null ? RxModBikes.Tinted(mm) : null) ?? RxModBikes.Map(mm.diffuseMod, mm.diffuse) ?? Texture2D.grayTexture;   // (a run-time colour worn: RxTint)
             var built = cat.Build(d, "rxmod " + name + " (" + mm.template + ": " + t.name + ")");
             // clean until the race's mud record says otherwise (OriginalWorldRuntime / OriginalOpponents set usr_mud_amount every frame; the
             // garage and the menus never do, and the program's default would draw the mod's whole mud mask)
             if (built && built.HasProperty("usr_mud_amount")) built.SetVector("usr_mud_amount", Vector4.zero);
+            // the mod's normal map on a template whose program has none (plastics, frame, engine, wheels: only the tyre's samples one): the
+            // enhanced materials' shading normal (specular, clear coat, rain film; ReflexVehiclePBR.hlsl), in a slot no template program samples
+            if (built && !normalBound && !string.IsNullOrEmpty(mm.normal))
+            {
+                var nm = RxModBikes.Normal(mm);
+                if (nm) ReflexMaterialClasses.SetEnhancedNormal(built, nm);
+            }
             return built;
         }
 

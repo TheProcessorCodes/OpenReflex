@@ -273,7 +273,7 @@ namespace Reflex.Port.OpenFrontEnd
         }
         internal static VisualElement BoardRow(VisualElement parent, OwnResultsSpec spec, OwnResultsRow value)
         {
-            var row = OuUi.Item(OuUi.Div("ou-board-row" + (value.you ? " ou-board-you" : ""), parent), null);
+            var row = OuUi.Item(OuUi.Div("ou-board-row" + (value.you || value.you2 ? " ou-board-you" : ""), parent), null);
             var rank = OuUi.Text(value.rank > 0 ? value.rank.ToString() : "-", "ou-board-rank ou-display" + (value.rank >= 1 && value.rank <= 3 ? " ou-board-rank-" + value.rank : ""), row);
             rank.enableRichText = false;
             OuUi.Text(value.name, "ou-board-name ou-board-cell", row).enableRichText = false;

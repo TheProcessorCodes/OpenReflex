@@ -395,6 +395,7 @@ namespace Reflex.Port.OriginalWorld
             // what is drawn: the game's flag, the draw distance from the viewer
             var cam = viewer ? viewer : Camera.main;
             Vector3 eye = cam ? cam.transform.position : Vector3.zero;
+            bool two = ReflexWorldViews.SecondEye(out Vector3 eye2);   // SPLIT SCREEN (w-split): drawn within reach of either viewer
             drawn = 0; instancesDrawn = 0;
             if (crowdProps == null) crowdProps = new MaterialPropertyBlock();
             foreach (var t in templates) t.anyShown = false;
@@ -410,7 +411,7 @@ namespace Reflex.Port.OriginalWorld
                     Vector3 p = e.position;
                     if ((e.flags & FlagSkinned) != 0 && e.firstMatrix >= 0 && e.firstMatrix < f.matrixCount) { int o = e.firstMatrix * 16; p = new Vector3(f.matrices[o + 12], f.matrices[o + 13], f.matrices[o + 14]); }
                     float d = e.lod * distanceScale; if (e.billboard) d *= Reflex.Port.RxCore.RxMapScale.Current;   // MAP SCALE: a crowd section's reach grows with it
-                    on &= (p - eye).sqrMagnitude <= d * d;
+                    on &= (p - eye).sqrMagnitude <= d * d || (two && (p - eye2).sqrMagnitude <= d * d);
                 }
                 if (on != e.shown)
                 {

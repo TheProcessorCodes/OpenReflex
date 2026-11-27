@@ -28,6 +28,7 @@ Shader "Reflex/Tree Billboard"
         TEXTURE2D(_BaseMap);   SAMPLER(sampler_BaseMap);
         TEXTURE2D(_NormalMap); SAMPLER(sampler_NormalMap);
         #include "ReflexCommon.hlsl"
+        #include "ReflexWeather.hlsl"   // WEATHER: the snow on the distant trees (as on the 3D ones: ReflexTree.shader), nothing without weather
         #include "ReflexDrawDistance.hlsl"
 
         StructuredBuffer<float4> _RfxBBInstances;   // 2 float4 per tree: (x, y, z, type + 0.5), (scale, rotation, sin, cos)
@@ -133,8 +134,10 @@ Shader "Reflex/Tree Billboard"
             #pragma vertex Vert
             #pragma fragment Frag
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            #pragma multi_compile_fragment _ _RFX_ENHANCED
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
             #include "ReflexAliveShadow.hlsl"
+            #include "ReflexEnhanced.hlsl"   // LIGHTING: ENHANCED: the 3D trees' ambient, occlusion and sun shadow on their cards (ReflexTree.shader)
 
             struct Varyings
             {
@@ -200,8 +203,30 @@ Shader "Reflex/Tree Billboard"
                     vol *= RfxAliveDynShadow(i.positionWS);
                 }
                 colourTex = RfxTreeAlbedo(colourTex);   // Alive's atlas squared in both looks, as its 3D trees' texels (ReflexCommon.hlsl)
+            #if defined(_RFX_ENHANCED)
+                // LIGHTING: ENHANCED (not the original program): the card is lit as the 3D tree it stands for (ReflexTree.shader), so the
+                // forest keeps its brightness and hue where the trees turn into cards: the sky's colour on the ambient at the card
+                // normal's world direction, the screen-space occlusion on it, the contact shadow and the sun's shadow map on the sun
+                // (a Reflex level; Alive's cards take the shadow map above already)
+                {
+                    float3 Nw = n.x * _RfxBBWorldX.xyz + n.y * _RfxBBWorldY.xyz + n.z * _RfxBBWorldZ.xyz;
+                    float2 rfxOcc = RfxEnhOcclusion(i.positionCS);
+                    amb = RfxEnhAmbient(amb, Nw * rsqrt(max(dot(Nw, Nw), 1e-12)), rfxOcc.r);
+                    vol *= rfxOcc.g;
+                    if (!RfxIsAlive()) vol *= RfxAliveDynShadow(i.positionWS);
+                }
+            #endif
                 float3 colour = (vol * rad * _RfxSunColor.rgb) * nl + amb;
+                float3 rfxLitW = colour;
                 colour *= colourTex;
+                // WEATHER (n.y: the card's up is the world's). A card stands for a whole crown: the snow lies on what faces up, the
+                // faces below stay in the crown's own shade (lit flat, every card of a far forest went white)
+                [branch] if (RfxWeatherOn())
+                {
+                    float wxM = RfxWeatherFoliageSnow(i.positionWS, n.y, 0.75);
+                    colour = lerp(colour, float3(0.87, 0.90, 0.95) * rfxLitW * (0.6 + 0.4 * saturate(n.y)), wxM);
+                    colour *= lerp(1.0, 0.84, _RfxWeather.x * (1.0 - _RfxWeather.y));
+                }
                 colour = colour * i.fog.w + i.fog.rgb;
                 return half4(RfxOutput(colour), outAlpha);
             }
