@@ -17,6 +17,18 @@ namespace Reflex.Port.Showcase
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         static void Register() => UiShowcase.Register("hubmenu", Run);
 
+        static void Check(bool ok, string what) { UiShowcaseNav.Check(ok, "hubmenu", what); Debug.Log(Tag + (ok ? "ok   " : "FAIL ") + what); }
+
+        /// The left column's chips (GAME LIBRARY ... / PLAY's BACK) end over the dark legend band at the bottom, not under it.
+        static void CheckChipsClear(OpenShell shell, string what)
+        {
+            var root = shell.Layer;
+            var band = root.panel?.visualTree.Q<VisualElement>(className: "ou-legend-band");
+            var small = root.Q<VisualElement>("hub-small");
+            if (band == null || small == null || band.resolvedStyle.display == DisplayStyle.None) { Debug.Log(Tag + what + ": no legend band or chips to measure"); return; }
+            Check(small.worldBound.yMax <= band.worldBound.yMin, what + ": the chips end at " + small.worldBound.yMax.ToString("F1") + ", over the legend band at " + band.worldBound.yMin.ToString("F1"));
+        }
+
         static void Dump(OpenShell shell, string what)
         {
             var root = shell.Layer;
@@ -37,13 +49,13 @@ namespace Reflex.Port.Showcase
         {
             var shell = OpenShell.Instance;
             shell.ShowMain(); yield return UiShowcase.Frames(60);
-            Dump(shell, "hub"); yield return UiShowcase.Shot("hubmenu-hub");
+            Dump(shell, "hub"); CheckChipsClear(shell, "hub"); yield return UiShowcase.Shot("hubmenu-hub");
             shell.Nav.Focus(shell.Layer.Q<VisualElement>("ou-hub-garage")); yield return UiShowcase.Frames(30);
             Dump(shell, "hub, GARAGE focused"); yield return UiShowcase.Shot("hubmenu-hub-garage");
             shell.Nav.Focus(shell.Layer.Q<VisualElement>("ou-hub-physics")); yield return UiShowcase.Frames(30);
             Dump(shell, "hub, PHYSICS STUDIO focused"); yield return UiShowcase.Shot("hubmenu-hub-chip");
             shell.ShowPlay(); yield return UiShowcase.Frames(60);
-            Dump(shell, "play"); yield return UiShowcase.Shot("hubmenu-play");
+            Dump(shell, "play"); CheckChipsClear(shell, "play"); yield return UiShowcase.Shot("hubmenu-play");
             shell.Nav.Focus(shell.Layer.Q<VisualElement>("ou-hub-race")); yield return UiShowcase.Frames(30);
             Dump(shell, "play, RACE focused"); yield return UiShowcase.Shot("hubmenu-play-race");
             shell.ShowMain(); yield return UiShowcase.Frames(5);

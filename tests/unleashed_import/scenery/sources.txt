@@ -1,0 +1,44 @@
+# The scenery side of the MX vs ATV Unleashed converter (Content/UnleashedImport, agent B's files) and what it builds on, repo-relative.
+# the scenery side
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnSceneryMath.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnDxg.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnCol.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnEsb.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnMot.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnDxt.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnScenery.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnSceneRules.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnReflexScenery.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnToys.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnStartGate.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnFunnel.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnStadiumLights.cs
+# the shared pieces of the converter it uses (the terrain side's files)
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnPak.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnIni.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnJson.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnData.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnTrn.cs
+Unity/Reflex/Assets/Scripts/Content/UnleashedImport/UnTdf.cs
+# the Untamed converter's foundation (JSON, BXML, the Reflex library reader) and the Alive importer's readers it uses
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxCore.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxJson.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxCommon.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxZlib.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxBxml.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxScene.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxDisc.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxPcPkg.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxRxar.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxStock.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxMesh.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxRmesh.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxTex.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxMat.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxTerrain.cs
+Unity/Reflex/Assets/Scripts/Content/UntamedImport/UxPil.cs
+Unity/Reflex/Assets/Scripts/Content/AliveImport/AliveImportCore.cs
+Unity/Reflex/Assets/Scripts/Content/AliveImport/AliveContainers.cs
+Unity/Reflex/Assets/Scripts/Content/LzxDecoder.cs
+Unity/Reflex/Assets/Scripts/Content/ReflexPaths.cs
+Unity/Reflex/Assets/Scripts/Content/ReflexDrives.cs

@@ -1,0 +1,386 @@
+[
+  {
+    "id": "FS09",
+    "name": "Ajo Mining FMX",
+    "category": "Freestyle",
+    "terrain_profile": "arid"
+  },
+  {
+    "id": "SX05",
+    "name": "Austin",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "FS02",
+    "name": "Austin FMX",
+    "category": "Freestyle",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "SX08",
+    "name": "Boston",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "FS03",
+    "name": "Boston FMX",
+    "category": "Freestyle",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "SX18",
+    "name": "Boulder",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "FS13",
+    "name": "Calgary Lodge FMX",
+    "category": "Freestyle",
+    "terrain_profile": "snow"
+  },
+  {
+    "id": "SX17",
+    "name": "Charleston",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "SX20",
+    "name": "Corona",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "Nat09",
+    "name": "Deadman Wash",
+    "category": "national",
+    "terrain_profile": "arid"
+  },
+  {
+    "id": "SX02",
+    "name": "Denver",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "FS12",
+    "name": "Fort Dwire FMX",
+    "category": "Freestyle",
+    "terrain_profile": "woodland"
+  },
+  {
+    "id": "Nat03",
+    "name": "Glamis",
+    "category": "national",
+    "terrain_profile": "dunes"
+  },
+  {
+    "id": "Nat01",
+    "name": "Goblin Gulch",
+    "category": "national",
+    "terrain_profile": "arid"
+  },
+  {
+    "id": "SM02",
+    "name": "Highlands",
+    "category": "supermoto",
+    "terrain_profile": "supermoto"
+  },
+  {
+    "id": "Nat06",
+    "name": "Juniper Park",
+    "category": "national",
+    "terrain_profile": "red_clay"
+  },
+  {
+    "id": "Nat17",
+    "name": "Keweni Falls",
+    "category": "national",
+    "terrain_profile": "woodland"
+  },
+  {
+    "id": "Nat05",
+    "name": "Lago",
+    "category": "national",
+    "terrain_profile": "arid"
+  },
+  {
+    "id": "FS11",
+    "name": "Laredo Plains FMX",
+    "category": "Freestyle",
+    "terrain_profile": "arid"
+  },
+  {
+    "id": "SX13",
+    "name": "Las Vegas",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "FS06",
+    "name": "Las Vegas FMX",
+    "category": "Freestyle",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "SX06",
+    "name": "Little Rock",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "FS01",
+    "name": "Little Rock FMX",
+    "category": "Freestyle",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "SX01",
+    "name": "Los Angeles",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "Nat10",
+    "name": "Maple Hill",
+    "category": "national",
+    "terrain_profile": "woodland"
+  },
+  {
+    "id": "SM01",
+    "name": "Mesa",
+    "category": "supermoto",
+    "terrain_profile": "supermoto"
+  },
+  {
+    "id": "SX14",
+    "name": "Mexico City",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "SX09",
+    "name": "New Orleans",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "FS05",
+    "name": "New Orleans FMX",
+    "category": "Freestyle",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "Nat16",
+    "name": "Northern Lights",
+    "category": "national",
+    "terrain_profile": "snow_mud"
+  },
+  {
+    "id": "Nat04",
+    "name": "Oceanside",
+    "category": "national",
+    "terrain_profile": "coastal"
+  },
+  {
+    "id": "SX11",
+    "name": "Orlando",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "FS08",
+    "name": "Orlando FMX",
+    "category": "Freestyle",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "SX12",
+    "name": "Philadelphia",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "SX15",
+    "name": "Portland",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "FS07",
+    "name": "Portland FMX",
+    "category": "Freestyle",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "SX19",
+    "name": "Raleigh",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "Nat08",
+    "name": "Redwood Valley",
+    "category": "national",
+    "terrain_profile": "woodland"
+  },
+  {
+    "id": "SX04",
+    "name": "San Diego",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "Nat14",
+    "name": "Santiago",
+    "category": "national",
+    "terrain_profile": "woodland"
+  },
+  {
+    "id": "SX03",
+    "name": "Savannah",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "Nat13",
+    "name": "Sienna Ridge",
+    "category": "national",
+    "terrain_profile": "red_clay"
+  },
+  {
+    "id": "Nat15",
+    "name": "Smuggler's Notch",
+    "category": "national",
+    "terrain_profile": "dry_woodland"
+  },
+  {
+    "id": "Nat19",
+    "name": "Spokane",
+    "category": "national",
+    "terrain_profile": "woodland"
+  },
+  {
+    "id": "SX07",
+    "name": "St. Paul",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "FS04",
+    "name": "St. Paul FMX",
+    "category": "Freestyle",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "Nat11",
+    "name": "Sutter Raceway",
+    "category": "national",
+    "terrain_profile": "dry_woodland"
+  },
+  {
+    "id": "Nat12",
+    "name": "Temple of Apophis",
+    "category": "national",
+    "terrain_profile": "dunes"
+  },
+  {
+    "id": "SM03",
+    "name": "The Glades",
+    "category": "supermoto",
+    "terrain_profile": "supermoto"
+  },
+  {
+    "id": "Nat02",
+    "name": "Tipperary",
+    "category": "national",
+    "terrain_profile": "woodland"
+  },
+  {
+    "id": "SX10",
+    "name": "Toronto",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "SX16",
+    "name": "Tucson",
+    "category": "supercross",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "Nat07",
+    "name": "Valhalla",
+    "category": "national",
+    "terrain_profile": "snow"
+  },
+  {
+    "id": "FS10",
+    "name": "Woodland FMX",
+    "category": "Freestyle",
+    "terrain_profile": "woodland"
+  },
+  {
+    "id": "MC01",
+    "name": "Killington",
+    "category": "machine challenge ab",
+    "terrain_profile": "snow_mud"
+  },
+  {
+    "id": "MC02",
+    "name": "Desert Oasis",
+    "category": "machine challenge",
+    "terrain_profile": "dunes"
+  },
+  {
+    "id": "MC03",
+    "name": "Red Country",
+    "category": "machine challenge ab",
+    "terrain_profile": "red_clay"
+  },
+  {
+    "id": "MC04",
+    "name": "Glamis South",
+    "category": "machine challenge",
+    "terrain_profile": "dunes"
+  },
+  {
+    "id": "MC05",
+    "name": "Woodstock",
+    "category": "machine challenge",
+    "terrain_profile": "dry_woodland"
+  },
+  {
+    "id": "MC06",
+    "name": "Monster Stadium",
+    "category": "machine challenge",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "MC07",
+    "name": "Trophy Stadium",
+    "category": "machine challenge",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "MC08",
+    "name": "19th Hole",
+    "category": "machine challenge",
+    "terrain_profile": "stadium"
+  },
+  {
+    "id": "MC09",
+    "name": "Quechee Gulch",
+    "category": "machine challenge waypoint",
+    "terrain_profile": "dry_woodland"
+  },
+  {
+    "id": "MC10",
+    "name": "Land and Air",
+    "category": "machine challenge waypoint",
+    "terrain_profile": "woodland"
+  }
+]

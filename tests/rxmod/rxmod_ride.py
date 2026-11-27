@@ -26,6 +26,7 @@ ap.add_argument("--game", type=Path, default=Path("/Users/payton/Documents/Devel
 ap.add_argument("--env", action="append", default=[])
 ap.add_argument("--window", action="store_true", help="a window instead of -batchmode (it still never keeps the focus)")
 ap.add_argument("--out", type=Path)
+ap.add_argument("--save", action="append", default=[], help="K=V: a string of the seeded client save (a .rxmod bike's worn part 'RxPart.<mod id>.<model>.<slot>=<option id>', Alive gear 'RxGear.<type>=<mod id>/<piece id>')")
 a = ap.parse_args()
 A = (a.out.resolve() if a.out else R / "builds/rxmod/runs") / (datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + a.name)
 A.mkdir(parents=True)
@@ -39,6 +40,7 @@ info.update(CFBundleIdentifier="local.reflex.rxmod.test-" + A.name.lower(), CFBu
 save = A / "save"; save.mkdir(); shots = A / "screenshots"; shots.mkdir()
 seed = {"format": "reflex-client-save", "version": 1, "ints": {}, "floats": {"Options.MasterVolume": 0.0}, "strings": {}}
 if a.mod != "none": seed["strings"]["BikeModel.Model.%d" % a.model] = a.mod
+for kv in a.save: k, _, v = kv.partition("="); seed["strings"][k] = v
 (save / "save.json").write_text(json.dumps(seed, indent=1))
 (A / "Mods").symlink_to(a.mods.resolve(), target_is_directory=True)
 home = Path.home(); prefs = home / "Library/Preferences"; support = home / "Library/Application Support"

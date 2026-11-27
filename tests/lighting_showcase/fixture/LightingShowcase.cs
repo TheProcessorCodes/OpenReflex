@@ -35,6 +35,8 @@ using UnityEngine.SceneManagement;
 [DefaultExecutionOrder(32000)]
 public sealed class LightingShowcase : MonoBehaviour
 {
+    static int wxBaseMode = -1, wxBaseIntensity = 1; static bool wxBaseIndoor;   // REFLEX_SHOWCASE_WEATHER: the ride's weather under the wx* modes
+
     const string Tag = "[lighting-showcase] ";
 
     [Serializable] public sealed class View
@@ -126,6 +128,9 @@ public sealed class LightingShowcase : MonoBehaviour
             if (wm >= 0)
             {
                 ReflexWeather.Override = wm; ReflexWeather.Settle = true; ReflexWeather.Restart();
+                ReflexWeather.TestCamSpeed = 0f;
+                if (parts.Contains("wxindoor")) ReflexWeather.AllowIndoor = true;
+                foreach (var pm in parts) if (pm.StartsWith("wxmove") && float.TryParse(pm.Substring(6), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float wmv)) ReflexWeather.TestCamSpeed = wmv;   // (a riding camera's precipitation on a still view)   // (a stadium: the test's switch)
                 foreach (var pw in parts)
                 {
                     if (pw.StartsWith("wxi") && int.TryParse(pw.Substring(3), out int wi)) ReflexWeather.IntensityOverride = wi;
@@ -134,7 +139,7 @@ public sealed class LightingShowcase : MonoBehaviour
                     if (pw.StartsWith("wxpud") && float.TryParse(pw.Substring(5), out float wp)) ReflexWeather.ForcePuddles = wp / 100f;
                     if (pw.StartsWith("wxcov") && float.TryParse(pw.Substring(5), out float wc)) ReflexWeather.ForceCover = wc / 100f;
                 }
-                undo.Add(() => { ReflexWeather.Override = -1; ReflexWeather.IntensityOverride = -1; ReflexWeather.DebugView = 0; ReflexWeather.ForceWet = ReflexWeather.ForcePuddles = ReflexWeather.ForceCover = -1; ReflexWeather.Settle = false; });
+                undo.Add(() => { ReflexWeather.AllowIndoor = wxBaseIndoor; ReflexWeather.Override = wxBaseMode; ReflexWeather.IntensityOverride = wxBaseMode >= 0 ? wxBaseIntensity : -1; ReflexWeather.DebugView = 0; ReflexWeather.ForceWet = ReflexWeather.ForcePuddles = ReflexWeather.ForceCover = -1; ReflexWeather.Settle = wxBaseMode >= 0; });
             }
         }
         if (parts.Contains("novol")) { int was = ReflexVolumetricLight.Override; ReflexVolumetricLight.Override = 0; undo.Add(() => ReflexVolumetricLight.Override = was); }
@@ -266,6 +271,27 @@ public sealed class LightingShowcase : MonoBehaviour
             int pvId = pv.Int("PlayerVehicleId", pvRow, -1);
             Debug.Log(Tag + "vehicle row " + pvRow + " of " + pv.rows + ": PlayerVehicleId " + pvId + " model " + pv.Int("VehicleModelId", pvRow, -1));
             if (pvId >= 0) { var task = ReflexProfile.SelectRider(0, -1, pvId); while (!task.IsCompleted) yield return null; Debug.Log(Tag + "vehicle selected: " + task.Result); }
+            // w-blackparts: REFLEX_LIGHTING_PARTS = "type=words;type=words" puts a part of that VehiclePartType on the vehicle before the launch: the
+            // first item whose "line title" holds every word (or "#id"); REFLEX_LIGHTING_PARTLIST=1 lists every type's items
+            string wantParts = Environment.GetEnvironmentVariable("REFLEX_LIGHTING_PARTS");
+            int pvModel = pv.Int("VehicleModelId", pvRow, -1);
+            if (Environment.GetEnvironmentVariable("REFLEX_LIGHTING_PARTLIST") == "1")
+                for (int vr = 0; vr < pv.rows; vr++) Debug.Log(Tag + $"VEHICLEROW {vr}: PlayerVehicleId {pv.Int("PlayerVehicleId", vr, -1)} model {pv.Int("VehicleModelId", vr, -1)}");
+            if (pvId >= 0 && Environment.GetEnvironmentVariable("REFLEX_LIGHTING_PARTLIST") == "1")
+                foreach (var pt in Reflex.Port.OpenFrontEnd.OpenGarageData.PartTypes(pvId))
+                    foreach (var it in Reflex.Port.OpenFrontEnd.OpenGarageData.PartItems(pvModel, pvId, pt.id))
+                        Debug.Log(Tag + $"PARTITEM type {pt.id} {pt.factory} id {it.id} line '{it.line}' title '{it.title}' {it.State}");
+            if (pvId >= 0 && !string.IsNullOrEmpty(wantParts))
+                foreach (var spec in wantParts.Split(';'))
+                {
+                    var kv = spec.Split('='); if (kv.Length != 2 || !int.TryParse(kv[0], out int ptype)) continue;
+                    var words = kv[1].ToLowerInvariant().Split(' ').Where(x => x.Length > 0).ToArray();
+                    var items = Reflex.Port.OpenFrontEnd.OpenGarageData.PartItems(pvModel, pvId, ptype);
+                    var pick = kv[1].StartsWith("#") && int.TryParse(kv[1].Substring(1), out int pid) ? items.FirstOrDefault(i => i.id == pid)
+                             : items.FirstOrDefault(i => words.All(wd => (i.line + " " + i.title).ToLowerInvariant().Contains(wd)));
+                    bool ok = pick != null && Reflex.Port.OpenFrontEnd.OpenGarageData.EquipPart(pvId, pick, null);
+                    Debug.Log(Tag + $"PART type {ptype} '{kv[1]}': {(pick == null ? "no such item" : pick.id + " '" + pick.line + " " + pick.title + "' equipped " + ok)}");
+                }
         }
         try
         {
@@ -277,6 +303,24 @@ public sealed class LightingShowcase : MonoBehaviour
                      ?? all.FirstOrDefault(e => e.key.IndexOf(plan.@event, StringComparison.OrdinalIgnoreCase) >= 0);
             if (ev == null) throw new InvalidOperationException("no event " + plan.@event);
             Debug.Log(Tag + "LAUNCH " + ev.key);
+            // REFLEX_SHOWCASE_WEATHER=rain|snow|dynamic[:intensity[:indoor]]: the weather from the start of the ride, settled (the snow trails
+            // and the wet / snowy grip need the riders to ride through it; the wx* modes alone only switch it on for the shot)
+            {
+                string wxe = Environment.GetEnvironmentVariable("REFLEX_SHOWCASE_WEATHER");
+                if (!string.IsNullOrEmpty(wxe))
+                {
+                    var wp = wxe.Split(':');
+                    wxBaseMode = Array.FindIndex(ReflexWeather.Names, n => string.Equals(n, wp[0], StringComparison.OrdinalIgnoreCase));
+                    if (wp.Length > 1 && int.TryParse(wp[1], out int wi0)) wxBaseIntensity = wi0;
+                    wxBaseIndoor = wp.Length > 2 && wp[2] == "indoor";
+                    if (wxBaseMode >= 0)
+                    {
+                        ReflexWeather.Override = wxBaseMode; ReflexWeather.IntensityOverride = wxBaseIntensity; ReflexWeather.Settle = true; ReflexWeather.AllowIndoor = wxBaseIndoor;
+                        ReflexEnhancedLighting.Override = 1;
+                        Debug.Log(Tag + "weather from the start: " + wxe);
+                    }
+                }
+            }
             ReflexEventSelect.Launch(ev.key, plan.ai, false, "Reflex", 0, null);
         }
         catch (Exception e) { Fail(e.ToString()); yield break; }
@@ -329,6 +373,39 @@ public sealed class LightingShowcase : MonoBehaviour
             }
             var bm = rt.BikeModel;
             if (bm != null) foreach (var pt in bm.parts) { var mf = pt.part ? pt.part.GetComponent<MeshFilter>() : null; Debug.Log(Tag + $"BIKEPART {pt.name} material {pt.material} triangles {(mf && mf.sharedMesh ? mf.sharedMesh.triangles.Length / 3 : -1)}"); }
+        }
+        if (Environment.GetEnvironmentVariable("REFLEX_LS_BIKEMATS") == "1" && rt.BikeModel != null)
+        {
+            // w-blackparts: every material of the local bike: its class (_RfxMat), its maps (_RfxMatMap), its textures with their mean colour (raw
+            // units) and its usr_ constants
+            for (int f = 0; f < 5; f++) yield return null;
+            var seenM = new HashSet<Material>();
+            foreach (var pt in rt.BikeModel.parts)
+            {
+                var r = pt.part ? pt.part.GetComponent<Renderer>() : null; if (!r) continue;
+                foreach (var m in r.sharedMaterials)
+                {
+                    if (!m || !seenM.Add(m)) continue;
+                    var sb = new StringBuilder();
+                    foreach (var tn in m.GetTexturePropertyNames())
+                    {
+                        var tx = m.GetTexture(tn) as Texture2D; if (!tx) continue;
+                        var rtx = RenderTexture.GetTemporary(16, 16, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
+                        Graphics.Blit(tx, rtx); var prev = RenderTexture.active; RenderTexture.active = rtx;
+                        var t2 = new Texture2D(16, 16, TextureFormat.RGBA32, false, true); t2.ReadPixels(new Rect(0, 0, 16, 16), 0, 0); t2.Apply();
+                        RenderTexture.active = prev; RenderTexture.ReleaseTemporary(rtx);
+                        Vector4 sum = Vector4.zero; foreach (var c in t2.GetPixels()) sum += (Vector4)c; sum /= 256f; Destroy(t2);
+                        sb.Append($" {tn}={tx.name} mean({sum.x:0.00},{sum.y:0.00},{sum.z:0.00},{sum.w:0.00})");
+                    }
+                    var sh = m.shader;
+                    for (int pi = 0; pi < sh.GetPropertyCount(); pi++)
+                    {
+                        string pn = sh.GetPropertyName(pi);
+                        if (pn.StartsWith("usr_") && sh.GetPropertyType(pi) == UnityEngine.Rendering.ShaderPropertyType.Vector && m.GetVector(pn) != Vector4.zero) sb.Append($" {pn}={m.GetVector(pn):0.00}");
+                    }
+                    Debug.Log(Tag + $"BIKEMAT {pt.name} material {pt.material} unity '{m.name}' _RfxMat {(m.HasProperty("_RfxMat") ? m.GetVector("_RfxMat").ToString("0.0") : "-")} _RfxMatMap {(m.HasProperty("_RfxMatMap") ? m.GetVector("_RfxMatMap").ToString("0") : "-")}{sb}");
+                }
+            }
         }
         if (Environment.GetEnvironmentVariable("REFLEX_LOOK_DUMP") == "1")
         {

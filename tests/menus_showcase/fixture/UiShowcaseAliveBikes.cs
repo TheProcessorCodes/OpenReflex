@@ -50,6 +50,7 @@ namespace Reflex.Port.Showcase
             // the list: every level unticked (the bikes stay ticked), shown again
             var chosen = Get<HashSet<string>>("_aliveChosen");
             chosen.RemoveWhere(k => !k.StartsWith("bike:", StringComparison.Ordinal));
+            foreach (var b in found.bikes.Where(b => b.Importable)) chosen.Add("bike:" + b.aliveId);   // (every bike, installed or not: the list ticks only what is new or out of date)
             Call("ShowAliveLevels"); yield return UiShowcase.Frames(30);
             yield return UiShowcase.Shot("alive-bikes-list");
             var sv = Shell.Nav.Items().FirstOrDefault(e => e.name != null && e.name.StartsWith("ou-alive-bike-"));

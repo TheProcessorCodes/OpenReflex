@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1])); import nofocus   #
 R = Path(__file__).resolve().parents[2]
 UNITY = "/Applications/Unity/Hub/Editor/6000.6.1f1/Unity.app/Contents/MacOS/Unity"
 G = "/Users/payton/Documents/Development/REFLEX/builds/sol_garage/game files"
+if not os.path.isdir(G): G = str(R / "game files")   # (the sol_garage extraction was cleaned up: the repository's own game files)
 SEEDS = [R / "builds/perf_profile", Path("/Users/payton/Documents/Development/REFLEX-lead/builds/player/stage/Reflex/Library")]   # an imported Library (APFS clone)
 
 SCENES = {
@@ -55,6 +56,12 @@ SCENES = {
     # gate and the rows behind it); run with --env REFLEX_RIDERS=12 / 24 / 32 (REFLEX_BIGFIELD_LOD=0: a big field drawn in full)
     "national_field": {"scene": "National/NAT_Stillwater", "prefix": "national_field", "ai": 2, "t": 15,
                        "view": {"cam": "pose", "frame": "bike", "offset": [0, 16, 45], "look": "anchor", "lookY": 1.2, "fov": 70}},
+    # DISTANCE LODS (OriginalOpponents.DistanceLod): the same field from 150 ft (the original's last LOD record is 120 ft; DRAW DISTANCE HIGH's
+    # 192 ft: run with --env REFLEX_DRAW_DISTANCE=original), and from 75 ft (LOD 1 at every DRAW DISTANCE but ULTRA); REFLEX_RIDERS=12 as above
+    "national_far": {"scene": "National/NAT_Stillwater", "prefix": "national_far", "ai": 2, "t": 15,
+                     "view": {"cam": "pose", "frame": "bike", "offset": [0, 30, 150], "look": "anchor", "lookY": 1.2, "fov": 70}},
+    "national_mid": {"scene": "National/NAT_Stillwater", "prefix": "national_mid", "ai": 2, "t": 15,
+                     "view": {"cam": "pose", "frame": "bike", "offset": [0, 14, 75], "look": "anchor", "lookY": 1.2, "fov": 70}},
     "supercross_field": {"scene": "Supercross/SX_Kingston", "prefix": "supercross_field", "ai": 2, "t": 15,
                          "view": {"cam": "pose", "frame": "bike", "offset": [0, 16, 45], "look": "anchor", "lookY": 1.2, "fov": 70}},
     # an Alive National (Quarry Basin, 110 %; the race overlay map-a7)
@@ -131,6 +138,8 @@ def build(a):
     dest.mkdir(parents=True)
     shutil.copy2(Path(__file__).resolve().parent / "fixture/PerfBench.cs", dest / "PerfBench.cs")
     shutil.copy2(Path(__file__).resolve().parent / "fixture/LatencyProbe.cs", dest / "LatencyProbe.cs")   # inert unless REFLEX_LATENCY_PROBE=1
+    dp = Path(__file__).resolve().parent / "fixture/DynResProbe.cs"   # inert unless REFLEX_DYNRES_PROBE=1 (builds of trees without ReflexDynamicResolution: not copied)
+    if dp.is_file() and (stage / "Assets/Scripts/Rendering/ReflexDynamicResolution.cs").is_file(): shutil.copy2(dp, dest / "DynResProbe.cs")
     res = stage / "Assets/Resources/PerfBenchShaders"
     if res.exists(): shutil.rmtree(res)
     if a.extra_shaders:   # test variants of shipped shaders (the bench's swap=<shader>=<variant> ablations load them from Resources)
